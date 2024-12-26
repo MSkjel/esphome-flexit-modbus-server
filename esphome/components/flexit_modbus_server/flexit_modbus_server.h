@@ -40,7 +40,7 @@ static constexpr size_t NUM_MODES = sizeof(MODE_STRINGS) / sizeof(MODE_STRINGS[0
 }  // namespace
 
 namespace esphome {
-namespace flexit_modbus {
+namespace flexit_modbus_server {
 
 // ------------------------------------------------------------------
 // Coil indices

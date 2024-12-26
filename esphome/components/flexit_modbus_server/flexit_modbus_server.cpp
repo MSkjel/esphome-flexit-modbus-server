@@ -1,7 +1,7 @@
 #include "flexit_modbus_server.h"
 
 namespace esphome {
-namespace flexit_modbus {
+namespace flexit_modbus_server {
 
 std::string mode_to_string(uint16_t mode) {
   if (mode < NUM_MODES) {

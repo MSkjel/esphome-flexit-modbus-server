@@ -7,7 +7,7 @@ from esphome import pins
 CONF_TX_ENABLE_PIN        = "tx_enable_pin"
 CONF_TX_ENABLE_DIRECT = "tx_enable_direct"
 
-flexit_modbus_server_ns = cg.esphome_ns.namespace("flexit_modbus")
+flexit_modbus_server_ns = cg.esphome_ns.namespace("flexit_modbus_server")
 FlexitModbusDeviceComponent = flexit_modbus_server_ns.class_("FlexitModbusServer", cg.Component)
 
 DEPENDENCIES = ["uart"]
