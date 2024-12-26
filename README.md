@@ -1,10 +1,11 @@
 # ESPHome Flexit Modbus Server
 
-A project implements a Modbus server for Flexit ventilation systems using ESPHome.
-This is still a WIP, and does not yet include all sensors exposed by the Flexit CI66.
+A project that implements a Modbus server for Flexit ventilation systems using ESPHome.
+You do not need a Flexit CI66 for this to work.
+This is still a WIP, and does not yet include all sensors exposed by the Flexit CS60.
 
 ## Requirements
-
+- This does not require a Flexit CI66 Modbus adapter to work!
 - A Flexit ventilation system with a CS60 or similar controller. This has only been tested on a CS60, but should work with any controller that works with a CI600 panel
 - ESP8266 or ESP32
 - MAX485 or equivalent UART -> RS485 transciever
