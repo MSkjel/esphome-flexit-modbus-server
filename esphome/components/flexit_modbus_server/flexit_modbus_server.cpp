@@ -55,6 +55,10 @@ uint16_t FlexitModbusServer::read_holding_register(HoldingRegisterIndex reg) {
   return mb_.Hreg(reg);
 }
 
+float FlexitModbusServer::read_holding_register_temperature(HoldingRegisterIndex reg) {
+  return this->read_holding_register(reg) / 10.0f;
+}
+
 void FlexitModbusServer::write_coil(CoilIndex coil, bool state) {
   mb_.Coil(coil, state);
 }

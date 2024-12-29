@@ -9,20 +9,20 @@
 #include "ModbusRTU.h"
 
 namespace {
-static const char *const TAG = "FlexitModbus";
+static constexpr std::string_view TAG = "FlexitModbus";
 
 // The starting addresses of each Modbus table (coils, holding regs, etc.).
-// If you don't need dummy indices in HoldingRegisterIndex, you can adjust
-// these values and your enum definitions accordingly.
 static constexpr uint16_t COIL_START_ADDRESS              = 0x0000;
 static constexpr uint16_t DISC_INPUT_START_ADDRESS        = 0x0000;
 static constexpr uint16_t HOLDING_REGISTER_START_ADDRESS  = 0x0000;
 static constexpr uint16_t INPUT_REGISTER_START_ADDRESS    = 0x0000;
 
-static constexpr uint16_t MAX_NUM_COILS                   = 125;
-static constexpr uint16_t MAX_NUM_DISCRETE_INPUTS         = 20;
-static constexpr uint16_t MAX_NUM_HOLDING_REGISTERS       = 400;
+static constexpr uint16_t MAX_NUM_COILS                   = 360;
+static constexpr uint16_t MAX_NUM_DISCRETE_INPUTS         = 1;
+static constexpr uint16_t MAX_NUM_HOLDING_REGISTERS       = 360;
 static constexpr uint16_t MAX_NUM_INPUT_REGISTERS         = 1;
+
+static constexpr uint16_t KNOWN_REG_START_OFFSET          = 0xBD;
 
 /**
  * @brief Possible textual representations for the different operation modes
@@ -74,19 +74,19 @@ enum DiscreteInputIndex {
  * @brief Identifiers for Holding Registers in our Modbus server.
  */
 enum HoldingRegisterIndex {
-  REG_DUMMY_0 = 0xBD,  ///< Unused or placeholder register index (hex 0xBD)
+  REG_DUMMY_0 = KNOWN_REG_START_OFFSET,
   REG_SETPOINT_TEMP,
   REG_REGULATION_MODE,
   REG_FILTER_TIMER,
+  REG_UNK_1,
   REG_UNK_2,
-  REG_UNK_3,
   REG_SUPPLY_TEMPERATURE,
-  REG_UNK_4,
+  REG_UNK_3,
   REG_OUTDOOR_TEMPERATURE,
-  REG_UNK_5,
+  REG_UNK_4,
   REG_HEATER_PERCENTAGE,
   REG_HEAT_EXCHANGER_PERCENTAGE,
-  REG_UNK_6,
+  REG_UNK_5,
   REG_SUPPLY_AIR_FAN_SPEED_PERCENTAGE,
 
   NUM_HOLDING_REGS = MAX_NUM_HOLDING_REGISTERS
@@ -169,6 +169,14 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component, p
     * @return The 16-bit value stored, or 0 if the index is out of range.
     */
     uint16_t read_holding_register(HoldingRegisterIndex reg);
+
+    /**
+    * @brief Read a temperature value from a Holding Register (by enum index).
+    *
+    * @param reg Which holding register to read. Valid range: [0 .. NUM_HOLDING_REGS-1].
+    * @return The 16-bit value converted to float / 10 , or 0 if the index is out of range.
+    */
+    float read_holding_register_temperature(HoldingRegisterIndex reg);
 
     /**
     * @brief Write a boolean state to a Coil.

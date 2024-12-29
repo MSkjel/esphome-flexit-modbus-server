@@ -44,53 +44,45 @@ flexit_modbus_server:
 
 sensor:
   - platform: template
-    name: Test
-    id: test
-    update_interval: 5s
-    lambda: "return id(server)->read_coil(flexit_modbus_server::COIL_1);"
-
-  - platform: template
     name: Setpoint Air Temperature
     id: setpoint_air_temperature
-    update_interval: 5s
+    update_interval: 10s
     device_class: temperature
-    unit_of_measurement: "°C"
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_SETPOINT_TEMP) / 10.0;"
+    lambda: "return id(server)->read_holding_register_temperature(flexit_modbus_server::REG_SETPOINT_TEMP);"
 
   - platform: template
     name: Supply Air Temperature
     id: supply_air_temperature
-    update_interval: 5s
+    update_interval: 10s
     device_class: temperature
-    unit_of_measurement: "°C"
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_SUPPLY_TEMPERATURE) / 10.0;"
+    lambda: "return id(server)->read_holding_register_temperature(flexit_modbus_server::REG_SUPPLY_TEMPERATURE);"
+    filters:
 
   - platform: template
     name: Outdoor Air Temperature
     id: outdoor_air_temperature
-    update_interval: 5s
+    update_interval: 10s
     device_class: temperature
-    unit_of_measurement: "°C"
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_OUTDOOR_TEMPERATURE) / 10.0;"
+    lambda: "return id(server)->read_holding_register_temperature(flexit_modbus_server::REG_OUTDOOR_TEMPERATURE);"
 
   - platform: template
     name: Heater Percentage
     id: heater_percentage
-    update_interval: 5s
+    update_interval: 10s
     unit_of_measurement: "%"
     lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_HEATER_PERCENTAGE);"
 
   - platform: template
     name: Heat Exchanger Percentage
     id: heat_exchanger_percentage
-    update_interval: 5s
+    update_interval: 10s
     unit_of_measurement: "%"
     lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_HEAT_EXCHANGER_PERCENTAGE);"
     
   - platform: template
     name: Supply Air Fan Speed Percentage
     id: supply_air_fan_speed_percentage
-    update_interval: 5s
+    update_interval: 10s
     unit_of_measurement: "%"
     lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_SUPPLY_AIR_FAN_SPEED_PERCENTAGE);"
     
@@ -98,7 +90,7 @@ text_sensor:
   - platform: template
     name: Mode
     id: mode
-    update_interval: 5s
+    update_interval: 10s
     lambda: "return flexit_modbus_server::mode_to_string(id(server)->read_holding_register(flexit_modbus_server::REG_REGULATION_MODE));"
 ```
 
