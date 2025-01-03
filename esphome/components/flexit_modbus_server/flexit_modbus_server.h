@@ -12,17 +12,15 @@ namespace {
 static constexpr std::string_view TAG = "FlexitModbus";
 
 // The starting addresses of each Modbus table (coils, holding regs, etc.).
-static constexpr uint16_t COIL_START_ADDRESS              = 0x0000;
-static constexpr uint16_t DISC_INPUT_START_ADDRESS        = 0x0000;
-static constexpr uint16_t HOLDING_REGISTER_START_ADDRESS  = 0x0000;
-static constexpr uint16_t INPUT_REGISTER_START_ADDRESS    = 0x0000;
+static constexpr uint16_t COIL_START_ADDRESS              = 0x00;
+static constexpr uint16_t DISC_INPUT_START_ADDRESS        = 0x00;
+static constexpr uint16_t HOLDING_REGISTER_START_ADDRESS  = 0xBE;
+static constexpr uint16_t INPUT_REGISTER_START_ADDRESS    = 0x00;
 
-static constexpr uint16_t MAX_NUM_COILS                   = 360;
+static constexpr uint16_t MAX_NUM_COILS                   = 100;
 static constexpr uint16_t MAX_NUM_DISCRETE_INPUTS         = 1;
-static constexpr uint16_t MAX_NUM_HOLDING_REGISTERS       = 360;
+static constexpr uint16_t MAX_NUM_HOLDING_REGISTERS       = 85;
 static constexpr uint16_t MAX_NUM_INPUT_REGISTERS         = 1;
-
-static constexpr uint16_t KNOWN_REG_START_OFFSET          = 0xBD;
 
 /**
  * @brief Possible textual representations for the different operation modes
@@ -74,8 +72,7 @@ enum DiscreteInputIndex {
  * @brief Identifiers for Holding Registers in our Modbus server.
  */
 enum HoldingRegisterIndex {
-  REG_DUMMY_0 = KNOWN_REG_START_OFFSET,
-  REG_SETPOINT_TEMP,
+  REG_SETPOINT_TEMP = HOLDING_REGISTER_START_ADDRESS,
   REG_REGULATION_MODE,
   REG_FILTER_TIMER,
   REG_UNK_1,
@@ -88,7 +85,6 @@ enum HoldingRegisterIndex {
   REG_HEAT_EXCHANGER_PERCENTAGE,
   REG_UNK_5,
   REG_SUPPLY_AIR_FAN_SPEED_PERCENTAGE,
-
   NUM_HOLDING_REGS = MAX_NUM_HOLDING_REGISTERS
 };
 
@@ -131,7 +127,7 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component, p
     /**
     * @brief Priority for setup. We want this to be set up as soon as possible.
     */
-    float get_setup_priority() const override { return setup_priority::BUS; }
+    float get_setup_priority() const override { return setup_priority::IO; }
 
     /**
     * @brief Called once by ESPHome during setup.
