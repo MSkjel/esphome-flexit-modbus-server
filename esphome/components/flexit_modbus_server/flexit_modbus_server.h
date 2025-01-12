@@ -9,18 +9,14 @@
 #include "ModbusRTU.h"
 
 namespace {
-static constexpr std::string_view TAG = "FlexitModbus";
+static constexpr const char *const TAG = "FlexitModbus";
 
 // The starting addresses of each Modbus table (coils, holding regs, etc.).
 static constexpr uint16_t COIL_START_ADDRESS              = 0x00;
-static constexpr uint16_t DISC_INPUT_START_ADDRESS        = 0x00;
-static constexpr uint16_t HOLDING_REGISTER_START_ADDRESS  = 0xBE;
-static constexpr uint16_t INPUT_REGISTER_START_ADDRESS    = 0x00;
+static constexpr uint16_t HOLDING_REGISTER_START_ADDRESS  = 0x00;
 
-static constexpr uint16_t MAX_NUM_COILS                   = 100;
-static constexpr uint16_t MAX_NUM_DISCRETE_INPUTS         = 1;
-static constexpr uint16_t MAX_NUM_HOLDING_REGISTERS       = 85;
-static constexpr uint16_t MAX_NUM_INPUT_REGISTERS         = 1;
+static constexpr uint16_t MAX_NUM_COILS                   = 335;
+static constexpr uint16_t MAX_NUM_HOLDING_REGISTERS       = 275;
 
 /**
  * @brief Possible textual representations for the different operation modes
@@ -30,8 +26,7 @@ static constexpr const char *const MODE_STRINGS[] = {
   "Stop",
   "Min", 
   "Normal",
-  "Max",
-  "Max In"
+  "Max"
 };
 
 static constexpr size_t NUM_MODES = sizeof(MODE_STRINGS) / sizeof(MODE_STRINGS[0]);
@@ -41,38 +36,15 @@ namespace esphome {
 namespace flexit_modbus_server {
 
 // ------------------------------------------------------------------
-// Coil indices
-// ------------------------------------------------------------------
-/**
- * @brief Identifiers for each Coil in our Modbus server.
- */
-enum CoilIndex {
-  COIL_0,
-  COIL_1,
-  COIL_2,
-  COIL_3,
-  NUM_COILS = MAX_NUM_COILS
-};
-
-// ------------------------------------------------------------------
-// Discrete Input indices
-// ------------------------------------------------------------------
-/**
- * @brief Identifiers for Discrete Inputs in our Modbus server.
- */
-enum DiscreteInputIndex {
-  DISC_INPUT_1,
-  NUM_DISC_INPUTS = MAX_NUM_DISCRETE_INPUTS
-};
-
-// ------------------------------------------------------------------
 // Holding Register indices
 // ------------------------------------------------------------------
 /**
  * @brief Identifiers for Holding Registers in our Modbus server.
  */
 enum HoldingRegisterIndex {
-  REG_SETPOINT_TEMP = HOLDING_REGISTER_START_ADDRESS,
+  REG_REGULATION_MODE_CMD = 0x00,
+  REG_SETPOINT_TEMP_CMD = 0x0C,
+  REG_SETPOINT_TEMP = 0xBE,
   REG_REGULATION_MODE,
   REG_FILTER_TIMER,
   REG_UNK_1,
@@ -85,17 +57,8 @@ enum HoldingRegisterIndex {
   REG_HEAT_EXCHANGER_PERCENTAGE,
   REG_UNK_5,
   REG_SUPPLY_AIR_FAN_SPEED_PERCENTAGE,
-  NUM_HOLDING_REGS = MAX_NUM_HOLDING_REGISTERS
-};
-
-// ------------------------------------------------------------------
-// Input Register indices
-// ------------------------------------------------------------------
-/**
- * @brief Identifiers for Input Registers in our Modbus server.
- */
-enum InputRegisterIndex {
-  NUM_INPUT_REGS = MAX_NUM_INPUT_REGISTERS
+  REG_HEATER_ENABLED = 0x10E,
+  REG_HEATER_CMD = 0x13F
 };
 
 /**
@@ -105,6 +68,14 @@ enum InputRegisterIndex {
  * @return A string describing the mode, or "Invalid mode" if out of range.
  */
 std::string mode_to_string(uint16_t mode);
+
+/**
+ * @brief Convert a human-readable string into a numeric mode value.
+ *
+ * @param mode The mode to convert.
+ * @return The mode ID.
+ */
+uint16_t string_to_mode(std::string &mode_str);
 
 // ------------------------------------------------------------------
 // FlexitModbusServer
@@ -127,7 +98,7 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component, p
     /**
     * @brief Priority for setup. We want this to be set up as soon as possible.
     */
-    float get_setup_priority() const override { return setup_priority::IO; }
+    float get_setup_priority() const override { return setup_priority::BUS; }
 
     /**
     * @brief Called once by ESPHome during setup.
@@ -142,14 +113,6 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component, p
     // ----------------------------------------------------------------
     // Custom methods for manipulating registers and coils
     // ----------------------------------------------------------------
-    /**
-    * @brief Write a value to an Input Register (by enum index).
-    *
-    * @param reg   Which input register to write. Valid range: [0 .. NUM_INPUT_REGS-1].
-    * @param value A 16-bit value to store in the Input Register array.
-    */
-    void write_input_register(InputRegisterIndex reg, uint16_t value);
-
     /**
     * @brief Write a value to a Holding Register (by enum index).
     *
@@ -180,7 +143,7 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component, p
     * @param coil  Which coil to write. Valid range: [0 .. NUM_COILS-1].
     * @param state True for ON (1), false for OFF (0).
     */
-    void write_coil(CoilIndex coil, bool state);
+    // void write_coil(CoilIndex coil, bool state);
 
     /**
     * @brief Read the boolean state of a Coil.
@@ -188,15 +151,9 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component, p
     * @param coil Which coil to read. Valid range: [0 .. NUM_COILS-1].
     * @return True if ON, false otherwise.
     */
-    bool read_coil(CoilIndex coil);
+    // bool read_coil(CoilIndex coil);
 
-    /**
-    * @brief Write a boolean state to a Discrete Input.
-    *
-    * @param discrete_input Which discrete input to write. Valid range: [0 .. NUM_DISC_INPUTS-1].
-    * @param state          True for ON (1), false for OFF (0).
-    */
-    void write_discrete_input(DiscreteInputIndex discrete_input, bool state);
+    void send_cmd(HoldingRegisterIndex cmd_register, uint16_t value);
 
     // ----------------------------------------------------------------
     // Accessors for configuration (used by __init__.py in ESPHome)
@@ -266,6 +223,8 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component, p
   private:
     /// @brief The Modbus RTU object that manages requests and responses.
     ModbusRTU mb_;
+
+    void reset_cmd_coil(HoldingRegisterIndex cmd_register, HoldingRegisterIndex state_register);
 
     /// @brief The Modbus server (slave) address (typical range: 1..247).
     uint8_t server_address_{1};

@@ -10,41 +10,38 @@ std::string mode_to_string(uint16_t mode) {
   return "Invalid mode";
 }
 
-// ---------------------------------------------------------
-// Constructor is needed for esphome
-// ---------------------------------------------------------
+uint16_t string_to_mode(std::string &mode_str) {
+  for (uint16_t i = 0; i < NUM_MODES; ++i) {
+    if (mode_str == MODE_STRINGS[i]) {
+      return i;
+    }
+  }
+
+  return 2;
+}
+
 FlexitModbusServer::FlexitModbusServer() {}
 
-// ---------------------------------------------------------
-// Setup
-// ---------------------------------------------------------
 void FlexitModbusServer::setup() {
   // Initialize the ModbusRTU instance with the underlying stream,
   mb_.begin(this, tx_enable_pin_, tx_enable_direct_);
-
-  // Set this node's Modbus address
   mb_.server(server_address_);
 
-  // Add Modbus registers to serve:
-  mb_.addHreg(HOLDING_REGISTER_START_ADDRESS, 0, NUM_HOLDING_REGS);
-  mb_.addIreg(INPUT_REGISTER_START_ADDRESS, 0, NUM_INPUT_REGS);
-  mb_.addCoil(COIL_START_ADDRESS, false, NUM_COILS);
-  mb_.addIsts(DISC_INPUT_START_ADDRESS, false, NUM_DISC_INPUTS);
+  // The CS60 seems to need one IReg for it to actually poll the servers....
+  mb_.addIreg(0, 0, 1);
+  mb_.addHreg(HOLDING_REGISTER_START_ADDRESS, 0, MAX_NUM_HOLDING_REGISTERS);
+  mb_.addCoil(COIL_START_ADDRESS, false, MAX_NUM_COILS);
 }
 
-// ---------------------------------------------------------
-// Loop (called repeatedly)
-// ---------------------------------------------------------
 void FlexitModbusServer::loop() {
   // Let the Modbus library handle incoming requests.
   mb_.task();
-}
 
-// ---------------------------------------------------------
-// Helpers to Set/Get Specific Registers or Coils
-// ---------------------------------------------------------
-void FlexitModbusServer::write_input_register(InputRegisterIndex reg, uint16_t value) {
-  mb_.Ireg(reg, value);
+  reset_cmd_coil(REG_REGULATION_MODE_CMD, REG_REGULATION_MODE);
+  reset_cmd_coil(REG_SETPOINT_TEMP_CMD, REG_SETPOINT_TEMP);
+  
+  // The setting of the heater is not working correctly
+  // reset_cmd_coil(REG_HEATER_CMD, REG_HEATER_ENABLED);
 }
 
 void FlexitModbusServer::write_holding_register(HoldingRegisterIndex reg, uint16_t value) {
@@ -56,19 +53,25 @@ uint16_t FlexitModbusServer::read_holding_register(HoldingRegisterIndex reg) {
 }
 
 float FlexitModbusServer::read_holding_register_temperature(HoldingRegisterIndex reg) {
-  return static_cast<int16_t>(this->read_holding_register(reg)) / 10.0f;
+  return static_cast<int16_t>(mb_.Hreg(reg)) / 10.0f;
 }
 
-void FlexitModbusServer::write_coil(CoilIndex coil, bool state) {
-  mb_.Coil(coil, state);
+void FlexitModbusServer::send_cmd(HoldingRegisterIndex cmd_register, uint16_t value) {
+  mb_.Hreg(cmd_register, value);
+  mb_.Coil(cmd_register, 1);
+
+  ESP_LOGW(TAG, "Set register/coil %i", cmd_register);
 }
 
-bool FlexitModbusServer::read_coil(CoilIndex coil) {
-  return mb_.Coil(coil);
-}
+void FlexitModbusServer::reset_cmd_coil(HoldingRegisterIndex cmd_register, HoldingRegisterIndex state_register) {
+  if(mb_.Coil(cmd_register)) {
+    if(mb_.Hreg(state_register) == mb_.Hreg(cmd_register)) {
+      mb_.Coil(cmd_register, 0);
+      mb_.Hreg(cmd_register, 0);
 
-void FlexitModbusServer::write_discrete_input(DiscreteInputIndex disc, bool state) {
-  mb_.Ists(disc, state);
+      ESP_LOGW(TAG, "Reset register/coil %i", cmd_register);
+    }
+  }
 }
 
 // ---------------------------------------------------------
