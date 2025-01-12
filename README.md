@@ -50,6 +50,37 @@ flexit_modbus_server:
     # tx_enable_pin: GPIO16 # The pin for RE/DE on the MAX485. Not needed with automatic direction control
     # tx_enable_direct: true # Whether to invert the signal for the RE/DE on the MAX485 or not
 
+number:
+  - platform: template
+    name: Set Temperature
+    max_value: 30
+    min_value: 10
+    step: 1
+    update_interval: 1s
+    lambda: "return id(server)->read_holding_register_temperature(flexit_modbus_server::REG_SETPOINT_TEMP);"
+    set_action: 
+      lambda: |-
+        id(server)->send_cmd(
+            flexit_modbus_server::REG_SETPOINT_TEMP_CMD,
+            x * 10
+        );
+        
+select:
+  - platform: template
+    name: Set Mode
+    update_interval: 1s
+    lambda: "return flexit_modbus_server::mode_to_string(id(server)->read_holding_register(flexit_modbus_server::REG_REGULATION_MODE));"
+    options:
+      - Stop
+      - Min
+      - Normal
+      - Max
+    set_action:
+      - lambda: |-
+          id(server)->send_cmd(
+              flexit_modbus_server::REG_REGULATION_MODE_CMD,
+              flexit_modbus_server::string_to_mode(x)
+          );
 
 sensor:
   - platform: template
