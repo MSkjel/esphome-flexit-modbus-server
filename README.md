@@ -52,86 +52,290 @@ flexit_modbus_server:
 
 number:
   - platform: template
-    name: Set Temperature
+    name: "Set Temperature"
     max_value: 30
     min_value: 10
     step: 1
     update_interval: 1s
-    lambda: "return id(server)->read_holding_register_temperature(flexit_modbus_server::REG_SETPOINT_TEMP);"
-    set_action: 
+    lambda: |-
+      return id(server)->read_holding_register_temperature(
+        flexit_modbus_server::REG_TEMPERATURE_SETPOINT
+      );
+    set_action:
       lambda: |-
         id(server)->send_cmd(
-            flexit_modbus_server::REG_SETPOINT_TEMP_CMD,
+            flexit_modbus_server::REG_CMD_TEMPERATURE_SETPOINT,
             x * 10
         );
-        
+
 select:
   - platform: template
-    name: Set Mode
+    name: "Set Mode"
     update_interval: 1s
-    lambda: "return flexit_modbus_server::mode_to_string(id(server)->read_holding_register(flexit_modbus_server::REG_REGULATION_MODE));"
+    lambda: |-
+      return flexit_modbus_server::mode_to_string(
+        id(server)->read_holding_register(flexit_modbus_server::REG_MODE)
+      );
     options:
       - Stop
       - Min
       - Normal
       - Max
     set_action:
-      - lambda: |-
-          id(server)->send_cmd(
-              flexit_modbus_server::REG_REGULATION_MODE_CMD,
-              flexit_modbus_server::string_to_mode(x)
-          );
+      lambda: |-
+        id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_MODE,
+            flexit_modbus_server::string_to_mode(x)
+        );
 
 sensor:
   - platform: template
-    name: Setpoint Air Temperature
+    name: "Setpoint Air Temperature"
     update_interval: 1s
     device_class: temperature
     unit_of_measurement: "°C"
-    lambda: "return id(server)->read_holding_register_temperature(flexit_modbus_server::REG_SETPOINT_TEMP);"
+    lambda: |-
+      return id(server)->read_holding_register_temperature(
+        flexit_modbus_server::REG_TEMPERATURE_SETPOINT
+      );
 
   - platform: template
-    name: Supply Air Temperature
+    name: "Supply Air Temperature"
     update_interval: 60s
     device_class: temperature
     unit_of_measurement: "°C"
-    lambda: "return id(server)->read_holding_register_temperature(flexit_modbus_server::REG_SUPPLY_TEMPERATURE);"
+    lambda: |-
+      return id(server)->read_holding_register_temperature(
+        flexit_modbus_server::REG_TEMPERATURE_SUPPLY_AIR
+      );
+    filters:
+      - delta: 0.2
 
+  # Is this actually the correct register? Shows ~-230C on mine. It does make sense if the sensor isnt connected.
   - platform: template
-    name: Outdoor Air Temperature
+    name: "Extract Air Temperature"
     update_interval: 60s
     device_class: temperature
     unit_of_measurement: "°C"
-    lambda: "return id(server)->read_holding_register_temperature(flexit_modbus_server::REG_OUTDOOR_TEMPERATURE);"
+    lambda: |-
+      return id(server)->read_holding_register_temperature(
+        flexit_modbus_server::REG_TEMPERATURE_EXTRACT_AIR
+      );
+    filters:
+      - delta: 0.2
 
   - platform: template
-    name: Heater Percentage
+    name: "Outdoor Air Temperature"
+    update_interval: 60s
+    device_class: temperature
+    unit_of_measurement: "°C"
+    lambda: |-
+      return id(server)->read_holding_register_temperature(
+        flexit_modbus_server::REG_TEMPERATURE_OUTDOOR_AIR
+      );
+    filters:
+      - delta: 0.2
+
+  # Is this actually the correct register? Shows ~-230C on mine. It does make sense if the sensor isnt connected.
+  - platform: template
+    name: "Return Water Temperature"
+    update_interval: 60s
+    device_class: temperature
+    unit_of_measurement: "°C"
+    lambda: |-
+      return id(server)->read_holding_register_temperature(
+        flexit_modbus_server::REG_TEMPERATURE_RETURN_WATER
+      );
+
+  - platform: template
+    name: "Heating Percentage"
     update_interval: 20s
     unit_of_measurement: "%"
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_HEATER_PERCENTAGE);"
+    lambda: |-
+      return id(server)->read_holding_register(
+        flexit_modbus_server::REG_PERCENTAGE_HEATING
+      );
+  
+  - platform: template
+    name: "Cooling Percentage"
+    update_interval: 20s
+    unit_of_measurement: "%"
+    lambda: |-
+      return id(server)->read_holding_register(
+        flexit_modbus_server::REG_PERCENTAGE_COOLING
+      );
 
   - platform: template
-    name: Heat Exchanger Percentage
+    name: "Heat Exchanger Percentage"
     update_interval: 5s
     unit_of_measurement: "%"
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_HEAT_EXCHANGER_PERCENTAGE);"
-    
+    lambda: |-
+      return id(server)->read_holding_register(
+        flexit_modbus_server::REG_PERCENTAGE_HEAT_EXCHANGER
+      );
+
   - platform: template
-    name: Supply Air Fan Speed Percentage
+    name: "Supply Fan Speed Percentage"
     update_interval: 5s
     unit_of_measurement: "%"
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_SUPPLY_AIR_FAN_SPEED_PERCENTAGE);"
+    lambda: |-
+      return id(server)->read_holding_register(
+        flexit_modbus_server::REG_PERCENTAGE_SUPPLY_FAN
+      );
+
+  - platform: template
+    name: "Runtime"
+    update_interval: 5s
+    unit_of_measurement: "h"
+    lambda: |-
+      return id(server)->read_holding_register_hours(
+        flexit_modbus_server::REG_RUNTIME_HIGH
+      );
+
+  - platform: template
+    name: "Runtime Normal"
+    update_interval: 5s
+    unit_of_measurement: "h"
+    lambda: |-
+      return id(server)->read_holding_register_hours(
+        flexit_modbus_server::REG_RUNTIME_NORMAL_HIGH
+      );
+
+  - platform: template
+    name: "Runtime Stop"
+    update_interval: 5s
+    unit_of_measurement: "h"
+    lambda: |-
+      return id(server)->read_holding_register_hours(
+        flexit_modbus_server::REG_RUNTIME_STOP_HIGH
+      );
+
+  - platform: template
+    name: "Runtime Min"
+    update_interval: 5s
+    unit_of_measurement: "h"
+    lambda: |-
+      return id(server)->read_holding_register_hours(
+        flexit_modbus_server::REG_RUNTIME_MIN_HIGH
+      );
+
+  - platform: template
+    name: "Runtime Max"
+    update_interval: 5s
+    unit_of_measurement: "h"
+    lambda: |-
+      return id(server)->read_holding_register_hours(
+        flexit_modbus_server::REG_RUNTIME_MAX_HIGH
+      );
+
+  - platform: template
+    name: "Runtime Rotor"
+    update_interval: 5s
+    unit_of_measurement: "h"
+    lambda: |-
+      return id(server)->read_holding_register_hours(
+        flexit_modbus_server::REG_RUNTIME_ROTOR_HIGH
+      );
+
+  - platform: template
+    name: "Runtime Heater"
+    update_interval: 5s
+    unit_of_measurement: "h"
+    lambda: |-
+      return id(server)->read_holding_register_hours(
+        flexit_modbus_server::REG_RUNTIME_HEATER_HIGH
+      );
+
+  - platform: template
+    name: "Runtime Filter"
+    update_interval: 5s
+    unit_of_measurement: "h"
+    lambda: |-
+      return id(server)->read_holding_register_hours(
+        flexit_modbus_server::REG_RUNTIME_FILTER_HIGH
+      );
 
 binary_sensor:
   - platform: template
-    name: Heater Enabled
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_HEATER_ENABLED);"
-    
+    name: "Heater Enabled"
+    lambda: |-
+      return id(server)->read_holding_register(
+        flexit_modbus_server::REG_STATUS_HEATER
+      ) != 0;
+
+  - platform: template
+    name: "Alarm Supply Sensor Faulty"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_ALARM_SENSOR_SUPPLY_FAULTY
+      ) != 0);
+
+  - platform: template
+    name: "Alarm Extract Sensor Faulty"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_ALARM_SENSOR_EXTRACT_FAULTY
+      ) != 0);
+
+  - platform: template
+    name: "Alarm Outdoor Sensor Faulty"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_ALARM_SENSOR_OUTDOOR_FAULTY
+      ) != 0);
+
+  - platform: template
+    name: "Alarm Return Water Sensor Faulty"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_ALARM_SENSOR_RETURN_WATER_FAULTY
+      ) != 0);
+
+  - platform: template
+    name: "Alarm Overheat Triggered"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_ALARM_SENSOR_OVERHEAT_TRIGGERED
+      ) != 0);
+
+  - platform: template
+    name: "Alarm External Smoke Sensor Triggered"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_ALARM_SENSOR_SMOKE_EXTERNAL_TRIGGERED
+      ) != 0);
+
+  - platform: template
+    name: "Alarm Water Coil Faulty"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_ALARM_SENSOR_WATER_COIL_FAULTY
+      ) != 0);
+
+  - platform: template
+    name: "Alarm Heat Exchanger Faulty"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_ALARM_SENSOR_HEAT_EXCHANGER_FAULTY
+      ) != 0);
+
+  - platform: template
+    name: "Alarm Filter Change"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_ALARM_FILTER_CHANGE
+      ) != 0);
+
 text_sensor:
   - platform: template
-    name: Current Mode
+    name: "Current Mode"
     update_interval: 1s
-    lambda: "return flexit_modbus_server::mode_to_string(id(server)->read_holding_register(flexit_modbus_server::REG_REGULATION_MODE));"
+    lambda: |-
+      return flexit_modbus_server::mode_to_string(
+        id(server)->read_holding_register(
+          flexit_modbus_server::REG_MODE
+        )
+      );
 ```
 
 ## Credits

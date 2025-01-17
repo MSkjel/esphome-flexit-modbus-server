@@ -37,8 +37,8 @@ void FlexitModbusServer::loop() {
   // Let the Modbus library handle incoming requests.
   mb_.task();
 
-  reset_cmd_coil(REG_REGULATION_MODE_CMD, REG_REGULATION_MODE);
-  reset_cmd_coil(REG_SETPOINT_TEMP_CMD, REG_SETPOINT_TEMP);
+  reset_cmd_coil(REG_CMD_MODE, REG_MODE);
+  reset_cmd_coil(REG_CMD_TEMPERATURE_SETPOINT, REG_TEMPERATURE_SETPOINT);
   
   // The setting of the heater is not working correctly
   // reset_cmd_coil(REG_HEATER_CMD, REG_HEATER_ENABLED);
@@ -54,6 +54,14 @@ uint16_t FlexitModbusServer::read_holding_register(HoldingRegisterIndex reg) {
 
 float FlexitModbusServer::read_holding_register_temperature(HoldingRegisterIndex reg) {
   return static_cast<int16_t>(mb_.Hreg(reg)) / 10.0f;
+}
+
+float FlexitModbusServer::read_holding_register_hours(HoldingRegisterIndex high_reg) 
+{
+  uint32_t rawSeconds = (static_cast<uint32_t>(mb_.Hreg(high_reg)) << 16) + static_cast<uint32_t>(mb_.Hreg(high_reg + 1));
+  float hours = rawSeconds / 3600.0f;
+
+  return hours;
 }
 
 void FlexitModbusServer::send_cmd(HoldingRegisterIndex cmd_register, uint16_t value) {

@@ -16,7 +16,6 @@ static constexpr uint16_t COIL_START_ADDRESS              = 0x00;
 static constexpr uint16_t HOLDING_REGISTER_START_ADDRESS  = 0x00;
 
 static constexpr uint16_t MAX_NUM_COILS                   = 335;
-static constexpr uint16_t MAX_NUM_HOLDING_REGISTERS       = 275;
 
 /**
  * @brief Possible textual representations for the different operation modes
@@ -41,24 +40,62 @@ namespace flexit_modbus_server {
 /**
  * @brief Identifiers for Holding Registers in our Modbus server.
  */
-enum HoldingRegisterIndex {
-  REG_REGULATION_MODE_CMD = 0x00,
-  REG_SETPOINT_TEMP_CMD = 0x0C,
-  REG_SETPOINT_TEMP = 0xBE,
-  REG_REGULATION_MODE,
-  REG_FILTER_TIMER,
-  REG_UNK_1,
-  REG_UNK_2,
-  REG_SUPPLY_TEMPERATURE,
-  REG_UNK_3,
-  REG_OUTDOOR_TEMPERATURE,
-  REG_UNK_4,
-  REG_HEATER_PERCENTAGE,
-  REG_HEAT_EXCHANGER_PERCENTAGE,
-  REG_UNK_5,
-  REG_SUPPLY_AIR_FAN_SPEED_PERCENTAGE,
-  REG_HEATER_ENABLED = 0x10E,
-  REG_HEATER_CMD = 0x13F
+enum HoldingRegisterIndex
+{
+  // Command registers
+  REG_CMD_MODE                              = 0x00,
+  REG_CMD_TEMPERATURE_SETPOINT              = 0x0C,
+
+  // Main registers
+  REG_TEMPERATURE_SETPOINT                  = 0xBE,
+  REG_MODE,
+  REG_UNKNOWN_1,                 // Pretty sure these have to do with the MAX TIMER function
+  REG_UNKNOWN_2,
+  REG_TEMPERATURE_SETPOINT_2,
+  REG_TEMPERATURE_SUPPLY_AIR,
+  REG_TEMPERATURE_EXTRACT_AIR,   // Is this correct? Mine doesnt seem to have a sensor for this. It makes sense as its the next item in the official documentation for the CI66
+  REG_TEMPERATURE_OUTDOOR_AIR,
+  REG_TEMPERATURE_RETURN_WATER,  // Is this correct? Mine doesnt seem to have a sensor for this. It makes sense as its the next item in the official documentation for the CI66
+  REG_PERCENTAGE_COOLING,
+  REG_PERCENTAGE_HEAT_EXCHANGER,
+  REG_PERCENTAGE_HEATING,
+  REG_PERCENTAGE_SUPPLY_FAN,
+
+  // Alarm registers
+  REG_ALARM_SENSOR_SUPPLY_FAULTY            = 0x104,
+  REG_ALARM_SENSOR_EXTRACT_FAULTY,
+  REG_ALARM_SENSOR_OUTDOOR_FAULTY,
+  REG_ALARM_SENSOR_RETURN_WATER_FAULTY,
+  REG_ALARM_SENSOR_OVERHEAT_TRIGGERED,
+  REG_ALARM_SENSOR_SMOKE_EXTERNAL_TRIGGERED,
+  REG_ALARM_SENSOR_WATER_COIL_FAULTY,
+  REG_ALARM_SENSOR_HEAT_EXCHANGER_FAULTY,
+  REG_ALARM_FILTER_CHANGE,
+
+  // Heater
+  REG_STATUS_HEATER                         = 0x10E,
+  REG_CMD_HEATER                            = 0x13F,
+
+  // Runtime registers
+  REG_RUNTIME_STOP_HIGH                     = 0x14C,
+  REG_RUNTIME_STOP_LOW,
+  REG_RUNTIME_MIN_HIGH,
+  REG_RUNTIME_MIN_LOW,
+  REG_RUNTIME_NORMAL_HIGH,
+  REG_RUNTIME_NORMAL_LOW,
+  REG_RUNTIME_MAX_HIGH,
+  REG_RUNTIME_MAX_LOW,
+  REG_RUNTIME_ROTOR_HIGH,
+  REG_RUNTIME_ROTOR_LOW,
+  REG_RUNTIME_HEATER_HIGH,
+  REG_RUNTIME_HEATER_LOW,
+
+  REG_RUNTIME_HIGH                          = 0x15C,
+  REG_RUNTIME_LOW,
+  REG_RUNTIME_FILTER_HIGH,
+  REG_RUNTIME_FILTER_LOW,
+
+  MAX_NUM_HOLDING_REGISTERS
 };
 
 /**
@@ -138,6 +175,14 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component, p
     float read_holding_register_temperature(HoldingRegisterIndex reg);
 
     /**
+    * @brief Read a time in hours value from a Holding Register (by enum index).
+    *
+    * @param reg Which holding register to read. Valid range: [0 .. NUM_HOLDING_REGS-1].
+    * @return The high value register << 16 + low value register converted to float / 3600.
+    */
+    float read_holding_register_hours(HoldingRegisterIndex reg);
+
+    /**
     * @brief Write a boolean state to a Coil.
     *
     * @param coil  Which coil to write. Valid range: [0 .. NUM_COILS-1].
@@ -160,14 +205,14 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component, p
     // ----------------------------------------------------------------
     /**
     * @brief Return the baud rate of the underlying UART device.
-    * @return The currently configured baud rate (bits per second).
+    * @return The currently configured baud rate
     */
     uint32_t baudRate();
 
     /**
     * @brief Set the Modbus server/slave address.
     *
-    * @param address The server address (typical range: 1 .. 247).
+    * @param address The server address
     */
     void set_server_address(uint8_t address);
 
@@ -179,10 +224,9 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component, p
     void set_tx_enable_pin(int16_t pin);
 
     /**
-    * @brief Configure whether TX enable is handled directly or automatically by the library.
+    * @brief Configure whether TX enable is high active or low
     *
-    * @param val True if we enable/disable TX manually in software;
-    *            false if the library manages it automatically.
+    * @param val True if high enable
     */
     void set_tx_enable_direct(bool val);
 
@@ -226,13 +270,13 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component, p
 
     void reset_cmd_coil(HoldingRegisterIndex cmd_register, HoldingRegisterIndex state_register);
 
-    /// @brief The Modbus server (slave) address (typical range: 1..247).
+    /// @brief The Modbus server (slave) address.
     uint8_t server_address_{1};
 
     /// @brief GPIO pin controlling driver enable for RS485 (if needed).
     int16_t tx_enable_pin_{-1};
 
-    /// @brief Whether TX enable is controlled manually or automatically.
+    /// @brief Whether TX enable is high active or low
     bool tx_enable_direct_{true};
 };
 
