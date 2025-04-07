@@ -39,7 +39,11 @@ async def to_code(config):
     cg.add(server.set_tx_enable_direct(config[CONF_TX_ENABLE_DIRECT]))
 
     if CONF_TX_ENABLE_PIN in config:
-        cg.add(server.set_tx_enable_pin(config[CONF_TX_ENABLE_PIN]))
+        # Extract the pin from the esphome object
+        pin_config = config[CONF_TX_ENABLE_PIN]
+        if 'number' in pin_config:
+            pin_number = pin_config['number']
+            cg.add(server.set_tx_enable_pin(pin_number))
 
     await cg.register_component(server, config)
 
