@@ -11,6 +11,12 @@ This is still a WIP, and does not yet include all sensors exposed by the Flexit 
 - MAX485, MAX1348 or equivalent UART -> RS485 transciever. I recommend getting one with automatic direction switching like the MAX1348
 - Basic knowledge of ESPHome YAML configuration
 
+## Hardware
+| MCU  | RS485 | Notes |
+| ------------- | ------------- | ------------- |
+| XIAO-ESP32-C3  | RS485 Breakout Board for Seeed Studio XIAO (TP8485E)  | [Details](/hardware/xiao-esp32-c3-rs485-breakout-board-for-seeed-studio-xiao-tp8485e.md)|
+
+
 ## TODO
 - Reverse/Implement more sensors
 
