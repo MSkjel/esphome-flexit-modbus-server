@@ -32,11 +32,6 @@ This project is licensed under the MIT License.
 ## Configuration Example
 
 ```yaml
-wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
-  fast_connect: true # Make sure this is enabled to make the ESP start our integration as fast as possible
-
 logger:
   baud_rate: 115200
   hardware_uart: UART1
