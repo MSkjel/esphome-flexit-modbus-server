@@ -29,8 +29,8 @@ MULTI_CONF = True
 CODEOWNERS = ["@MSkjel"]
 
 async def to_code(config):
-    #cg.add_library("emelianov/modbus-esp8266", "4.1.0")
-    cg.add_library(name="ModbusRTUServer", repository="https://github.com/MSkjel/ESP-ModbusRTUServer.git", version=None)
+
+    cg.add_library("emelianov/modbus-esp8266", "4.1.0")
     id = config[CONF_ID]
     uart = await cg.get_variable(config["uart_id"])
     server = cg.new_Pvariable(id)
