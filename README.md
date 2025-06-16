@@ -56,83 +56,12 @@ flexit_modbus_server:
     # tx_enable_pin: GPIO16 # The pin for RE/DE on the MAX485. Not needed with automatic direction control
     # tx_enable_direct: true # Whether to invert the signal for the RE/DE on the MAX485 or not
 
-switch:
-  - platform: template
-    name: "Heater"
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_STATUS_HEATER);"
-    turn_on_action:
-      - lambda: |-
-          id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_HEATER,
-            1
-          );
-    turn_off_action:
-      - lambda: |-
-          id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_HEATER,
-            0
-          );
-
-  - platform: template
-    name: "Supply Air Control"
-    optimistic: True
-    restore_mode: RESTORE_DEFAULT_ON
-    turn_on_action:
-      - lambda: |-
-          id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_AIR_CONTROL,
-            1
-          );
-    turn_off_action:
-      - lambda: |-
-          id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_AIR_CONTROL,
-            0
-          );
-
-button:
-  - platform: template
-    name: "Clear Alarms"
-    on_press: 
-      - lambda: |-
-          id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_CLEAR_ALARMS,
-            1
-          );
-
-  - platform: template
-    name: "Reset Filter Interval"
-    on_press: 
-      - lambda: |-
-          id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_CLEAR_FILTER_ALARM,
-            1
-          );
-
-  - platform: template
-    name: "Start Max Timer"
-    on_press: 
-      - lambda: |-
-          id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_START_MAX_TIMER,
-            1
-          );
-
-  - platform: template
-    name: "Stop Max Timer"
-    on_press: 
-      - lambda: |-
-          id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_STOP_MAX_TIMER,
-            1
-          );
-  
 number:
   - platform: template
-    name: "Temperature"
+    name: "Set Temperature"
     max_value: 30
     min_value: 10
-    step: 0.5
+    step: 1
     update_interval: 1s
     lambda: |-
       return id(server)->read_holding_register_temperature(
@@ -143,155 +72,6 @@ number:
         id(server)->send_cmd(
             flexit_modbus_server::REG_CMD_TEMPERATURE_SETPOINT,
             x * 10
-        );
-
-  - platform: template
-    name: "Max Timer Minutes"
-    max_value: 600
-    min_value: 1
-    step: 1
-    optimistic: True
-    restore_value: True
-    set_action:
-      lambda: |-
-        id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_MINUTES_MAX_TIMER,
-            x
-        );
-
-  - platform: template
-    name: "Temperature Supply Min"
-    max_value: 30
-    min_value: 10
-    step: 0.5
-    optimistic: True
-    restore_value: True
-    mode: BOX
-    set_action:
-      lambda: |-
-        id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_MIN,
-            x * 10
-        );
-
-  - platform: template
-    name: "Temperature Supply Max"
-    max_value: 30
-    min_value: 10
-    step: 0.5
-    optimistic: True
-    restore_value: True
-    mode: BOX
-    set_action:
-      lambda: |-
-        id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_MAX,
-            x * 10
-        );
-
-  - platform: template
-    name: "Filter Change Interval"
-    max_value: 360
-    min_value: 30
-    step: 30
-    optimistic: True
-    restore_value: True
-    mode: BOX
-    set_action:
-      lambda: |-
-        id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_DAYS_FILTER_CHANGE_INTERVAL,
-            x
-        );
-
-  - platform: template
-    name: "Supply Air Percentage Min"
-    max_value: 100
-    min_value: 1
-    step: 1
-    optimistic: True
-    restore_value: True
-    mode: BOX
-    set_action:
-      lambda: |-
-        id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_PERCENTAGE_SUPPLY_FAN_MIN,
-            x
-        );
-  
-  - platform: template
-    name: "Supply Air Percentage Normal"
-    max_value: 100
-    min_value: 1
-    step: 1
-    optimistic: True
-    restore_value: True
-    mode: BOX
-    set_action:
-      lambda: |-
-        id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_PERCENTAGE_SUPPLY_FAN_NORMAL,
-            x
-        );
-  
-  - platform: template
-    name: "Supply Air Percentage Max"
-    max_value: 100
-    min_value: 1
-    step: 1
-    optimistic: True
-    restore_value: True
-    mode: BOX
-    set_action:
-      lambda: |-
-        id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX,
-            x
-        );
-  
-  - platform: template
-    name: "Extract Air Percentage Min"
-    max_value: 100
-    min_value: 1
-    step: 1
-    optimistic: True
-    restore_value: True
-    mode: BOX
-    set_action:
-      lambda: |-
-        id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_PERCENTAGE_EXTRACT_FAN_MIN,
-            x
-        );
-
-  - platform: template
-    name: "Extract Air Percentage Normal"
-    max_value: 100
-    min_value: 1
-    step: 1
-    optimistic: True
-    restore_value: True
-    mode: BOX
-    set_action:
-      lambda: |-
-        id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_PERCENTAGE_EXTRACT_FAN_NORMAL,
-            x
-        );
-  
-  - platform: template
-    name: "Extract Air Percentage Max"
-    max_value: 100
-    min_value: 1
-    step: 1
-    optimistic: True
-    restore_value: True
-    mode: BOX
-    set_action:
-      lambda: |-
-        id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_PERCENTAGE_EXTRACT_FAN_MAX,
-            x
         );
 
 select:
@@ -337,6 +117,7 @@ sensor:
     filters:
       - delta: 0.2
 
+  # Is this actually the correct register? Shows ~-230C on mine. It does make sense if the sensor isnt connected.
   - platform: template
     name: "Extract Air Temperature"
     update_interval: 60s
@@ -361,6 +142,7 @@ sensor:
     filters:
       - delta: 0.2
 
+  # Is this actually the correct register? Shows ~-230C on mine. It does make sense if the sensor isnt connected.
   - platform: template
     name: "Return Water Temperature"
     update_interval: 60s
@@ -409,7 +191,7 @@ sensor:
 
   - platform: template
     name: "Runtime"
-    update_interval: 60s
+    update_interval: 5s
     unit_of_measurement: "h"
     lambda: |-
       return id(server)->read_holding_register_hours(
@@ -418,7 +200,7 @@ sensor:
 
   - platform: template
     name: "Runtime Normal"
-    update_interval: 60s
+    update_interval: 5s
     unit_of_measurement: "h"
     lambda: |-
       return id(server)->read_holding_register_hours(
@@ -427,7 +209,7 @@ sensor:
 
   - platform: template
     name: "Runtime Stop"
-    update_interval: 60s
+    update_interval: 5s
     unit_of_measurement: "h"
     lambda: |-
       return id(server)->read_holding_register_hours(
@@ -436,7 +218,7 @@ sensor:
 
   - platform: template
     name: "Runtime Min"
-    update_interval: 60s
+    update_interval: 5s
     unit_of_measurement: "h"
     lambda: |-
       return id(server)->read_holding_register_hours(
@@ -445,7 +227,7 @@ sensor:
 
   - platform: template
     name: "Runtime Max"
-    update_interval: 60s
+    update_interval: 5s
     unit_of_measurement: "h"
     lambda: |-
       return id(server)->read_holding_register_hours(
@@ -454,7 +236,7 @@ sensor:
 
   - platform: template
     name: "Runtime Rotor"
-    update_interval: 60s
+    update_interval: 5s
     unit_of_measurement: "h"
     lambda: |-
       return id(server)->read_holding_register_hours(
@@ -463,7 +245,7 @@ sensor:
 
   - platform: template
     name: "Runtime Heater"
-    update_interval: 60s
+    update_interval: 5s
     unit_of_measurement: "h"
     lambda: |-
       return id(server)->read_holding_register_hours(
@@ -472,7 +254,7 @@ sensor:
 
   - platform: template
     name: "Runtime Filter"
-    update_interval: 60s
+    update_interval: 5s
     unit_of_measurement: "h"
     lambda: |-
       return id(server)->read_holding_register_hours(
@@ -483,9 +265,9 @@ binary_sensor:
   - platform: template
     name: "Heater Enabled"
     lambda: |-
-      return (id(server)->read_holding_register(
+      return id(server)->read_holding_register(
         flexit_modbus_server::REG_STATUS_HEATER
-      ) != 0);
+      ) != 0;
 
   - platform: template
     name: "Alarm Supply Sensor Faulty"
