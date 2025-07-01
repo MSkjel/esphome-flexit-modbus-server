@@ -16,77 +16,86 @@ uint16_t string_to_mode(std::string &mode_str) {
       return i;
     }
   }
-
+  // Default to "Normal" mode if not found.
   return 2;
 }
 
 FlexitModbusServer::FlexitModbusServer() {}
 
 void FlexitModbusServer::setup() {
-  // Initialize the ModbusRTU instance with the underlying stream,
-  mb_.begin(this, tx_enable_pin_, tx_enable_direct_);
-  mb_.server(server_address_);
+  // Initialize the new ModbusRTUServer instance using our Stream interface (this),
+  // the baud rate from our UART parent, the server address, and the maximum number
+  // of coils and holding registers.
+  mb_.begin(this, baudRate(), server_address_, tx_enable_pin_, tx_enable_direct_, MAX_NUM_COILS, MAX_NUM_HOLDING_REGISTERS, 0, 4);
+  // The CS/CU/CE60 doesnt actually follow the Modbus RTU spec. It just ignores any interframe timeout and blasts request.
+  // It doesnt actually matter that much to us, until they send the 0x65 reset cmd coil/register frame. It gets blasted as a broadcast right after we send our response.
+  mb_.setInterframeTimeout(0);
 
-  // The CS60 seems to need one IReg for it to actually poll the servers....
-  mb_.addIreg(0, 0, 1);
-  mb_.addHreg(HOLDING_REGISTER_START_ADDRESS, 0, MAX_NUM_HOLDING_REGISTERS);
-  mb_.addCoil(COIL_START_ADDRESS, false, MAX_NUM_COILS);
+  // This is used as a cmd coil/register reset. Should we check the CRC?
+  mb_.onInvalidFunction = [this](uint8_t* data, size_t length, bool broadcast) {
+    uint8_t function_code = data[1];
+    
+    if (function_code == 0x65) {
+        uint16_t address = (data[2] << 8) | data[3];
+        uint16_t value = (data[4] << 8) | data[5];
+        
+        mb_.setHoldingRegister(address, value);
+        mb_.setCoil(address, 0);
+      
+        return;
+    }
+
+    mb_.sendException(data[1], 0x01, broadcast);
+  };
 }
 
 void FlexitModbusServer::loop() {
-  // Let the Modbus library handle incoming requests.
-  mb_.task();
+  mb_.update();
 
-  reset_cmd_coil(REG_CMD_MODE, REG_MODE);
-  reset_cmd_coil(REG_CMD_TEMPERATURE_SETPOINT, REG_TEMPERATURE_SETPOINT);
-  
-  // The setting of the heater is not working correctly
-  // reset_cmd_coil(REG_HEATER_CMD, REG_HEATER_ENABLED);
+  // Reset command coils if the associated state has been applied. No longer needes as we have implemented the 0x65 reset?
+  // reset_cmd_coil(REG_CMD_MODE, REG_MODE);
+  // reset_cmd_coil(REG_CMD_TEMPERATURE_SETPOINT, REG_TEMPERATURE_SETPOINT);
 }
 
 void FlexitModbusServer::write_holding_register(HoldingRegisterIndex reg, uint16_t value) {
-  mb_.Hreg(reg, value);
+  mb_.setHoldingRegister(reg, value);
 }
 
 uint16_t FlexitModbusServer::read_holding_register(HoldingRegisterIndex reg) {
-  return mb_.Hreg(reg);
+  return mb_.getHoldingRegister(reg);
 }
 
 float FlexitModbusServer::read_holding_register_temperature(HoldingRegisterIndex reg) {
-  return static_cast<int16_t>(mb_.Hreg(reg)) / 10.0f;
+  // Convert the raw register value to a temperature (divide by 10).
+  return static_cast<int16_t>(mb_.getHoldingRegister(reg)) / 10.0f;
 }
 
-float FlexitModbusServer::read_holding_register_hours(HoldingRegisterIndex high_reg) 
-{
-  uint32_t rawSeconds = (static_cast<uint32_t>(mb_.Hreg(high_reg)) << 16) + static_cast<uint32_t>(mb_.Hreg(high_reg + 1));
-  float hours = rawSeconds / 3600.0f;
-
-  return hours;
+float FlexitModbusServer::read_holding_register_hours(HoldingRegisterIndex high_reg) {
+  // Combine two registers: the high word and the subsequent low word.
+  uint32_t rawSeconds = (static_cast<uint32_t>(mb_.getHoldingRegister(high_reg)) << 16)
+                          + static_cast<uint32_t>(mb_.getHoldingRegister(high_reg + 1));
+  return rawSeconds / 3600.0f;
 }
 
 void FlexitModbusServer::send_cmd(HoldingRegisterIndex cmd_register, uint16_t value) {
-  mb_.Hreg(cmd_register, value);
-  mb_.Coil(cmd_register, 1);
-
-  ESP_LOGW(TAG, "Set register/coil %i", cmd_register);
+  // Write the command value to the register and set the corresponding coil.
+  mb_.setHoldingRegister(cmd_register, value);
+  mb_.setCoil(cmd_register, 1);
 }
 
-void FlexitModbusServer::reset_cmd_coil(HoldingRegisterIndex cmd_register, HoldingRegisterIndex state_register) {
-  if(mb_.Coil(cmd_register)) {
-    if(mb_.Hreg(state_register) == mb_.Hreg(cmd_register)) {
-      mb_.Coil(cmd_register, 0);
-      mb_.Hreg(cmd_register, 0);
-
-      ESP_LOGW(TAG, "Reset register/coil %i", cmd_register);
-    }
-  }
-}
+// No longer needed as we have implemented the 0x65 reset?
+// void FlexitModbusServer::reset_cmd_coil(HoldingRegisterIndex cmd_register, HoldingRegisterIndex state_register) {
+//   if (mb_.getCoil(state_register) && mb_.getHoldingRegister(state_register) == mb_.getHoldingRegister(cmd_register)) {
+//     mb_.setHoldingRegister(cmd_register, 0);
+//     mb_.setCoil(cmd_register, 0);
+//   }
+// }
 
 // ---------------------------------------------------------
 // ESPHome UART Device Requirements
 // ---------------------------------------------------------
 uint32_t FlexitModbusServer::baudRate() {
-  // Return the baud rate from the UART device
+  // Return the baud rate from the parent UART device.
   return this->parent_->get_baud_rate();
 }
 
@@ -106,8 +115,7 @@ void FlexitModbusServer::set_tx_enable_direct(bool val) {
 }
 
 // ---------------------------------------------------------
-// Stream interface implementation
-// (required by the ModbusRTU library)
+// Stream interface implementation (required by ModbusRTUServer)
 // ---------------------------------------------------------
 size_t FlexitModbusServer::write(uint8_t data) {
   return uart::UARTDevice::write(data);
