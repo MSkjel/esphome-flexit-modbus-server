@@ -47,14 +47,44 @@ void FlexitModbusServer::setup() {
 
     mb_.sendException(data[1], 0x01, broadcast);
   };
+
+  #ifdef DEBUG
+  // This is needed since the CS60 doesnt respect interframe timeouts. We get multiple frames in one buffer.
+  mb_.onInvalidServer = [this](uint8_t* data, size_t length, bool broadcast) {
+    size_t offset = 0;
+
+    // Walk the buffer, frame by frame
+    while (offset + 4 <= length) {
+      size_t avail = length - offset;
+      size_t flen  = modbus_frame_length(data + offset, avail);
+
+      if (flen == 0 || flen > avail) 
+        break;
+      
+      uint8_t id = data[offset + 0];
+      uint8_t fn = data[offset + 1];
+
+      if (fn == 0x65 && id == 0x0) {
+        uint16_t addr  = (data[offset+2] << 8) | data[offset + 3];
+        int16_t value = static_cast<int16_t>((data[offset + 4] << 8) | data[offset + 5]);
+        
+        //These two registers get spammed alot. Don't know what they are for.
+        if (addr != 0x94 && addr != 0x95) {
+          ESP_LOGW(TAG, "=== 0x65 PDU @ offset %u, len %u ===", (unsigned)offset, (unsigned)flen);
+          ESP_LOG_BUFFER_HEXDUMP(TAG, data + offset, flen, ESP_LOG_ERROR);
+          ESP_LOGW(TAG, "Received 0x65 reset command: address=0x%04X, value hex=0x%04X, value dec=%i",
+                  addr, value, value);
+        }
+      }
+
+      offset += flen;
+    }
+  };
+  #endif
 }
 
 void FlexitModbusServer::loop() {
   mb_.update();
-
-  // Reset command coils if the associated state has been applied. No longer needes as we have implemented the 0x65 reset?
-  // reset_cmd_coil(REG_CMD_MODE, REG_MODE);
-  // reset_cmd_coil(REG_CMD_TEMPERATURE_SETPOINT, REG_TEMPERATURE_SETPOINT);
 }
 
 void FlexitModbusServer::write_holding_register(HoldingRegisterIndex reg, uint16_t value) {
@@ -83,13 +113,50 @@ void FlexitModbusServer::send_cmd(HoldingRegisterIndex cmd_register, uint16_t va
   mb_.setCoil(cmd_register, 1);
 }
 
-// No longer needed as we have implemented the 0x65 reset?
-// void FlexitModbusServer::reset_cmd_coil(HoldingRegisterIndex cmd_register, HoldingRegisterIndex state_register) {
-//   if (mb_.getCoil(state_register) && mb_.getHoldingRegister(state_register) == mb_.getHoldingRegister(cmd_register)) {
-//     mb_.setHoldingRegister(cmd_register, 0);
-//     mb_.setCoil(cmd_register, 0);
-//   }
-// }
+// ---------------------------------------------------------
+// Debugging functions
+// ---------------------------------------------------------
+#ifdef DEBUG
+size_t FlexitModbusServer::modbus_frame_length(const uint8_t *buf, size_t avail) {
+  if (avail < 4) return 0;
+  
+  const uint8_t fn = buf[1];
+  
+  // Exception responses
+  if (fn & 0x80) {
+      return (avail >= 5) ? 5 : 0;
+  }
+  
+  // This controller uses 0x01 for the big read (332 registers)
+  if (fn == 0x01) {
+      if (avail < 3) return 0;
+      
+      // Response: byte count in buf[2], expect ~83 bytes for 332 registers (bits)
+      if (buf[2] > 0 && buf[2] <= 250) {
+          return 1 + 1 + 1 + buf[2] + 2;  // Response format
+      }
+      return (avail >= 8) ? 8 : 0;  // Request format
+  }
+  
+  // 0x03 used for individual register reads
+  if (fn == 0x03) {
+      if (avail < 3) return 0;
+      
+      // Single register response will have byte count = 2
+      if (buf[2] == 2 && avail >= 7) {
+          return 7;  // ID + Fn + Count(1) + Data(2) + CRC(2)
+      }
+      return (avail >= 8) ? 8 : 0;  // Request format
+  }
+  
+  // 0x06 (write single) and 0x65 (custom reset): always 8 bytes
+  if (fn == 0x06 || fn == 0x65) {
+      return (avail >= 8) ? 8 : 0;
+  }
+  
+  return 0;
+}
+#endif
 
 // ---------------------------------------------------------
 // ESPHome UART Device Requirements

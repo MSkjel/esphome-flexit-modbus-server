@@ -5,6 +5,7 @@
 #include "esphome/components/uart/uart.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#include "esp_log.h"
 #include "esphome.h"
 #include "ModbusRTUServer.h"
 
@@ -252,13 +253,15 @@ private:
   /// @brief The new Modbus RTU server object.
   ModbusRTUServer mb_;
 
-  /**
-   * @brief Reset a command coil if the associated state register already reflects the command.
-   *
-   * @param cmd_register   The command register index.
-   * @param state_register The state register index.
-   */
-  // void reset_cmd_coil(HoldingRegisterIndex cmd_register, HoldingRegisterIndex state_register);
+  #ifdef DEBUG
+  /* 
+  * @brief  Calculate the expected length of a CS60 Modbus frame.
+  * @param buf frame
+  * @param avail length of the frame
+  * @return
+  */
+  size_t modbus_frame_length(const uint8_t *buf, size_t avail);
+  #endif
 
   /// @brief The Modbus server (server) address.
   uint8_t server_address_{1};
