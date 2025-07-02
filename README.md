@@ -134,7 +134,7 @@ button:
   
 number:
   - platform: template
-    name: "Temperature"
+    name: "Set Temperature"
     max_value: 30
     min_value: 10
     step: 0.5
@@ -216,6 +216,7 @@ number:
     step: 1
     optimistic: True
     restore_value: True
+    disabled_by_default: True
     mode: BOX
     set_action:
       lambda: |-
@@ -231,6 +232,7 @@ number:
     step: 1
     optimistic: True
     restore_value: True
+    disabled_by_default: True
     mode: BOX
     set_action:
       lambda: |-
@@ -246,6 +248,7 @@ number:
     step: 1
     optimistic: True
     restore_value: True
+    disabled_by_default: True
     mode: BOX
     set_action:
       lambda: |-
@@ -261,6 +264,7 @@ number:
     step: 1
     optimistic: True
     restore_value: True
+    disabled_by_default: True
     mode: BOX
     set_action:
       lambda: |-
@@ -276,6 +280,7 @@ number:
     step: 1
     optimistic: True
     restore_value: True
+    disabled_by_default: True
     mode: BOX
     set_action:
       lambda: |-
@@ -291,6 +296,7 @@ number:
     step: 1
     optimistic: True
     restore_value: True
+    disabled_by_default: True
     mode: BOX
     set_action:
       lambda: |-
