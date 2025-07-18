@@ -707,7 +707,9 @@ climate:
     action_id: climate_action
     visual:
       temperature_step: 0.5C     
+```
 
 ## Credits
 - [esphome-modbus-server](https://github.com/epiclabs-uc/esphome-modbus-server)
 - [modbus-esp8266](https://github.com/emelianov/modbus-esp8266)
+- [template-climate](https://github.com/polyfloyd/esphome/tree/template-climate)
