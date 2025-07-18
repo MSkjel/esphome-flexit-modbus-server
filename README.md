@@ -563,9 +563,11 @@ text_sensor:
   - platform: template
     name: "Climate Action"
     id: climate_action
-    internal: True
+    disabled_by_default: True
     lambda: |-
-      bool heater_on = id(server)->read_holding_register(flexit_modbus_server::REG_STATUS_HEATER);
+      bool heater_on = (id(server)->read_holding_register(
+        flexit_modbus_server::REG_STATUS_HEATER
+      ) != 0) ;
       std::string mode = flexit_modbus_server::mode_to_string(
         id(server)->read_holding_register(flexit_modbus_server::REG_MODE)
       );
@@ -685,15 +687,17 @@ select:
             );
           }
     lambda: |-
-      if (id(server)->read_holding_register(flexit_modbus_server::REG_STATUS_HEATER)) {
+      bool heater_on = (id(server)->read_holding_register(
+        flexit_modbus_server::REG_STATUS_HEATER
+      ) != 0) ;
+      std::string current_mode = flexit_modbus_server::mode_to_string(
+        id(server)->read_holding_register(flexit_modbus_server::REG_MODE)
+      );
+      if (heater_on) {
         return std::string("HEAT");
-      } else if (!id(server)->read_holding_register(flexit_modbus_server::REG_STATUS_HEATER) && 
-                 flexit_modbus_server::mode_to_string(
-                   id(server)->read_holding_register(flexit_modbus_server::REG_MODE)) != "Stop") {
+      } else if (!heater_on && current_mode != "Stop") {
         return std::string("FAN_ONLY");
-      } else if (!id(server)->read_holding_register(flexit_modbus_server::REG_STATUS_HEATER) && 
-                 flexit_modbus_server::mode_to_string(
-                   id(server)->read_holding_register(flexit_modbus_server::REG_MODE)) == "Stop") {
+      } else if (!heater_on && current_mode == "Stop") {
         return std::string("OFF");
       } else {
         return std::string("UNKNOWN");
@@ -709,7 +713,7 @@ climate:
     fan_mode_id: set_fan_mode
     action_id: climate_action
     visual:
-      temperature_step: 0.5C     
+      temperature_step: 0.5C        
 ```
 
 ## Credits
