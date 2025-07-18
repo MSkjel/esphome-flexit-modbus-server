@@ -563,7 +563,7 @@ text_sensor:
   - platform: template
     name: "Climate Action"
     id: climate_action
-    disabled_by_default: True
+    internal: True
     lambda: |-
       bool heater_on = id(server)->read_holding_register(flexit_modbus_server::REG_STATUS_HEATER);
       std::string mode = flexit_modbus_server::mode_to_string(
@@ -603,7 +603,7 @@ select:
     name: "Set Fan Mode"
     id: set_fan_mode
     update_interval: 1s
-    disabled_by_default: True
+    internal: True
     options:
       - "OFF"
       - "LOW"
@@ -656,7 +656,7 @@ select:
     name: "Heater Mode"
     id: heater_mode
     update_interval: 1s
-    disabled_by_default: True
+    internal: True
     options:
       - "HEAT"
       - "FAN_ONLY"
