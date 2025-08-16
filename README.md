@@ -8,7 +8,7 @@ This is still a WIP, and does not yet include all sensors exposed by the Flexit 
 - This does not require a Flexit CI66 Modbus adapter to work!
 - A Flexit ventilation system with a CS60 or similar controller. This has only been tested on a CS60, but should work with any controller that works with a CI600 panel
 - ESP8266 or ESP32
-- MAX485, MAX1348 or equivalent UART -> RS485 transciever. I recommend getting one with automatic direction switching like the MAX1348
+- MAX485, MAX1348 or equivalent UART -> RS485 transciever. I recommend buying the XIAO-ESP32-C3 and a XIAO RS485 breakout board referenced below.
 - Basic knowledge of ESPHome YAML configuration
 
 ## Hardware
