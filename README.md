@@ -1,66 +1,95 @@
 # ESPHome Flexit Modbus Server
 
-A project that implements a Modbus server for Flexit ventilation systems using ESPHome.
-You do not need a Flexit CI66 for this to work.
-This is still a WIP, and does not yet include all sensors exposed by the Flexit CS60.
+This project implements a Modbus server for Flexit ventilation systems using ESPHome.  
+**No Flexit CI66 adapter is required.**  
+> **Note:** This is a work in progress and does not yet support all Flexit CS60 sensors or switches.
+
+---
+
+## Features
+
+- Control Flexit ventilation systems (tested on CS60, may work with others compatible with CI600 panel)
+- Works with ESP8266 or ESP32 microcontrollers
+- Integrates with ESPHome for easy Home Assistant support
+- No CI66 needed
+
+---
 
 ## Requirements
-- This does not require a Flexit CI66 Modbus adapter to work!
-- A Flexit ventilation system with a CS60 or similar controller. This has only been tested on a CS60, but should work with any controller that works with a CI600 panel
-- ESP8266 or ESP32
-- MAX485, MAX1348 or equivalent UART -> RS485 transciever. I recommend buying the XIAO-ESP32-C3 and a XIAO RS485 breakout board referenced below.
-- Basic knowledge of ESPHome YAML configuration
 
-## Hardware
-| MCU  | RS485 | Notes |
-| ------------- | ------------- | ------------- |
-| XIAO-ESP32-C3  | RS485 Breakout Board for Seeed Studio XIAO (TP8485E)  | [Details](/hardware/xiao-esp32-c3-rs485-breakout-board-for-seeed-studio-xiao-tp8485e.md)|
+- Flexit ventilation system with CS60 (or similar) controller
+- ESP8266 or ESP32 device
+- UART-to-RS485 transceiver (e.g., MAX485, MAX1348)
+- Basic ESPHome YAML configuration knowledge
 
+---
 
-## TODO
-- Reverse/Implement more sensors
+## Recommended Hardware
+
+| MCU             | RS485 Breakout Board | Notes                                                                 |
+|-----------------|---------------------|-----------------------------------------------------------------------|
+| XIAO-ESP32-C3   | XIAO-RS485-Expansion-Board  | [Details](hardware/xiao-esp32-c3-rs485-breakout-board-for-seeed-studio-xiao-tp8485e.md) |
+
+---
 
 ## Limitations
-- Setting the Supply Air Temperature is only possible without a CI600 connected. This is a limitation emposed by Flexit in the CS60.
-- The ESP has to be switched on before the CS60 as the CS60 only starts polling servers that are actually responding when it starts up.
-- Setting the server address to 2 does not seem to work, even though the CS60 actually tries to poll this too. Only 1(If no CI600 connected) or 3.
-- Some of the settings are set to optimistic and will not reflect changes done using another panel/modbus server. They will also be initialized with default values first time.
 
-## License
+- **Supply Air Temperature:** Can only be set if no CI600 is connected (CS60 limitation).
+- **Startup Order:** ESP must be powered on before CS60, or CS60 won’t poll it.
+- **Optimistic Settings:** Some settings are “optimistic” and may not reflect changes from other panels or servers.
 
-This project is licensed under the MIT License.
+---
 
-## Configuration Example
+## Quick Start
+
+1. **Connect Hardware:**  
+   Wire your ESP device to the RS485 transceiver and connect to the Flexit controller.
+
+2. **ESPHome Configuration:**  
+   Add the following to your ESPHome YAML file (adjust pins and options as needed):
+
+   ```yaml
+   wifi:
+     fast_connect: true           # Needed if powered from the CS60
+
+   logger:
+     baud_rate: 115200
+     hardware_uart: UART1
+     level: WARN
+
+   external_components:
+     - source: github://MSkjel/esphome-flexit-modbus-server@main
+       refresh: 60s
+       components: 
+         - flexit_modbus_server
+
+   uart:
+     id: modbus_uart
+     tx_pin: GPIO1                # Set according to your hardware
+     rx_pin: GPIO3                # Set according to your hardware
+     baud_rate: 115200
+
+   flexit_modbus_server:
+     - id: server
+       uart_id: modbus_uart
+       address: 3
+       # Depending on hardware/optional:
+       # tx_enable_pin: GPIO16    # Set according to your hardware.
+       # tx_enable_direct: true   # Set according to your hardware. Inverts the DE signal
+   ```
+
+3. **Add Controls and Sensors:**  
+   You can add switches, buttons, numbers, sensors, etc., using the provided examples.  
+   See the full configuration example below for details. You can pick and choose from these sensors/switches.
+
+---
+
+## Example Configuration
+
+<details>
+<summary>Click to expand</summary>
 
 ```yaml
-wifi:
-  fast_connect: true # Add this to your wifi config to be able to power the ESP using the CS60's power. If not enabled the ESP boots too slow.
-
-logger:
-  baud_rate: 115200
-  hardware_uart: UART1
-  level: WARN
-
-external_components:
-  - source: github://MSkjel/esphome-flexit-modbus-server@main
-    refresh: 60s
-    components: 
-      - flexit_modbus_server
-
-uart:
-  id: modbus_uart
-  tx_pin: GPIO1
-  rx_pin: GPIO3
-  baud_rate: 115200
-    
-flexit_modbus_server:
-  - id: server
-    uart_id: modbus_uart
-    address: 3
-    # Optional settings
-    # tx_enable_pin: GPIO16 # The pin for RE/DE on the MAX485. Not needed with automatic direction control
-    # tx_enable_direct: true # Whether to invert the signal for the RE/DE on the MAX485 or not
-
 switch:
   - platform: template
     name: "Heater"
@@ -575,7 +604,23 @@ text_sensor:
         )
       );
 ```
+</details>
+
+---
+
+## TODO
+
+- Add support for more sensors and switches
+
+---
+
+## License
+
+MIT License
+
+---
 
 ## Credits
+
 - [esphome-modbus-server](https://github.com/epiclabs-uc/esphome-modbus-server)
 - [modbus-esp8266](https://github.com/emelianov/modbus-esp8266)
