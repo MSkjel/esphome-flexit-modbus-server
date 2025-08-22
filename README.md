@@ -625,7 +625,55 @@ select:
           id(server)->send_cmd(
               flexit_modbus_server::REG_CMD_MODE,
               flexit_modbus_server::string_to_mode(x)
-          );
+          );    
+```
+</details>
+
+### Experimental Climate component
+
+<details>
+<summary>Click to expand</summary>
+   
+You can use the *experimental* template climate component from the [pull-request by polyfloyd](https://github.com/esphome/esphome/pull/8031) to provide a single GUI in home assistant.
+
+> **Note:** This is purely experimental and might disappear or break at anytime. Currently the component also uses `climate.CLIMATE_SCHEMA` which is deprecated and will be removed in ESPHome 2025.11.0
+
+In order to configure this:
+
+```yaml
+# Add the component from the pull-request under external_components:
+external_components:
+  - source: github://MSkjel/esphome-flexit-modbus-server@main
+    refresh: 60s
+    components: 
+      - flexit_modbus_server
+  - source: github://pr#8031
+    refresh: 1h
+    components:
+      - template
+```
+
+```yaml
+# Extend your configuration with the required entities
+select:
+  - platform: template
+    name: "Set Mode"
+    update_interval: 1s
+    lambda: |-
+      return flexit_modbus_server::mode_to_string(
+        id(server)->read_holding_register(flexit_modbus_server::REG_MODE)
+      );
+    options:
+      - Stop
+      - Min
+      - Normal
+      - Max
+    set_action:
+      - lambda: |-
+          id(server)->send_cmd(
+              flexit_modbus_server::REG_CMD_MODE,
+              flexit_modbus_server::string_to_mode(x)
+          );   
   - platform: template
     name: "Set Fan Mode"
     id: set_fan_mode
@@ -727,6 +775,10 @@ select:
       } else {
         return std::string("UNKNOWN");
       }
+```
+
+```yaml
+# Configure the climate component to use these entries
 
 climate:
   - platform: template
@@ -738,7 +790,7 @@ climate:
     fan_mode_id: set_fan_mode
     action_id: climate_action
     visual:
-      temperature_step: 0.5C        
+      temperature_step: 0.5C    
 ```
 </details>
 
@@ -752,7 +804,7 @@ climate:
 
 ## License
 
-MIT License
+[MIT License](LICENSE.md)
 
 ---
 
