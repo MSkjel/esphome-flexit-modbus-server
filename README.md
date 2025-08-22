@@ -163,7 +163,8 @@ button:
   
 number:
   - platform: template
-    name: "Temperature"
+    name: "Set Temperature"
+    id: setpoint
     max_value: 30
     min_value: 10
     step: 0.5
@@ -337,26 +338,6 @@ number:
             x
         );
 
-select:
-  - platform: template
-    name: "Set Mode"
-    update_interval: 1s
-    lambda: |-
-      return flexit_modbus_server::mode_to_string(
-        id(server)->read_holding_register(flexit_modbus_server::REG_MODE)
-      );
-    options:
-      - Stop
-      - Min
-      - Normal
-      - Max
-    set_action:
-      lambda: |-
-        id(server)->send_cmd(
-            flexit_modbus_server::REG_CMD_MODE,
-            flexit_modbus_server::string_to_mode(x)
-        );
-
 sensor:
   - platform: template
     name: "Setpoint Air Temperature"
@@ -370,6 +351,7 @@ sensor:
 
   - platform: template
     name: "Supply Air Temperature"
+    id: supply_air_temperature
     update_interval: 60s
     device_class: temperature
     unit_of_measurement: "°C"
@@ -603,6 +585,212 @@ text_sensor:
           flexit_modbus_server::REG_MODE
         )
       );
+  - platform: template
+    name: "Climate Action"
+    id: climate_action
+    disabled_by_default: True
+    lambda: |-
+      bool heater_on = (id(server)->read_holding_register(
+        flexit_modbus_server::REG_STATUS_HEATER
+      ) != 0) ;
+      std::string mode = flexit_modbus_server::mode_to_string(
+        id(server)->read_holding_register(flexit_modbus_server::REG_MODE)
+      );
+
+      if (heater_on) {
+        return std::string("HEATING");
+      } else if (!heater_on && mode != "Stop") {
+        return std::string("FAN_ONLY");
+      } else if (!heater_on && mode == "Stop") {
+        return std::string("OFF");
+      } else {
+        return std::string("UNKNOWN");
+      }     
+
+select:
+  - platform: template
+    name: "Set Mode"
+    update_interval: 1s
+    lambda: |-
+      return flexit_modbus_server::mode_to_string(
+        id(server)->read_holding_register(flexit_modbus_server::REG_MODE)
+      );
+    options:
+      - Stop
+      - Min
+      - Normal
+      - Max
+    set_action:
+      - lambda: |-
+          id(server)->send_cmd(
+              flexit_modbus_server::REG_CMD_MODE,
+              flexit_modbus_server::string_to_mode(x)
+          );    
+```
+</details>
+
+### Experimental Climate component
+
+<details>
+<summary>Click to expand</summary>
+   
+You can use the *experimental* template climate component from the [pull-request by polyfloyd](https://github.com/esphome/esphome/pull/8031) to provide a single GUI in home assistant.
+
+> **Note:** This is purely experimental and might disappear or break at anytime. Currently the component also uses `climate.CLIMATE_SCHEMA` which is deprecated and will be removed in ESPHome 2025.11.0
+
+In order to configure this:
+
+```yaml
+# Add the component from the pull-request under external_components:
+external_components:
+  - source: github://MSkjel/esphome-flexit-modbus-server@main
+    refresh: 60s
+    components: 
+      - flexit_modbus_server
+  - source: github://pr#8031
+    refresh: 1h
+    components:
+      - template
+```
+
+```yaml
+# Extend your configuration with the required entities
+select:
+  - platform: template
+    name: "Set Mode"
+    update_interval: 1s
+    lambda: |-
+      return flexit_modbus_server::mode_to_string(
+        id(server)->read_holding_register(flexit_modbus_server::REG_MODE)
+      );
+    options:
+      - Stop
+      - Min
+      - Normal
+      - Max
+    set_action:
+      - lambda: |-
+          id(server)->send_cmd(
+              flexit_modbus_server::REG_CMD_MODE,
+              flexit_modbus_server::string_to_mode(x)
+          );   
+  - platform: template
+    name: "Set Fan Mode"
+    id: set_fan_mode
+    update_interval: 1s
+    internal: True
+    options:
+      - "OFF"
+      - "LOW"
+      - "MEDIUM"
+      - "HIGH"
+    set_action:
+      - lambda: |-
+          if (x == "OFF") {
+            std::string mode_str = "Stop";
+            id(server)->send_cmd(
+              flexit_modbus_server::REG_CMD_MODE,
+              flexit_modbus_server::string_to_mode(mode_str)
+            );
+          } else if (x == "LOW") {
+            std::string mode_str = "Min";
+            id(server)->send_cmd(
+              flexit_modbus_server::REG_CMD_MODE,
+              flexit_modbus_server::string_to_mode(mode_str)
+            );
+          } else if (x == "MEDIUM") {
+            std::string mode_str = "Normal";
+            id(server)->send_cmd(
+              flexit_modbus_server::REG_CMD_MODE,
+              flexit_modbus_server::string_to_mode(mode_str)
+            );
+          } else if (x == "HIGH") {
+            std::string mode_str = "Max";
+            id(server)->send_cmd(
+              flexit_modbus_server::REG_CMD_MODE,
+              flexit_modbus_server::string_to_mode(mode_str)
+            );
+          }
+    lambda: |-
+      std::string current_mode = flexit_modbus_server::mode_to_string(
+        id(server)->read_holding_register(flexit_modbus_server::REG_MODE)
+      );
+      
+      if (current_mode == "Stop") {
+        return std::string("OFF");
+      } else if (current_mode == "Min") {
+        return std::string("LOW");
+      } else if (current_mode == "Normal") {
+        return std::string("MEDIUM");
+      } else if (current_mode == "Max") {
+        return std::string("HIGH");
+      } else {
+        return std::string("UNKNOWN");
+      }
+  - platform: template
+    name: "Heater Mode"
+    id: heater_mode
+    update_interval: 1s
+    internal: True
+    options:
+      - "HEAT"
+      - "FAN_ONLY"
+      - "OFF"
+    set_action:
+      - lambda: |-
+          if (x == "HEAT") {
+            id(server)->send_cmd(
+              flexit_modbus_server::REG_CMD_HEATER,
+              1
+            );
+          } else if (x == "FAN_ONLY") {
+            id(server)->send_cmd(
+              flexit_modbus_server::REG_CMD_HEATER,
+              0
+            );
+          } else if (x == "OFF") {
+            id(server)->send_cmd(
+              flexit_modbus_server::REG_CMD_HEATER,
+              0
+            );
+            std::string mode_str = "Stop";
+            id(server)->send_cmd(
+              flexit_modbus_server::REG_CMD_MODE,
+              flexit_modbus_server::string_to_mode(mode_str)
+            );
+          }
+    lambda: |-
+      bool heater_on = (id(server)->read_holding_register(
+        flexit_modbus_server::REG_STATUS_HEATER
+      ) != 0) ;
+      std::string current_mode = flexit_modbus_server::mode_to_string(
+        id(server)->read_holding_register(flexit_modbus_server::REG_MODE)
+      );
+      if (heater_on) {
+        return std::string("HEAT");
+      } else if (!heater_on && current_mode != "Stop") {
+        return std::string("FAN_ONLY");
+      } else if (!heater_on && current_mode == "Stop") {
+        return std::string("OFF");
+      } else {
+        return std::string("UNKNOWN");
+      }
+```
+
+```yaml
+# Configure the climate component to use these entries
+
+climate:
+  - platform: template
+    name: "UNI3"
+    icon: "mdi:air-conditioner"
+    target_temperature_id: setpoint
+    current_temperature_id: supply_air_temperature
+    mode_id: heater_mode
+    fan_mode_id: set_fan_mode
+    action_id: climate_action
+    visual:
+      temperature_step: 0.5C    
 ```
 </details>
 
@@ -616,7 +804,7 @@ text_sensor:
 
 ## License
 
-MIT License
+[MIT License](LICENSE.md)
 
 ---
 
@@ -624,3 +812,4 @@ MIT License
 
 - [esphome-modbus-server](https://github.com/epiclabs-uc/esphome-modbus-server)
 - [modbus-esp8266](https://github.com/emelianov/modbus-esp8266)
+- [template-climate](https://github.com/polyfloyd/esphome/tree/template-climate)
