@@ -1,4 +1,5 @@
 #include "flexit_modbus_server.h"
+#include "esphome/components/wifi/wifi_component.h"
 
 namespace esphome {
 namespace flexit_modbus_server {
@@ -21,6 +22,40 @@ uint16_t string_to_mode(std::string &mode_str) {
 }
 
 FlexitModbusServer::FlexitModbusServer() {}
+
+void FlexitModbusServer::dump_config() {
+  ESP_LOGCONFIG(TAG, "Flexit Modbus Server:");
+  ESP_LOGCONFIG(TAG, "  Address: 0x%02X", server_address_);
+  ESP_LOGCONFIG(TAG, "  Baud Rate: %u", baudRate());
+
+  if (tx_enable_pin_ >= 0) {
+    ESP_LOGCONFIG(TAG, "  TX Enable Pin: GPIO%d", tx_enable_pin_);
+    ESP_LOGCONFIG(TAG, "  TX Enable Direct: %s", tx_enable_direct_ ? "YES" : "NO");
+  }
+
+  ESP_LOGCONFIG(TAG, "  TCP Bridge Enabled: %s", tcp_bridge_enabled_ ? "YES" : "NO");
+
+  if (tcp_bridge_enabled_) {
+    ESP_LOGCONFIG(TAG, "  TCP Bridge Port: %u", tcp_bridge_port_);
+    ESP_LOGCONFIG(TAG, "  TCP Bridge Max Clients: %u", tcp_bridge_max_clients_);
+
+    if (tcp_server_ != nullptr &&
+        wifi::global_wifi_component != nullptr &&
+        wifi::global_wifi_component->is_connected()) {
+
+      auto ips = wifi::global_wifi_component->get_ip_addresses();
+
+      if (!ips.empty()) {
+        ESP_LOGCONFIG(TAG, "  TCP Bridge Status: Running on tcp://%s:%u",
+                      ips[0].str().c_str(), tcp_bridge_port_);
+      } else {
+        ESP_LOGCONFIG(TAG, "  TCP Bridge Status: Waiting for IP...");
+      }
+    } else {
+      ESP_LOGCONFIG(TAG, "  TCP Bridge Status: Waiting for WiFi...");
+    }
+  }
+}
 
 void FlexitModbusServer::setup() {
   // Initialize the new ModbusRTUServer instance using our Stream interface (this),
@@ -81,10 +116,18 @@ void FlexitModbusServer::setup() {
     }
   };
   #endif
+
+  if (tcp_bridge_enabled_) {
+    setup_tcp_bridge_();
+  }
 }
 
 void FlexitModbusServer::loop() {
   mb_.update();
+
+  if (tcp_bridge_enabled_) {
+    handle_tcp_bridge_();
+  }
 }
 
 void FlexitModbusServer::write_holding_register(HoldingRegisterIndex reg, uint16_t value) {
@@ -181,11 +224,29 @@ void FlexitModbusServer::set_tx_enable_direct(bool val) {
   tx_enable_direct_ = val;
 }
 
+void FlexitModbusServer::set_tcp_bridge_enabled(bool enabled) {
+  tcp_bridge_enabled_ = enabled;
+}
+
+void FlexitModbusServer::set_tcp_bridge_port(uint16_t port) {
+  tcp_bridge_port_ = port;
+}
+
+void FlexitModbusServer::set_tcp_bridge_max_clients(uint8_t max_clients) {
+  tcp_bridge_max_clients_ = max_clients;
+}
+
 // ---------------------------------------------------------
 // Stream interface implementation (required by ModbusRTUServer)
 // ---------------------------------------------------------
 size_t FlexitModbusServer::write(uint8_t data) {
-  return uart::UARTDevice::write(data);
+  size_t result = uart::UARTDevice::write(data);
+
+  if (tcp_bridge_enabled_ && tcp_server_ != nullptr && !tcp_clients_.empty()) {
+    uart_to_tcp_buffer_.push_back(data);
+  }
+
+  return result;
 }
 
 int FlexitModbusServer::available() {
@@ -193,7 +254,17 @@ int FlexitModbusServer::available() {
 }
 
 int FlexitModbusServer::read() {
-  return uart::UARTDevice::read();
+  int v = uart::UARTDevice::read();
+  
+  if (v < 0) {
+    return v;
+  }
+
+  if (tcp_bridge_enabled_ && tcp_server_ != nullptr && !tcp_clients_.empty()) {
+    uart_rx_mirror_.push_back(static_cast<uint8_t>(v));
+  }
+
+  return v;
 }
 
 int FlexitModbusServer::peek() {
@@ -202,7 +273,105 @@ int FlexitModbusServer::peek() {
 
 void FlexitModbusServer::flush() {
   uart::UARTDevice::flush();
+
+  if (!(tcp_bridge_enabled_ && tcp_server_ != nullptr))
+    return;
+
+  auto send_framed_block = [this](const std::vector<uint8_t> &buf, uint8_t dir) {
+    if (buf.empty())
+      return;
+
+    uint16_t len = static_cast<uint16_t>(buf.size());
+    uint8_t header[3] = {
+      dir,
+      static_cast<uint8_t>((len >> 8) & 0xFF),
+      static_cast<uint8_t>(len & 0xFF),
+    };
+
+    for (auto &client : tcp_clients_) {
+      if (!client.connected())
+        continue;
+
+      client.write(header, sizeof(header));
+      client.write(buf.data(), buf.size());
+    }
+  };
+
+  if (!uart_to_tcp_buffer_.empty()) {
+    send_framed_block(uart_to_tcp_buffer_, FRAME_DIR_TX);
+    uart_to_tcp_buffer_.clear();
+  }
+
+  if (!uart_rx_mirror_.empty()) {
+    send_framed_block(uart_rx_mirror_, FRAME_DIR_RX);
+    uart_rx_mirror_.clear();
+  }
 }
 
-}  // namespace flexit_modbus
+// ---------------------------------------------------------
+// TCP Bridge Implementation
+// ---------------------------------------------------------
+void FlexitModbusServer::setup_tcp_bridge_() {
+  if (wifi::global_wifi_component == nullptr ||
+      !wifi::global_wifi_component->is_connected()) {
+    return;
+  }
+
+  auto ips = wifi::global_wifi_component->get_ip_addresses();
+  if (ips.empty()) {
+    return;
+  }
+
+  tcp_server_ = new WiFiServer(tcp_bridge_port_);
+  tcp_server_->begin();
+  tcp_server_->setNoDelay(true);
+
+  ESP_LOGI(TAG, "TCP Bridge: Server started on tcp://%s:%u (max clients: %u)",
+          ips[0].str().c_str(), tcp_bridge_port_, tcp_bridge_max_clients_);
+}
+
+void FlexitModbusServer::handle_tcp_bridge_() {
+  if (tcp_server_ == nullptr) {
+    if (wifi::global_wifi_component != nullptr &&
+        wifi::global_wifi_component->is_connected()) {
+      setup_tcp_bridge_();
+    }
+    return;
+  }
+
+  accept_tcp_clients_();
+  cleanup_tcp_clients_();
+}
+
+void FlexitModbusServer::accept_tcp_clients_() {
+  if (tcp_server_->hasClient()) {
+    WiFiClient new_client = tcp_server_->accept();
+
+    if (tcp_clients_.size() >= tcp_bridge_max_clients_) {
+      ESP_LOGW(TAG, "TCP Bridge: Max clients (%u) reached, rejecting connection from %s",
+              tcp_bridge_max_clients_, new_client.remoteIP().toString().c_str());
+      new_client.stop();
+    } else {
+      tcp_clients_.push_back(new_client);
+      ESP_LOGI(TAG, "TCP Bridge: Client connected from %s (total: %u)",
+              new_client.remoteIP().toString().c_str(), tcp_clients_.size());
+    }
+  }
+}
+
+void FlexitModbusServer::cleanup_tcp_clients_() {
+  for (auto it = tcp_clients_.begin(); it != tcp_clients_.end();) {
+    if (!it->connected()) {
+      ESP_LOGI(TAG, "TCP Bridge: Client disconnected from %s (total: %u)",
+              it->remoteIP().toString().c_str(), tcp_clients_.size() - 1);
+
+      it->stop();
+      it = tcp_clients_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
+}  // namespace flexit_modbus_server
 }  // namespace esphome

@@ -9,6 +9,14 @@
 #include "esphome.h"
 #include "ModbusRTUServer.h"
 
+#ifdef USE_ESP32
+#include <WiFi.h>
+#elif defined(USE_ESP8266)
+#include <ESP8266WiFi.h>
+#endif
+
+#include <vector>
+
 #define MODBUS_DISABLE_READ_INPUT_REGISTERS
 #define MODBUS_DISABLE_WRITE_MULTIPLE_COILS
 #define MODBUS_DISABLE_WRITE_SINGLE_COIL
@@ -22,6 +30,9 @@ static constexpr uint16_t COIL_START_ADDRESS              = 0x00;
 static constexpr uint16_t HOLDING_REGISTER_START_ADDRESS  = 0x00;
 
 static constexpr uint16_t MAX_NUM_COILS                   = 1000;
+
+static constexpr uint8_t FRAME_DIR_TX  = 'T';
+static constexpr uint8_t FRAME_DIR_RX  = 'R';
 
 /**
  * @brief Possible textual representations for the different operation modes
@@ -167,6 +178,11 @@ public:
    */
   void loop() override;
 
+  /**
+   * @brief Dump configuration (called during config phase).
+   */
+  void dump_config() override;
+
   // ----------------------------------------------------------------
   // Custom methods for manipulating registers and coils
   // ----------------------------------------------------------------
@@ -240,6 +256,27 @@ public:
    */
   void set_tx_enable_direct(bool val);
 
+  /**
+   * @brief Enable/disable TCP bridge mode.
+   *
+   * @param enabled True to enable TCP bridge.
+   */
+  void set_tcp_bridge_enabled(bool enabled);
+
+  /**
+   * @brief Set the TCP server port for the bridge.
+   *
+   * @param port The TCP port number (default: 502 for Modbus TCP).
+   */
+  void set_tcp_bridge_port(uint16_t port);
+
+  /**
+   * @brief Set maximum number of concurrent TCP clients.
+   *
+   * @param max_clients Maximum number of clients (default: 4).
+   */
+  void set_tcp_bridge_max_clients(uint8_t max_clients);
+
   // ----------------------------------------------------------------
   // Stream interface (required by the ModbusRTUServer library)
   // ----------------------------------------------------------------
@@ -271,7 +308,51 @@ private:
 
   /// @brief Whether TX enable is active high (true) or low.
   bool tx_enable_direct_{true};
+
+  // ----------------------------------------------------------------
+  // TCP Bridge Members
+  // ----------------------------------------------------------------
+  /// @brief Whether TCP bridge mode is enabled.
+  bool tcp_bridge_enabled_{false};
+
+  /// @brief TCP server port for the bridge.
+  uint16_t tcp_bridge_port_{502};
+
+  /// @brief Maximum number of concurrent TCP clients.
+  uint8_t tcp_bridge_max_clients_{4};
+
+  /// @brief TCP server instance.
+  WiFiServer *tcp_server_{nullptr};
+
+  /// @brief Connected TCP clients.
+  std::vector<WiFiClient> tcp_clients_;
+
+  /// @brief Buffer for data from UART TX to be sent to TCP clients.
+  std::vector<uint8_t> uart_to_tcp_buffer_;
+
+  /// @brief Buffer for data from UART RX to be sent to TCP clients.
+  std::vector<uint8_t> uart_rx_mirror_;
+
+  /**
+   * @brief Initialize the TCP server.
+   */
+  void setup_tcp_bridge_();
+
+  /**
+   * @brief Handle TCP client connections and data forwarding.
+   */
+  void handle_tcp_bridge_();
+
+  /**
+   * @brief Accept new TCP client connections.
+   */
+  void accept_tcp_clients_();
+
+  /**
+   * @brief Remove disconnected TCP clients.
+   */
+  void cleanup_tcp_clients_();
 };
 
-}  // namespace flexit_modbus
+}  // namespace flexit_modbus_server
 }  // namespace esphome
