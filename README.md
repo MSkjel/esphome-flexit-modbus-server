@@ -41,57 +41,6 @@ This project implements a Modbus server for Flexit ventilation systems using ESP
 
 ---
 
-## TCP Bridge (Optional)
-
-The TCP bridge feature allows you to monitor the Modbus communication over a TCP connection. This is useful for finding new registers.
-
-### How It Works
-
-When enabled, the TCP bridge creates a server that:
-- Accepts TCP connections on the configured port (default: 502)
-- Mirrors all UART data to connected clients in real-time (both TX and RX)
-- Sends data with directional framing so you can distinguish between sent and received frames
-
-### Frame Protocol
-
-Data is sent to TCP clients using a simple 3-byte header + payload format:
-```
-[Direction (1 byte)][Length High (1 byte)][Length Low (1 byte)][Payload (N bytes)]
-```
-- **Direction**: `'T'` (0x54) for TX (ESP→UART), `'R'` (0x52) for RX (UART→ESP)
-- **Length**: 16-bit big-endian payload length
-
-### Configuration Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `tcp_bridge_enabled` | boolean | `false` | Enable/disable TCP bridge |
-| `tcp_bridge_port` | integer | `502` | TCP port to listen on |
-| `tcp_bridge_max_clients` | integer | `4` | Maximum concurrent clients (1-10) |
-
-### Example Configuration
-
-```yaml
-flexit_modbus_server:
-  - id: server
-    uart_id: modbus_uart
-    address: 3
-    tcp_bridge_enabled: true
-    tcp_bridge_port: 8502
-    tcp_bridge_max_clients: 2
-```
-
-### Monitoring Tool
-
-A Python script for monitoring and decoding the TCP bridge traffic is included in [scripts/tcp_bridge_monitor.py](scripts/tcp_bridge_monitor.py).
-
-**Features:**
-- Decodes Modbus RTU frames
-- Color-coded TX (ESP→UART) and RX (UART→ESP) traffic
-- Track coil state changes with `--coil-changes` flag
-
----
-
 ## Quick Start
 
 1. **Connect Hardware:**  
