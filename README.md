@@ -128,11 +128,6 @@ A Python script for monitoring and decoding the TCP bridge traffic is included i
        # Depending on hardware/optional:
        # tx_enable_pin: GPIO16    # Set according to your hardware.
        # tx_enable_direct: true   # Set according to your hardware. Inverts the DE signal
-
-       # TCP Bridge (optional) - enables remote monitoring and control via TCP
-       # tcp_bridge_enabled: true       # Enable TCP bridge (default: false)
-       # tcp_bridge_port: 502            # TCP port (default: 502)
-       # tcp_bridge_max_clients: 4       # Max concurrent clients (default: 4, range: 1-10)
    ```
 
 3. **Add Controls and Sensors:**
@@ -665,11 +660,64 @@ text_sensor:
 
 ---
 
+## Optional extras
+
+<details>
+<summary>TCP Bridge</summary>
+The TCP bridge feature allows you to monitor the Modbus communication over a TCP connection. This is useful for finding new registers.
+
+### How It Works
+
+When enabled, the TCP bridge creates a server that:
+- Accepts TCP connections on the configured port (default: 502)
+- Mirrors all UART data to connected clients in real-time (both TX and RX)
+- Sends data with directional framing so you can distinguish between sent and received frames
+
+### Frame Protocol
+
+Data is sent to TCP clients using a simple 3-byte header + payload format:
+```
+[Direction (1 byte)][Length High (1 byte)][Length Low (1 byte)][Payload (N bytes)]
+```
+- **Direction**: `'T'` (0x54) for TX (ESP→UART), `'R'` (0x52) for RX (UART→ESP)
+- **Length**: 16-bit big-endian payload length
+
+### Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `tcp_bridge_enabled` | boolean | `false` | Enable/disable TCP bridge |
+| `tcp_bridge_port` | integer | `502` | TCP port to listen on |
+| `tcp_bridge_max_clients` | integer | `4` | Maximum concurrent clients (1-10) |
+
+### Example Configuration
+
+```yaml
+flexit_modbus_server:
+  - id: server
+    uart_id: modbus_uart
+    address: 3
+    tcp_bridge_enabled: true
+    tcp_bridge_port: 8502
+    tcp_bridge_max_clients: 2
+```
+
+### Monitoring Tool
+
+A Python script for monitoring and decoding the TCP bridge traffic is included in [scripts/tcp_bridge_monitor.py](scripts/tcp_bridge_monitor.py).
+
+**Features:**
+- Decodes Modbus RTU frames
+- Color-coded TX (ESP→UART) and RX (UART→ESP) traffic
+- Track coil state changes with `--coil-changes` flag
+
+</details>
+
+---
+
 ## TODO
 
 - Add support for more sensors and switches
-
----
 
 ## License
 
