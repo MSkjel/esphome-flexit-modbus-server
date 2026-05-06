@@ -23,7 +23,13 @@ uint16_t string_to_mode(StringRef mode_str) {
   return 2;
 }
 
-FlexitModbusServer::FlexitModbusServer() {}
+FlexitModbusServer::FlexitModbusServer() {
+  for (uint8_t i = 0; i < MAX_PENDING_CMDS; i++) {
+    pending_cmds_[i].active     = false;
+    pending_cmds_[i].address    = 0;
+    pending_cmds_[i].set_at_ms  = 0;
+  }
+}
 
 void FlexitModbusServer::dump_config() {
   ESP_LOGCONFIG(TAG, "Flexit Modbus Server:");
@@ -79,7 +85,12 @@ void FlexitModbusServer::setup() {
     if (function_code == 0x65) {
         uint16_t address = (data[2] << 8) | data[3];
         uint16_t value = (data[4] << 8) | data[5];
-        
+
+        if (mb_.getCoil(address)) {
+            ESP_LOGW(TAG, "0x65: protecting pending cmd at 0x%04X from reset", address);
+            return;
+        }
+
         mb_.setHoldingRegister(address, value);
         mb_.setCoil(address, 0);
       
@@ -133,6 +144,16 @@ void FlexitModbusServer::setup() {
 void FlexitModbusServer::loop() {
   mb_.update();
 
+  uint32_t now = millis();
+  for (uint8_t i = 0; i < MAX_PENDING_CMDS; i++) {
+    if (pending_cmds_[i].active &&
+        (now - pending_cmds_[i].set_at_ms) >= CMD_COIL_TIMEOUT_MS) {
+      mb_.setCoil(pending_cmds_[i].address, 0);
+      pending_cmds_[i].active = false;
+      ESP_LOGD(TAG, "Auto-cleared command coil at 0x%04X after timeout", pending_cmds_[i].address);
+    }
+  }
+
 #ifdef USE_FLEXIT_TCP_BRIDGE
   if (tcp_bridge_enabled_) {
     handle_tcp_bridge_();
@@ -164,6 +185,26 @@ void FlexitModbusServer::send_cmd(HoldingRegisterIndex cmd_register, uint16_t va
   // Write the command value to the register and set the corresponding coil.
   mb_.setHoldingRegister(cmd_register, value);
   mb_.setCoil(cmd_register, 1);
+  ESP_LOGW(TAG, "send_cmd: address=0x%04X value=%u coil_now=%d",
+           cmd_register, value, mb_.getCoil(cmd_register));
+
+  uint8_t slot = MAX_PENDING_CMDS;  // sentinel: no slot found yet
+  for (uint8_t i = 0; i < MAX_PENDING_CMDS; i++) {
+    if (pending_cmds_[i].active && pending_cmds_[i].address == cmd_register) {
+      slot = i;  // refresh existing slot for this address
+      break;
+    }
+    if (!pending_cmds_[i].active && slot == MAX_PENDING_CMDS) {
+      slot = i;  // first free slot
+    }
+  }
+  if (slot < MAX_PENDING_CMDS) {
+    pending_cmds_[slot].address   = cmd_register;
+    pending_cmds_[slot].set_at_ms = millis();
+    pending_cmds_[slot].active    = true;
+  } else {
+    ESP_LOGW(TAG, "send_cmd: pending command table full, coil for 0x%04X may not auto-clear", cmd_register);
+  }
 }
 
 // ---------------------------------------------------------

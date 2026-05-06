@@ -156,7 +156,7 @@ uint16_t string_to_mode(StringRef mode_str);
  * This class:
  *  - Inherits from UARTDevice to handle UART-based Modbus RTU communication.
  *  - Inherits from Component for integration with the ESPHome lifecycle.
- *  - Inherits from Stream to satisfy the ModbusRTUServer library’s interface.
+ *  - Inherits from Stream to satisfy the ModbusRTUServer library's interface.
  */
 class FlexitModbusServer : public esphome::uart::UARTDevice, public Component, public Stream {
 public:
@@ -312,6 +312,20 @@ private:
 
   /// @brief Whether TX enable is active high (true) or low.
   bool tx_enable_direct_{true};
+
+  /// @brief How long (ms) to hold a command coil set after send_cmd().
+  static constexpr uint32_t CMD_COIL_TIMEOUT_MS = 5000;
+
+  /// @brief Maximum number of simultaneously pending commands.
+  static constexpr uint8_t MAX_PENDING_CMDS = 16;
+
+  /// @brief Tracks addresses and timestamps of active command coils.
+  struct PendingCmd {
+    uint16_t address;
+    uint32_t set_at_ms;
+    bool     active;
+  };
+  PendingCmd pending_cmds_[MAX_PENDING_CMDS];
 
   // ----------------------------------------------------------------
   // TCP Bridge Members
