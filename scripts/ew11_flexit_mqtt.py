@@ -168,6 +168,27 @@ def publish_discovery(client: mqtt.Client):
           f" (+{len(REMOVED_KEYS)} removed)")
 
 
+def connect_ew11(host: str, port: int) -> socket.socket:
+    """Open a fresh TCP connection to the EW11 with keepalive enabled.
+
+    Keepalive is a secondary defense: it lets the OS tear down a connection
+    whose peer has vanished at the transport layer. It does NOT catch the
+    EW11's typical freeze (TCP stays up, RS485 bytes just stop) -- the
+    application-level rx watchdog in run() handles that case.
+    """
+    sock = socket.create_connection((host, port), timeout=10.0)
+    sock.settimeout(1.0)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    # Best-effort per-platform keepalive tuning (Linux names; ignore if absent).
+    for opt, val in (("TCP_KEEPIDLE", 30), ("TCP_KEEPINTVL", 10), ("TCP_KEEPCNT", 3)):
+        if hasattr(socket, opt):
+            try:
+                sock.setsockopt(socket.IPPROTO_TCP, getattr(socket, opt), val)
+            except OSError:
+                pass
+    return sock
+
+
 def make_client(args) -> mqtt.Client:
     # paho-mqtt 2.x requires an explicit callback API version.
     try:
@@ -204,28 +225,54 @@ def run(args):
         client.disconnect()
         return
 
-    print(f"Reading EW11 {args.ew11_host}:{args.ew11_port}, publishing every {args.interval}s")
+    print(f"Reading EW11 {args.ew11_host}:{args.ew11_port}, publishing every {args.interval}s"
+          f" (rx watchdog {args.rx_timeout}s)")
     table = dec.RegisterTable()
-    sock = socket.create_connection((args.ew11_host, args.ew11_port), timeout=10.0)
-    sock.settimeout(1.0)
+    sock = connect_ew11(args.ew11_host, args.ew11_port)
     buf = bytearray()
     last_pub = 0.0
+    last_rx = time.monotonic()  # last time we received any bytes from the EW11
+    online = True               # current HA availability state we've published
+
+    def reconnect(reason: str):
+        nonlocal sock, online, last_rx
+        print(f"EW11 {reason}; reconnecting...", flush=True)
+        if online:
+            client.publish(AVAIL_TOPIC, "offline", qos=1, retain=True)
+            online = False
+        try:
+            sock.close()
+        except OSError:
+            pass
+        time.sleep(args.reconnect_delay)
+        sock = connect_ew11(args.ew11_host, args.ew11_port)
+        buf.clear()
+        last_rx = time.monotonic()
 
     try:
         while True:
+            got_data = False
             try:
                 chunk = sock.recv(4096)
                 if not chunk:
-                    print("EW11 closed connection; reconnecting...")
-                    sock.close()
-                    time.sleep(2)
-                    sock = socket.create_connection((args.ew11_host, args.ew11_port), timeout=10.0)
-                    sock.settimeout(1.0)
-                    buf.clear()
+                    reconnect("closed connection")
                     continue
                 buf.extend(chunk)
+                last_rx = time.monotonic()
+                got_data = True
             except socket.timeout:
                 pass
+            except OSError as e:
+                reconnect(f"socket error ({e})")
+                continue
+
+            # Watchdog: the EW11 can freeze with the TCP socket still open, so
+            # recv() just keeps timing out and we'd republish stale values
+            # forever. If no bytes have arrived for rx_timeout, force a fresh
+            # connection -- the only thing that reliably unsticks the adapter.
+            if time.monotonic() - last_rx >= args.rx_timeout:
+                reconnect(f"no data for {args.rx_timeout}s (stale link)")
+                continue
 
             # Reframe + update register table (same walk as the decoder).
             offset = 0
@@ -257,6 +304,12 @@ def run(args):
             if len(buf) > 4 * dec.MAX_FRAME_LENGTH:
                 del buf[:-dec.MAX_FRAME_LENGTH]
 
+            # We have live data again: restore availability if we'd marked it
+            # offline during a stale/disconnected stretch.
+            if got_data and not online:
+                client.publish(AVAIL_TOPIC, "online", qos=1, retain=True)
+                online = True
+
             now = time.monotonic()
             if now - last_pub >= args.interval and table.values:
                 state = build_state(table)
@@ -280,6 +333,11 @@ def main():
     p.add_argument("--mqtt-user", default="mqtt_user")
     p.add_argument("--password", default=None, help="MQTT password (else MQTT_PASSWORD env)")
     p.add_argument("--interval", type=float, default=10.0, help="Publish interval seconds")
+    p.add_argument("--rx-timeout", type=float, default=60.0,
+                   help="Force a reconnect if no bytes arrive from the EW11 for this many "
+                        "seconds (defends against the adapter's silent-freeze failure mode)")
+    p.add_argument("--reconnect-delay", type=float, default=2.0,
+                   help="Seconds to wait before reconnecting to the EW11")
     p.add_argument("--dry-run", action="store_true", help="Publish discovery + empty state, then exit")
     p.add_argument("--verbose", action="store_true")
     args = p.parse_args()
