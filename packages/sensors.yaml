@@ -1,0 +1,265 @@
+# Temperatures, heating/cooling/rotor %, runtime counters and alarms.
+# Needs core.yaml
+
+sensor:
+  - platform: template
+    id: setpoint_air_temperature
+    name: "Setpoint Air Temperature"
+    update_interval: 1s
+    device_class: temperature
+    unit_of_measurement: "°C"
+    lambda: |-
+      return id(server)->read_holding_register_temperature(
+        flexit_modbus_server::REG_TEMPERATURE_SETPOINT
+      );
+
+  - platform: template
+    id: supply_air_temperature
+    name: "Supply Air Temperature"
+    update_interval: 60s
+    device_class: temperature
+    unit_of_measurement: "°C"
+    lambda: |-
+      return id(server)->read_holding_register_temperature(
+        flexit_modbus_server::REG_TEMPERATURE_SUPPLY_AIR
+      );
+    filters:
+      - delta: 0.2
+
+  - platform: template
+    id: extract_air_temperature
+    name: "Extract Air Temperature"
+    update_interval: 60s
+    device_class: temperature
+    unit_of_measurement: "°C"
+    lambda: |-
+      return id(server)->read_holding_register_temperature(
+        flexit_modbus_server::REG_TEMPERATURE_EXTRACT_AIR
+      );
+    filters:
+      - delta: 0.2
+
+  - platform: template
+    id: outdoor_air_temperature
+    name: "Outdoor Air Temperature"
+    update_interval: 60s
+    device_class: temperature
+    unit_of_measurement: "°C"
+    lambda: |-
+      return id(server)->read_holding_register_temperature(
+        flexit_modbus_server::REG_TEMPERATURE_OUTDOOR_AIR
+      );
+    filters:
+      - delta: 0.2
+
+  - platform: template
+    id: return_water_temperature
+    name: "Return Water Temperature"
+    update_interval: 60s
+    device_class: temperature
+    unit_of_measurement: "°C"
+    lambda: |-
+      return id(server)->read_holding_register_temperature(
+        flexit_modbus_server::REG_TEMPERATURE_RETURN_WATER
+      );
+
+  - platform: template
+    id: heating_percentage
+    name: "Heating Percentage"
+    update_interval: 20s
+    unit_of_measurement: "%"
+    lambda: |-
+      return id(server)->read_holding_register(
+        flexit_modbus_server::REG_PERCENTAGE_HEATING
+      );
+
+  - platform: template
+    id: cooling_percentage
+    name: "Cooling Percentage"
+    update_interval: 20s
+    unit_of_measurement: "%"
+    lambda: |-
+      return id(server)->read_holding_register(
+        flexit_modbus_server::REG_PERCENTAGE_COOLING
+      );
+
+  - platform: template
+    id: heat_exchanger_percentage
+    name: "Heat Exchanger Percentage"
+    update_interval: 5s
+    unit_of_measurement: "%"
+    lambda: |-
+      return id(server)->read_holding_register(
+        flexit_modbus_server::REG_PERCENTAGE_HEAT_EXCHANGER
+      );
+
+  - platform: template
+    id: supply_fan_speed_percentage
+    name: "Supply Fan Speed Percentage"
+    update_interval: 5s
+    unit_of_measurement: "%"
+    lambda: |-
+      return id(server)->read_holding_register(
+        flexit_modbus_server::REG_PERCENTAGE_SUPPLY_FAN
+      );
+
+  - platform: template
+    id: runtime
+    name: "Runtime"
+    update_interval: 60s
+    unit_of_measurement: "h"
+    lambda: |-
+      return id(server)->read_holding_register_hours(
+        flexit_modbus_server::REG_RUNTIME_HIGH
+      );
+
+  - platform: template
+    id: runtime_normal
+    name: "Runtime Normal"
+    update_interval: 60s
+    unit_of_measurement: "h"
+    lambda: |-
+      return id(server)->read_holding_register_hours(
+        flexit_modbus_server::REG_RUNTIME_NORMAL_HIGH
+      );
+
+  - platform: template
+    id: runtime_stop
+    name: "Runtime Stop"
+    update_interval: 60s
+    unit_of_measurement: "h"
+    lambda: |-
+      return id(server)->read_holding_register_hours(
+        flexit_modbus_server::REG_RUNTIME_STOP_HIGH
+      );
+
+  - platform: template
+    id: runtime_min
+    name: "Runtime Min"
+    update_interval: 60s
+    unit_of_measurement: "h"
+    lambda: |-
+      return id(server)->read_holding_register_hours(
+        flexit_modbus_server::REG_RUNTIME_MIN_HIGH
+      );
+
+  - platform: template
+    id: runtime_max
+    name: "Runtime Max"
+    update_interval: 60s
+    unit_of_measurement: "h"
+    lambda: |-
+      return id(server)->read_holding_register_hours(
+        flexit_modbus_server::REG_RUNTIME_MAX_HIGH
+      );
+
+  - platform: template
+    id: runtime_rotor
+    name: "Runtime Rotor"
+    update_interval: 60s
+    unit_of_measurement: "h"
+    lambda: |-
+      return id(server)->read_holding_register_hours(
+        flexit_modbus_server::REG_RUNTIME_ROTOR_HIGH
+      );
+
+  - platform: template
+    id: runtime_heater
+    name: "Runtime Heater"
+    update_interval: 60s
+    unit_of_measurement: "h"
+    lambda: |-
+      return id(server)->read_holding_register_hours(
+        flexit_modbus_server::REG_RUNTIME_HEATER_HIGH
+      );
+
+  - platform: template
+    id: runtime_filter
+    name: "Runtime Filter"
+    update_interval: 60s
+    unit_of_measurement: "h"
+    lambda: |-
+      return id(server)->read_holding_register_hours(
+        flexit_modbus_server::REG_RUNTIME_FILTER_HIGH
+      );
+
+binary_sensor:
+  - platform: template
+    id: heater_enabled
+    name: "Heater Enabled"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_STATUS_HEATER
+      ) != 0);
+
+  - platform: template
+    id: alarm_supply_sensor_faulty
+    name: "Alarm Supply Sensor Faulty"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_ALARM_SENSOR_SUPPLY_FAULTY
+      ) != 0);
+
+  - platform: template
+    id: alarm_extract_sensor_faulty
+    name: "Alarm Extract Sensor Faulty"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_ALARM_SENSOR_EXTRACT_FAULTY
+      ) != 0);
+
+  - platform: template
+    id: alarm_outdoor_sensor_faulty
+    name: "Alarm Outdoor Sensor Faulty"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_ALARM_SENSOR_OUTDOOR_FAULTY
+      ) != 0);
+
+  - platform: template
+    id: alarm_return_water_sensor_faulty
+    name: "Alarm Return Water Sensor Faulty"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_ALARM_SENSOR_RETURN_WATER_FAULTY
+      ) != 0);
+
+  - platform: template
+    id: alarm_overheat_triggered
+    name: "Alarm Overheat Triggered"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_ALARM_SENSOR_OVERHEAT_TRIGGERED
+      ) != 0);
+
+  - platform: template
+    id: alarm_external_smoke_sensor_triggered
+    name: "Alarm External Smoke Sensor Triggered"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_ALARM_SENSOR_SMOKE_EXTERNAL_TRIGGERED
+      ) != 0);
+
+  - platform: template
+    id: alarm_water_coil_faulty
+    name: "Alarm Water Coil Faulty"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_ALARM_SENSOR_WATER_COIL_FAULTY
+      ) != 0);
+
+  - platform: template
+    id: alarm_heat_exchanger_faulty
+    name: "Alarm Heat Exchanger Faulty"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_ALARM_SENSOR_HEAT_EXCHANGER_FAULTY
+      ) != 0);
+
+  - platform: template
+    id: alarm_filter_change
+    name: "Alarm Filter Change"
+    lambda: |-
+      return (id(server)->read_holding_register(
+        flexit_modbus_server::REG_ALARM_FILTER_CHANGE
+      ) != 0);

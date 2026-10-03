@@ -1,0 +1,51 @@
+# Example config. Board and pins are for a XIAO ESP32-C3 on the XIAO RS485 board (see hardware/),
+# change them to whatever you're using. Any ESP32/ESP8266 with an RS485 transceiver should work.
+esphome:
+  name: flexit
+  friendly_name: Flexit
+
+esp32:
+  board: seeed_xiao_esp32c3
+  framework:
+    type: arduino
+
+logger:
+  level: WARN
+  # on ESP8266, keep the logger off the modbus uart:
+  # hardware_uart: UART1
+
+api:
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true             # needed if powered from the CS60
+
+substitutions:
+  # XIAO RS485 board pins, change these for your hardware
+  flexit_tx_pin: GPIO6
+  flexit_rx_pin: GPIO7
+  # DE/RE pin. Remove if your RS485 board doesn't have one
+  flexit_tx_enable_pin: GPIO4
+  # flexit_tx_enable_direct: "false"   # if your board wants DE active low
+  flexit_address: "3"
+  # branch/tag for packages and component, e.g. dev for testing
+  flexit_ref: main
+  # 0s if you want every build to pull the latest
+  flexit_refresh: 1d
+
+packages:
+  flexit:
+    url: https://github.com/MSkjel/esphome-flexit-modbus-server
+    ref: ${flexit_ref}
+    refresh: ${flexit_refresh}
+    files:
+      - packages/core.yaml         # required
+      - packages/controls.yaml
+      - packages/sensors.yaml
+      - packages/diagnostics.yaml
+      - packages/fan_speeds.yaml   # EC fans only
+      # - packages/fireplace.yaml  # needs controls + fan_speeds
+      # - packages/advanced.yaml

@@ -21,7 +21,10 @@ CONFIG_SCHEMA = (
         {
             cv.GenerateID(): cv.declare_id(FlexitModbusDeviceComponent),
             cv.Required(CONF_ADDRESS): cv.positive_int,
-            cv.Optional(CONF_TX_ENABLE_PIN): pins.gpio_output_pin_schema,
+            # "none" so the pin can be turned off from a substitution
+            cv.Optional(CONF_TX_ENABLE_PIN): cv.Any(
+                cv.one_of("none", lower=True), pins.gpio_output_pin_schema
+            ),
             cv.Optional(CONF_TX_ENABLE_DIRECT, True): cv.boolean,
             cv.Optional(CONF_TCP_BRIDGE_ENABLED, False): cv.boolean,
             cv.Optional(CONF_TCP_BRIDGE_PORT, 502): cv.port,
@@ -72,7 +75,7 @@ async def to_code(config):
     cg.add(server.set_server_address(config[CONF_ADDRESS]))
     cg.add(server.set_tx_enable_direct(config[CONF_TX_ENABLE_DIRECT]))
 
-    if CONF_TX_ENABLE_PIN in config:
+    if CONF_TX_ENABLE_PIN in config and config[CONF_TX_ENABLE_PIN] != "none":
         pin_config = config[CONF_TX_ENABLE_PIN]
         if 'number' in pin_config:
             pin_number = pin_config['number']
