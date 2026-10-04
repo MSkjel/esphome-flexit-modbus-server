@@ -25,18 +25,4 @@ The `XIAO-ESP32-C3` and `RS485 Breakout Board for Seeed Studio-XIAO` is easy to 
 - The DIP switch for the 120Ω termination resistor can be left in NC.
 
 ## Config
-Relevant part of config to configure the uart and flexit_modbus_server correctly
-```yaml 
-uart:
-  id: modbus_uart
-  tx_pin: GPIO6
-  rx_pin: GPIO7
-  baud_rate: 115200
-
-flexit_modbus_server:
-  - id: server
-    uart_id: modbus_uart
-    address: 3
-    tx_enable_pin: GPIO4
-    tx_enable_direct: true 
-```
+See the normal config in the README. 
