@@ -1,0 +1,123 @@
+# Fan % for min/normal/max. Only for EC fans (DS4 = EC).
+# Needs core.yaml
+
+number:
+  - platform: template
+    id: supply_air_percentage_min
+    name: "Supply Air Percentage Min"
+    max_value: 100
+    min_value: 1
+    step: 1
+    disabled_by_default: True
+    mode: BOX
+    update_interval: 1s
+    lambda: |-
+      uint16_t v = id(server)->read_holding_register(flexit_modbus_server::REG_CMD_PERCENTAGE_SUPPLY_FAN_MIN);
+      if (v == 0) return {};  // 0 = not synced from the CS60 yet
+      return v;
+    set_action:
+      lambda: |-
+        id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_PERCENTAGE_SUPPLY_FAN_MIN,
+            x
+        );
+
+  - platform: template
+    id: supply_air_percentage_normal
+    name: "Supply Air Percentage Normal"
+    max_value: 100
+    min_value: 1
+    step: 1
+    disabled_by_default: True
+    mode: BOX
+    update_interval: 1s
+    lambda: |-
+      uint16_t v = id(server)->read_holding_register(flexit_modbus_server::REG_CMD_PERCENTAGE_SUPPLY_FAN_NORMAL);
+      if (v == 0) return {};  // 0 = not synced from the CS60 yet
+      return v;
+    set_action:
+      lambda: |-
+        id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_PERCENTAGE_SUPPLY_FAN_NORMAL,
+            x
+        );
+
+  - platform: template
+    id: supply_air_percentage_max
+    name: "Supply Air Percentage Max"
+    max_value: 100
+    min_value: 1
+    step: 1
+    disabled_by_default: True
+    mode: BOX
+    update_interval: 1s
+    lambda: |-
+      uint16_t v = id(server)->read_holding_register(flexit_modbus_server::REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX);
+      if (v == 0) return {};  // 0 = not synced from the CS60 yet
+      return v;
+    set_action:
+      lambda: |-
+        id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX,
+            x
+        );
+
+  - platform: template
+    id: extract_air_percentage_min
+    name: "Extract Air Percentage Min"
+    max_value: 100
+    min_value: 1
+    step: 1
+    disabled_by_default: True
+    mode: BOX
+    update_interval: 1s
+    lambda: |-
+      uint16_t v = id(server)->read_holding_register(flexit_modbus_server::REG_CMD_PERCENTAGE_EXTRACT_FAN_MIN);
+      if (v == 0) return {};  // 0 = not synced from the CS60 yet
+      return v;
+    set_action:
+      lambda: |-
+        id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_PERCENTAGE_EXTRACT_FAN_MIN,
+            x
+        );
+
+  - platform: template
+    id: extract_air_percentage_normal
+    name: "Extract Air Percentage Normal"
+    max_value: 100
+    min_value: 1
+    step: 1
+    disabled_by_default: True
+    mode: BOX
+    update_interval: 1s
+    lambda: |-
+      uint16_t v = id(server)->read_holding_register(flexit_modbus_server::REG_CMD_PERCENTAGE_EXTRACT_FAN_NORMAL);
+      if (v == 0) return {};  // 0 = not synced from the CS60 yet
+      return v;
+    set_action:
+      lambda: |-
+        id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_PERCENTAGE_EXTRACT_FAN_NORMAL,
+            x
+        );
+
+  - platform: template
+    id: extract_air_percentage_max
+    name: "Extract Air Percentage Max"
+    max_value: 100
+    min_value: 1
+    step: 1
+    disabled_by_default: True
+    mode: BOX
+    update_interval: 1s
+    lambda: |-
+      uint16_t v = id(server)->read_holding_register(flexit_modbus_server::REG_CMD_PERCENTAGE_EXTRACT_FAN_MAX);
+      if (v == 0) return {};  // 0 = not synced from the CS60 yet
+      return v;
+    set_action:
+      lambda: |-
+        id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_PERCENTAGE_EXTRACT_FAN_MAX,
+            x
+        );

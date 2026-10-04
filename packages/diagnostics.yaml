@@ -1,0 +1,53 @@
+# Read only stuff: DIP switches, SW version, week program, filter resets.
+# Needs core.yaml
+
+sensor:
+  - platform: template
+    name: "Number of Filter Resets"
+    id: number_of_filter_resets
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_NUM_FILTER_RESETS);"
+
+binary_sensor:
+  - platform: template
+    name: "Week Program Active"
+    id: week_program_active
+    entity_category: diagnostic
+    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_WEEK_PROGRAM_ACTIVE) != 0;"
+
+  - platform: template
+    name: "Home Away Input Active"
+    id: home_away_input_active
+    entity_category: diagnostic
+    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_OVERRIDING_SYSTEM_ACTIVE) != 0;"
+
+text_sensor:
+  - platform: template
+    name: "Fan Type"
+    id: fan_type
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: |-
+      return std::string(id(server)->read_holding_register(flexit_modbus_server::REG_DS4_FAN_TYPE) == 0 ? "EC" : "AC");
+
+  - platform: template
+    name: "Heating Type"
+    id: heating_type
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: |-
+      return std::string(id(server)->read_holding_register(flexit_modbus_server::REG_DS1_HEATING_TYPE) == 0 ? "Water" : "Electric");
+
+  - platform: template
+    name: "Controller Software Version"
+    id: controller_software_version
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: |-
+      uint16_t v = id(server)->read_holding_register(flexit_modbus_server::REG_SW_VERSION_CONTROLLER);
+      if (v == 0) return {};
+      char buf[8];
+      snprintf(buf, sizeof(buf), "%u.%u", (unsigned) (v >> 8), (unsigned) (v & 0xFF));
+      return std::string(buf);

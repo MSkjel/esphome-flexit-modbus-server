@@ -132,6 +132,54 @@ enum HoldingRegisterIndex {
   REG_RUNTIME_FILTER_HIGH                   = 0x15E,
   REG_RUNTIME_FILTER_LOW                    = 0x15F,
 
+  // Status / diagnostics (read only)
+  REG_SW_VERSION_CONTROLLER                 = 0x097, // major << 8 | minor
+  REG_NUM_FILTER_RESETS                     = 0x0CC,
+  REG_OVERRIDING_SYSTEM_ACTIVE              = 0x10D, // Home/away input active
+  REG_DS1_HEATING_TYPE                      = 0x10F, // DIP switch: 0 = water, 1 = electric
+  REG_DS2_ROTOR_GUARD_TYPE                  = 0x110, // DIP switch
+  REG_DS3_ROTOR_MOTOR_TYPE                  = 0x111, // DIP switch
+  REG_DS4_FAN_TYPE                          = 0x112, // DIP switch: 0 = EC, 1 = AC
+  REG_WEEK_PROGRAM_ACTIVE                   = 0x117,
+
+  // Advanced settings (CI600 "Advanced user" / "Service" menus)
+  REG_CMD_AIR_VOLUME_COMP_SUPPLY_SPEED      = 0x005, // AC fans: supply mode 1-3 while hood/fireplace input is active
+  REG_CMD_AIR_VOLUME_COMP_EXTRACT_SPEED     = 0x00A, // AC fans: extract mode 1-3 while hood/fireplace input is active
+  REG_CMD_FIRE_SMOKE_MODE                   = 0x00B, // 1 = stop, 2 = supply+extract max, 3 = extract max, 4 = supply max
+  REG_CMD_NEUTRAL_ZONE_COOLING_ROTOR        = 0x011, // x0.1 K
+  REG_CMD_NEUTRAL_ZONE_ROTOR_HEATING        = 0x012, // x0.1 K
+  REG_CMD_COOLING_MIN_OUTDOOR_TEMP          = 0x013, // x0.1 C
+  REG_CMD_COOLING_RESTART_DELAY             = 0x014, // s
+  REG_CMD_COOLING_MIN_SPEED                 = 0x015, // 2 = normal, 3 = max
+  REG_CMD_START_DELAY_1                     = 0x017, // s
+  REG_CMD_START_DELAY_2                     = 0x018, // s
+  REG_CMD_START_DELAY_3                     = 0x019, // s
+  REG_CMD_START_DELAY_4                     = 0x01A, // s
+  REG_CMD_STOP_SEQUENCE_HEATER              = 0x01B, // s
+  REG_CMD_CALIBRATION_SUPPLY_AIR            = 0x08C, // x0.1 K, signed
+  REG_CMD_CALIBRATION_EXTRACT_AIR           = 0x08D, // x0.1 K, signed
+  REG_CMD_CALIBRATION_OUTDOOR_AIR           = 0x08E, // x0.1 K, signed
+  REG_CMD_CALIBRATION_RETURN_WATER          = 0x08F, // x0.1 K, signed
+  REG_CMD_MAX_TIMER_SPEED                   = 0x090, // AC fans: mode 1-3 used by the max timer
+  REG_CMD_COOLNESS_RECOVERY_DIFF            = 0x092, // x0.1 K
+  REG_CMD_HOME_AWAY_TIME_DELAY              = 0x0A5, // min
+  REG_CMD_HOME_AWAY_SPEED                   = 0x0A6, // 1-3
+  REG_CMD_HOME_AWAY_TEMPERATURE             = 0x0A7, // x0.1 C
+  REG_CMD_FILTER_GUARD_ENABLE               = 0x113,
+  REG_CMD_COOLING_ENABLE                    = 0x115,
+  REG_CMD_EXTERNAL_TEMP_CONTROL_ENABLE      = 0x134, // setpoint from external potentiometer
+  REG_CMD_SENSOR_SUPPLY_ENABLE              = 0x135,
+  REG_CMD_SENSOR_EXTRACT_ENABLE             = 0x136,
+  REG_CMD_SENSOR_OUTDOOR_ENABLE             = 0x137,
+  REG_CMD_SENSOR_RETURN_WATER_ENABLE        = 0x138,
+  REG_CMD_COOLNESS_RECOVERY_ENABLE          = 0x139,
+  REG_CMD_CLEAR_ALARM_LOG                   = 0x13D,
+  REG_CMD_ROTOR_ALARM_TYPE                  = 0x14B, // 0 = A (stop unit), 1 = B (continue)
+  REG_CMD_DEICING_ENABLE                    = 0x158,
+  REG_CMD_DEICING_START_TEMP                = 0x159, // x0.1 C, signed
+  REG_CMD_DEICING_FAN_REDUCTION_TEMP        = 0x15A, // x0.1 C, signed
+  REG_CMD_DEICING_ROTOR_SPEED               = 0x15B, // 15-180
+
   MAX_NUM_HOLDING_REGISTERS = 0x160
 };
 
@@ -220,7 +268,7 @@ public:
    * @brief Read a time (in hours) from two consecutive Holding Registers.
    *
    * @param high_reg The register holding the high word.
-   * @return The time in hours.
+   * @return The time in hours, or NAN if the counter is not known yet.
    */
   float read_holding_register_hours(HoldingRegisterIndex high_reg);
 
@@ -306,6 +354,74 @@ private:
 
   /// @brief Whether TX enable is active high (true) or low.
   bool tx_enable_direct_{true};
+
+  // ----------------------------------------------------------------
+  // Settings persistence
+  // ----------------------------------------------------------------
+  // The CS60 only sends all settings when it boots, so we keep a copy in
+  // flash and load it on our own boot. Only setting registers are saved,
+  // not status/runtime values that change all the time.
+  struct SettingsRange {
+    uint16_t start;
+    uint16_t count;
+  };
+  static constexpr SettingsRange SETTINGS_RANGES[] = {
+    {0x000, 0x1C},  // modes, fan %, temps, cooling, filter, start delays
+    {0x08C, 0x08},  // calibration, max timer, coolness diff, rest mode
+    {0x0A4, 0x04},  // language, home/away
+    {0x113, 0x39},  // enables, regulation type, panel flags, rotor alarm
+    {0x158, 0x04},  // de-icing
+  };
+  static constexpr size_t NUM_SAVED_REGISTERS = 0x1C + 0x08 + 0x04 + 0x39 + 0x04;
+  static constexpr uint32_t SAVE_CHECK_INTERVAL_MS = 10000;
+
+  struct SavedSettings {
+    uint16_t values[NUM_SAVED_REGISTERS];
+  };
+
+  ESPPreferenceObject settings_pref_;
+  SavedSettings saved_settings_{};
+  uint32_t last_save_check_{0};
+
+  void collect_settings_(SavedSettings &out);
+  void restore_settings_();
+  void save_settings_if_changed_();
+
+  // ----------------------------------------------------------------
+  // Runtime counter persistence
+  // ----------------------------------------------------------------
+  // The counters are 32 bit seconds split in a high and low word. The CS60
+  // only sends a word when it changes, so the high word comes every ~18 h
+  // and counters that aren't running don't come at all. We save them to
+  // flash, and if the low word wrapped while we were off (new low < saved
+  // low) we bump the high word until the CS60 sends a real one.
+  static constexpr uint16_t RUNTIME_FIRST = 0x14C;
+  static constexpr uint16_t RUNTIME_LAST = 0x15F;
+  static constexpr uint16_t RUNTIME_HIGH_REGS[] = {
+    REG_RUNTIME_STOP_HIGH, REG_RUNTIME_MIN_HIGH, REG_RUNTIME_NORMAL_HIGH, REG_RUNTIME_MAX_HIGH,
+    REG_RUNTIME_ROTOR_HIGH, REG_RUNTIME_HEATER_HIGH, REG_RUNTIME_HIGH, REG_RUNTIME_FILTER_HIGH,
+  };
+  static constexpr size_t NUM_RUNTIME_COUNTERS = 8;
+  static constexpr uint32_t RUNTIME_SAVE_INTERVAL_MS = 60 * 60 * 1000;
+
+  struct SavedRuntime {
+    uint16_t high[NUM_RUNTIME_COUNTERS];
+    uint16_t low[NUM_RUNTIME_COUNTERS];
+    uint8_t known;  // bit per counter
+  };
+
+  ESPPreferenceObject runtime_pref_;
+  SavedRuntime saved_runtime_{};
+  uint32_t last_runtime_save_{0};
+  uint32_t runtime_received_{0};  // bit per register since boot, (reg - RUNTIME_FIRST)
+  uint8_t runtime_restored_{0};   // bit per counter loaded from flash
+  uint16_t last_low_[NUM_RUNTIME_COUNTERS]{};
+
+  int runtime_index_(uint16_t high_reg) const;
+  bool runtime_known_(size_t i) const;
+  void on_registers_written_(uint16_t start, uint16_t count);
+  void restore_runtime_();
+  void save_runtime_if_needed_();
 
   // ----------------------------------------------------------------
   // TCP Bridge Members

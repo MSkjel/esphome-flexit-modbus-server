@@ -1,0 +1,207 @@
+# Mode, setpoint, heater, max timer, filter/alarm reset etc.
+# Needs core.yaml
+
+switch:
+  - platform: template
+    id: heater
+    name: "Heater"
+    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_STATUS_HEATER);"
+    turn_on_action:
+      - lambda: |-
+          id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_HEATER,
+            1
+          );
+    turn_off_action:
+      - lambda: |-
+          id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_HEATER,
+            0
+          );
+
+  - platform: template
+    id: supply_air_control
+    name: "Supply Air Control"
+    restore_mode: DISABLED
+    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_AIR_CONTROL) == 1;"
+    turn_on_action:
+      - lambda: |-
+          id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_AIR_CONTROL,
+            1
+          );
+    turn_off_action:
+      - lambda: |-
+          id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_AIR_CONTROL,
+            0
+          );
+
+button:
+  - platform: template
+    id: clear_alarms
+    name: "Clear Alarms"
+    on_press: 
+      - lambda: |-
+          id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_CLEAR_ALARMS,
+            1
+          );
+
+  - platform: template
+    id: reset_filter_interval
+    name: "Reset Filter Interval"
+    on_press: 
+      - lambda: |-
+          id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_CLEAR_FILTER_ALARM,
+            1
+          );
+
+  - platform: template
+    id: start_max_timer
+    name: "Start Max Timer"
+    on_press: 
+      - lambda: |-
+          id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_START_MAX_TIMER,
+            1
+          );
+
+  - platform: template
+    id: stop_max_timer
+    name: "Stop Max Timer"
+    on_press: 
+      - lambda: |-
+          id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_STOP_MAX_TIMER,
+            1
+          );
+
+number:
+  - platform: template
+    id: temperature
+    name: "Temperature"
+    max_value: 30
+    min_value: 10
+    step: 0.5
+    update_interval: 1s
+    lambda: |-
+      return id(server)->read_holding_register_temperature(
+        flexit_modbus_server::REG_TEMPERATURE_SETPOINT
+      );
+    set_action:
+      lambda: |-
+        id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_TEMPERATURE_SETPOINT,
+            x * 10
+        );
+
+  - platform: template
+    id: max_timer_minutes
+    name: "Max Timer Minutes"
+    max_value: 600
+    min_value: 1
+    step: 1
+    disabled_by_default: True
+    update_interval: 1s
+    lambda: |-
+      uint16_t v = id(server)->read_holding_register(flexit_modbus_server::REG_CMD_MINUTES_MAX_TIMER);
+      return v;
+    set_action:
+      lambda: |-
+        id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_MINUTES_MAX_TIMER,
+            x
+        );
+
+  - platform: template
+    id: temperature_supply_min
+    name: "Temperature Supply Min"
+    max_value: 30
+    min_value: 10
+    step: 0.5
+    disabled_by_default: True
+    mode: BOX
+    update_interval: 1s
+    lambda: |-
+      uint16_t v = id(server)->read_holding_register(flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_MIN);
+      if (v == 0) return {};  // 0 = not synced from the CS60 yet
+      return static_cast<int16_t>(v) / 10.0f;
+    set_action:
+      lambda: |-
+        id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_MIN,
+            x * 10
+        );
+
+  - platform: template
+    id: temperature_supply_max
+    name: "Temperature Supply Max"
+    max_value: 30
+    min_value: 10
+    step: 0.5
+    disabled_by_default: True
+    mode: BOX
+    update_interval: 1s
+    lambda: |-
+      uint16_t v = id(server)->read_holding_register(flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_MAX);
+      if (v == 0) return {};  // 0 = not synced from the CS60 yet
+      return static_cast<int16_t>(v) / 10.0f;
+    set_action:
+      lambda: |-
+        id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_MAX,
+            x * 10
+        );
+
+  - platform: template
+    id: filter_change_interval
+    name: "Filter Change Interval"
+    max_value: 360
+    min_value: 30
+    step: 30
+    mode: BOX
+    update_interval: 1s
+    lambda: |-
+      uint16_t v = id(server)->read_holding_register(flexit_modbus_server::REG_CMD_DAYS_FILTER_CHANGE_INTERVAL);
+      return v;
+    set_action:
+      lambda: |-
+        id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_DAYS_FILTER_CHANGE_INTERVAL,
+            x
+        );
+
+select:
+  - platform: template
+    id: set_mode
+    name: "Set Mode"
+    update_interval: 1s
+    lambda: |-
+      return flexit_modbus_server::mode_to_string(
+        id(server)->read_holding_register(flexit_modbus_server::REG_MODE)
+      );
+    options:
+      - Stop
+      - Min
+      - Normal
+      - Max
+    set_action:
+      lambda: |-
+        id(server)->send_cmd(
+            flexit_modbus_server::REG_CMD_MODE,
+            flexit_modbus_server::string_to_mode(x)
+        );
+
+text_sensor:
+  - platform: template
+    id: current_mode
+    name: "Current Mode"
+    update_interval: 1s
+    lambda: |-
+      return flexit_modbus_server::mode_to_string(
+        id(server)->read_holding_register(
+          flexit_modbus_server::REG_MODE
+        )
+      );

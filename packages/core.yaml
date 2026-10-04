@@ -1,0 +1,30 @@
+# The modbus server itself. All the other packages need this one.
+# Set these in your own config:
+substitutions:
+  flexit_tx_pin: GPIO1
+  flexit_rx_pin: GPIO3
+  # DE/RE pin, depends on your RS485 board. Leave as none if it switches direction by itself.
+  flexit_tx_enable_pin: none
+  # Set to "false" if your board wants DE active low
+  flexit_tx_enable_direct: "true"
+  flexit_address: "3"            # 1-3. Heater on/off needs 1, but that clashes with a CI600
+  flexit_ref: main               # branch/tag, use the same as for the packages
+  flexit_refresh: 1d             # 0s when testing a branch else 1d
+
+external_components:
+  - source: github://MSkjel/esphome-flexit-modbus-server@${flexit_ref}
+    refresh: ${flexit_refresh}
+    components: [flexit_modbus_server]
+
+uart:
+  id: modbus_uart
+  tx_pin: ${flexit_tx_pin}
+  rx_pin: ${flexit_rx_pin}
+  baud_rate: 115200
+
+flexit_modbus_server:
+  - id: server
+    uart_id: modbus_uart
+    address: ${flexit_address}
+    tx_enable_pin: ${flexit_tx_enable_pin}
+    tx_enable_direct: ${flexit_tx_enable_direct}

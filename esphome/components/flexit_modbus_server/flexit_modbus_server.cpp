@@ -143,12 +143,35 @@ void FlexitModbusServer::setup() {
         
         mb_.setHoldingRegister(address, value);
         mb_.setCoil(address, 0);
-      
+        on_registers_written_(address, 1);
+
         return;
     }
 
     mb_.sendException(data[1], 0x01, broadcast);
   };
+
+  // Wrap the library's register write handlers so we know which runtime
+  // counter words the CS60 has actually sent since boot.
+  auto write_single = mb_.onWriteSingleRegister;
+  mb_.onWriteSingleRegister = [this, write_single](uint8_t* data, size_t length, bool broadcast) {
+    write_single(data, length, broadcast);
+    if (length >= 6)
+      on_registers_written_((data[2] << 8) | data[3], 1);
+  };
+
+  auto write_multiple = mb_.onWriteMultipleRegisters;
+  mb_.onWriteMultipleRegisters = [this, write_multiple](uint8_t* data, size_t length, bool broadcast) {
+    write_multiple(data, length, broadcast);
+    if (length >= 6) {
+      uint16_t quantity = (data[4] << 8) | data[5];
+      if (quantity <= 123)
+        on_registers_written_((data[2] << 8) | data[3], quantity);
+    }
+  };
+
+  restore_settings_();
+  restore_runtime_();
 
 #ifdef USE_FLEXIT_TCP_BRIDGE
   if (tcp_bridge_enabled_) {
@@ -160,11 +183,143 @@ void FlexitModbusServer::setup() {
 void FlexitModbusServer::loop() {
   mb_.update();
 
+  if (millis() - last_save_check_ >= SAVE_CHECK_INTERVAL_MS) {
+    last_save_check_ = millis();
+    save_settings_if_changed_();
+    save_runtime_if_needed_();
+  }
+
 #ifdef USE_FLEXIT_TCP_BRIDGE
   if (tcp_bridge_enabled_) {
     handle_tcp_bridge_();
   }
 #endif  // USE_FLEXIT_TCP_BRIDGE
+}
+
+void FlexitModbusServer::collect_settings_(SavedSettings &out) {
+  size_t i = 0;
+  for (const auto &range : SETTINGS_RANGES) {
+    for (uint16_t reg = range.start; reg < range.start + range.count; reg++) {
+      out.values[i++] = mb_.getHoldingRegister(reg);
+    }
+  }
+}
+
+void FlexitModbusServer::restore_settings_() {
+  settings_pref_ = global_preferences->make_preference<SavedSettings>(fnv1_hash("flexit_settings"), true);
+
+  if (!settings_pref_.load(&saved_settings_)) {
+    ESP_LOGI(TAG, "No saved settings, waiting for the CS60 to send them");
+    return;
+  }
+
+  // Only fills our local registers, no coils are set so nothing is sent to the CS60.
+  size_t i = 0;
+  for (const auto &range : SETTINGS_RANGES) {
+    for (uint16_t reg = range.start; reg < range.start + range.count; reg++) {
+      mb_.setHoldingRegister(reg, saved_settings_.values[i++]);
+    }
+  }
+  ESP_LOGI(TAG, "Restored %u saved settings", (unsigned) NUM_SAVED_REGISTERS);
+}
+
+void FlexitModbusServer::save_settings_if_changed_() {
+  SavedSettings current;
+  collect_settings_(current);
+
+  if (memcmp(&current, &saved_settings_, sizeof(SavedSettings)) == 0)
+    return;
+
+  // ESPHome batches the actual flash writes (flash_write_interval)
+  saved_settings_ = current;
+  settings_pref_.save(&saved_settings_);
+  ESP_LOGD(TAG, "Settings changed, saved");
+}
+
+int FlexitModbusServer::runtime_index_(uint16_t high_reg) const {
+  for (size_t i = 0; i < NUM_RUNTIME_COUNTERS; i++) {
+    if (RUNTIME_HIGH_REGS[i] == high_reg)
+      return i;
+  }
+  return -1;
+}
+
+bool FlexitModbusServer::runtime_known_(size_t i) const {
+  if (runtime_restored_ & (1u << i))
+    return true;
+  uint16_t high_bit = RUNTIME_HIGH_REGS[i] - RUNTIME_FIRST;
+  return (runtime_received_ & (1u << high_bit)) && (runtime_received_ & (1u << (high_bit + 1)));
+}
+
+void FlexitModbusServer::on_registers_written_(uint16_t start, uint16_t count) {
+  uint32_t end = static_cast<uint32_t>(start) + count;
+  if (end <= RUNTIME_FIRST || start > RUNTIME_LAST)
+    return;
+
+  for (uint32_t reg = std::max<uint32_t>(start, RUNTIME_FIRST); reg < std::min<uint32_t>(end, RUNTIME_LAST + 1); reg++)
+    runtime_received_ |= 1u << (reg - RUNTIME_FIRST);
+
+  for (size_t i = 0; i < NUM_RUNTIME_COUNTERS; i++) {
+    uint16_t high = RUNTIME_HIGH_REGS[i];
+    uint16_t low = high + 1;
+    if (low < start || low >= end)
+      continue;
+
+    uint16_t new_low = mb_.getHoldingRegister(low);
+    bool high_received = runtime_received_ & (1u << (high - RUNTIME_FIRST));
+
+    // Low word went backwards = it wrapped since we saved, so the saved high is one behind.
+    if ((runtime_restored_ & (1u << i)) && !high_received && new_low < last_low_[i]) {
+      mb_.setHoldingRegister(high, mb_.getHoldingRegister(high) + 1);
+      ESP_LOGD(TAG, "Runtime 0x%03X wrapped while we were off, high word bumped", high);
+    }
+    last_low_[i] = new_low;
+  }
+}
+
+void FlexitModbusServer::restore_runtime_() {
+  runtime_pref_ = global_preferences->make_preference<SavedRuntime>(fnv1_hash("flexit_runtime"), true);
+
+  if (!runtime_pref_.load(&saved_runtime_)) {
+    saved_runtime_ = SavedRuntime{};
+    ESP_LOGI(TAG, "No saved runtime counters, they stay unknown until the CS60 sends them");
+    return;
+  }
+
+  for (size_t i = 0; i < NUM_RUNTIME_COUNTERS; i++) {
+    if (!(saved_runtime_.known & (1u << i)))
+      continue;
+    mb_.setHoldingRegister(RUNTIME_HIGH_REGS[i], saved_runtime_.high[i]);
+    mb_.setHoldingRegister(RUNTIME_HIGH_REGS[i] + 1, saved_runtime_.low[i]);
+    last_low_[i] = saved_runtime_.low[i];
+    runtime_restored_ |= 1u << i;
+  }
+}
+
+void FlexitModbusServer::save_runtime_if_needed_() {
+  SavedRuntime current{};
+  for (size_t i = 0; i < NUM_RUNTIME_COUNTERS; i++) {
+    if (!runtime_known_(i))
+      continue;
+    current.high[i] = mb_.getHoldingRegister(RUNTIME_HIGH_REGS[i]);
+    current.low[i] = mb_.getHoldingRegister(RUNTIME_HIGH_REGS[i] + 1);
+    current.known |= 1u << i;
+  }
+
+  // Low words tick every second, so only save them once an hour. A new counter
+  // or a changed high word gets saved right away.
+  bool important = current.known != saved_runtime_.known ||
+                   memcmp(current.high, saved_runtime_.high, sizeof(current.high)) != 0;
+  bool low_changed = memcmp(current.low, saved_runtime_.low, sizeof(current.low)) != 0;
+  bool due = millis() - last_runtime_save_ >= RUNTIME_SAVE_INTERVAL_MS;
+
+  if (!important && !(low_changed && due))
+    return;
+
+  saved_runtime_ = current;
+  runtime_pref_.save(&saved_runtime_);
+  last_runtime_save_ = millis();
+  ESP_LOGD(TAG, "Runtime counters saved");
 }
 
 void FlexitModbusServer::write_holding_register(HoldingRegisterIndex reg, uint16_t value) {
@@ -181,6 +336,11 @@ float FlexitModbusServer::read_holding_register_temperature(HoldingRegisterIndex
 }
 
 float FlexitModbusServer::read_holding_register_hours(HoldingRegisterIndex high_reg) {
+  // Unknown until we have both words, either from flash or from the CS60
+  int i = runtime_index_(high_reg);
+  if (i >= 0 && !runtime_known_(i))
+    return NAN;
+
   // Combine two registers: the high word and the subsequent low word.
   uint32_t rawSeconds = (static_cast<uint32_t>(mb_.getHoldingRegister(high_reg)) << 16)
                           + static_cast<uint32_t>(mb_.getHoldingRegister(high_reg + 1));
