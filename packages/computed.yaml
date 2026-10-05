@@ -1,0 +1,93 @@
+# Calculated sensors: heat recovery efficiency, heater power, filter days left, any alarm.
+# Needs core.yaml
+substitutions:
+  # Rated power of the electric heater in watts, for the heater power and energy sensors.
+  # It's on the type plate of the unit. Set to 0 if you have a water coil.
+  flexit_heater_power: "900"
+
+sensor:
+  # How much of the heat in the extract air ends up in the supply air.
+  # Only right while the rotor runs alone. The supply sensor sits after the heater,
+  # so with the heater or cooling on the number would be too good.
+  - platform: template
+    id: heat_recovery_efficiency
+    name: "Heat Recovery Efficiency"
+    icon: "mdi:recycle"
+    state_class: measurement
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: |-
+      if (id(server)->read_holding_register(flexit_modbus_server::REG_PERCENTAGE_HEAT_EXCHANGER) == 0 ||
+          id(server)->read_holding_register(flexit_modbus_server::REG_PERCENTAGE_HEATING) != 0 ||
+          id(server)->read_holding_register(flexit_modbus_server::REG_PERCENTAGE_COOLING) != 0) {
+        return {};
+      }
+
+      float supply = id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_SUPPLY_AIR);
+      float extract = id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_EXTRACT_AIR);
+      float outdoor = id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_OUTDOOR_AIR);
+
+      // Too little difference and the sensor error is bigger than what we measure
+      if (extract - outdoor < 5.0f) {
+        return {};
+      }
+      return clamp((supply - outdoor) / (extract - outdoor) * 100.0f, 0.0f, 100.0f);
+
+  # Heater percentage times the rated power. An estimate, not a measurement.
+  - platform: template
+    id: heater_power
+    name: "Heater Power"
+    device_class: power
+    state_class: measurement
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    update_interval: 20s
+    lambda: |-
+      return id(server)->read_holding_register(flexit_modbus_server::REG_PERCENTAGE_HEATING)
+             * (${flexit_heater_power}) / 100.0f;
+
+  # For the energy dashboard in Home Assistant. Starts at 0 again after a reboot,
+  # Home Assistant handles that.
+  - platform: integration
+    id: heater_energy
+    name: "Heater Energy"
+    sensor: heater_power
+    time_unit: h
+    integration_method: left
+    restore: false
+    device_class: energy
+    state_class: total_increasing
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.001
+
+  # Filter change interval minus the hours the filter has run
+  - platform: template
+    id: filter_days_remaining
+    name: "Filter Days Remaining"
+    icon: "mdi:air-filter"
+    unit_of_measurement: "d"
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: |-
+      uint16_t interval = id(server)->read_holding_register(flexit_modbus_server::REG_CMD_DAYS_FILTER_CHANGE_INTERVAL);
+      if (interval == 0) return {};  // 0 = not synced from the CS60 yet
+      float used = id(server)->read_holding_register_hours(flexit_modbus_server::REG_RUNTIME_FILTER_HIGH) / 24.0f;
+      return std::max(interval - used, 0.0f);
+
+binary_sensor:
+  # One sensor for notifications, on when any of the alarms is
+  - platform: template
+    id: alarm_any
+    name: "Alarm"
+    device_class: problem
+    lambda: |-
+      for (int reg = flexit_modbus_server::REG_ALARM_SENSOR_SUPPLY_FAULTY;
+           reg <= flexit_modbus_server::REG_ALARM_FILTER_CHANGE; reg++) {
+        if (id(server)->read_holding_register((flexit_modbus_server::HoldingRegisterIndex) reg) != 0) {
+          return true;
+        }
+      }
+      return false;

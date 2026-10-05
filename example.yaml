@@ -48,4 +48,8 @@ packages:
       - packages/diagnostics.yaml
       - packages/fan_speeds.yaml   # EC fans only
       # - packages/fireplace.yaml  # needs controls + fan_speeds
+      # - packages/humidity_boost.yaml  # needs controls + your own humidity sensor
+      # - packages/co2.yaml             # needs controls + your own CO2 sensor
+      # - packages/summer_cooling.yaml  # needs controls
+      # - packages/computed.yaml
       # - packages/advanced.yaml

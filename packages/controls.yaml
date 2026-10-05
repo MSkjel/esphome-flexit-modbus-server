@@ -1,6 +1,135 @@
 # Mode, setpoint, heater, max timer, filter/alarm reset etc.
 # Needs core.yaml
 
+globals:
+  # Mode requests, name -> mode. Fireplace, humidity boost etc. add one while they want
+  # a higher mode. mode_arbiter below runs the highest and goes back when they're all gone.
+  # A manual mode change clears them all.
+  - id: mode_requests
+    type: std::map<std::string, int>
+    restore_value: no
+
+  # True while a request is holding the mode up. Saved to flash together with the
+  # mode to go back to, so a reboot in the middle doesn't leave the unit in max.
+  - id: mode_override_active
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+
+  - id: mode_override_base
+    type: int
+    restore_value: yes
+    initial_value: '2'
+
+  # The last mode we sent, when, and if the CS60 has switched to it yet
+  - id: mode_override_target
+    type: int
+    restore_value: no
+    initial_value: '-1'
+
+  - id: mode_override_sent_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+  - id: mode_override_confirmed
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+
+  - id: mode_override_started
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+script:
+  - id: mode_arbiter
+    then:
+      - lambda: |-
+          const uint32_t now = millis();
+          const int mode = id(server)->read_holding_register(flexit_modbus_server::REG_MODE);
+
+          auto send = [&](int m) {
+            id(mode_override_target) = m;
+            id(mode_override_sent_ms) = now;
+            id(mode_override_confirmed) = false;
+            id(server)->send_cmd(flexit_modbus_server::REG_CMD_MODE, m);
+            global_preferences->sync();
+          };
+
+          // First run after boot. If we rebooted while holding the mode up, go back now.
+          if (!id(mode_override_started)) {
+            id(mode_override_started) = true;
+            if (id(mode_override_active)) {
+              id(mode_override_active) = false;
+              ESP_LOGW("mode", "Rebooted during a boost, going back to %s",
+                       flexit_modbus_server::mode_to_string(id(mode_override_base)).c_str());
+              send(id(mode_override_base));
+            }
+            return;
+          }
+
+          // The CS60 takes a few seconds to apply a mode we sent. Until it has (or 30s
+          // have passed) the mode it reports says nothing about what the user wants.
+          if (!id(mode_override_confirmed) &&
+              (mode == id(mode_override_target) || now - id(mode_override_sent_ms) >= 30000)) {
+            id(mode_override_confirmed) = true;
+          }
+
+          int want = 0;
+          for (auto &r : id(mode_requests)) {
+            if (r.second > want) want = r.second;
+          }
+
+          if (id(mode_override_active)) {
+            if (id(mode_override_confirmed) && mode != id(mode_override_target)) {
+              ESP_LOGW("mode", "Mode was changed by hand, dropping all boosts");
+              id(mode_requests).clear();
+              id(mode_override_active) = false;
+              id(mode_override_base) = mode;
+              global_preferences->sync();
+              return;
+            }
+
+            const int desired = std::max(want, id(mode_override_base));
+            if (desired == id(mode_override_target)) {
+              return;
+            }
+            if (desired == id(mode_override_base)) {
+              id(mode_override_active) = false;
+              ESP_LOGI("mode", "Boosts done, going back to %s",
+                       flexit_modbus_server::mode_to_string(desired).c_str());
+            }
+            send(desired);
+            return;
+          }
+
+          // Nothing held up. Follow the mode the user has picked.
+          if (id(mode_override_confirmed) && mode != id(mode_override_base)) {
+            id(mode_override_base) = mode;
+            if (!id(mode_requests).empty()) {
+              ESP_LOGW("mode", "Mode was changed by hand, dropping all boosts");
+              id(mode_requests).clear();
+            }
+            return;
+          }
+
+          // Requests only raise the mode, and never start a stopped unit
+          if (id(mode_override_base) == 0 || want <= id(mode_override_base)) {
+            return;
+          }
+
+          ESP_LOGI("mode", "Going from %s to %s",
+                   flexit_modbus_server::mode_to_string(id(mode_override_base)).c_str(),
+                   flexit_modbus_server::mode_to_string(want).c_str());
+          id(mode_override_active) = true;
+          send(want);
+
+interval:
+  - interval: 2s
+    then:
+      - script.execute: mode_arbiter
+
 switch:
   - platform: template
     id: heater
@@ -195,6 +324,21 @@ select:
         );
 
 text_sensor:
+  # Which packages are asking for a higher mode right now
+  - platform: template
+    id: mode_boosted_by
+    name: "Mode Boosted By"
+    icon: "mdi:fan-plus"
+    entity_category: diagnostic
+    update_interval: 5s
+    lambda: |-
+      std::string names;
+      for (auto &r : id(mode_requests)) {
+        if (!names.empty()) names += ", ";
+        names += r.first;
+      }
+      return names.empty() ? std::string("nothing") : names;
+
   - platform: template
     id: current_mode
     name: "Current Mode"

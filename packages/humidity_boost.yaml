@@ -1,0 +1,346 @@
+# Humidity boost. Runs max when the humidity jumps (shower, cooking), then goes back to what it was.
+# This is done on the ESP, the CS60 doesn't have it.
+# Needs core.yaml, controls.yaml and your own humidity sensor, with its id in flexit_humidity_sensor
+substitutions:
+  flexit_humidity_sensor: inside_humidity
+  # How many minutes of history the baseline looks at
+  flexit_humidity_baseline_window: "60"
+
+globals:
+  - id: humidity_boost_active
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: humidity_boost_start_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+    # 0 until the first boost has ended, so there is no cooldown before that
+  - id: humidity_boost_end_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+    # When the humidity got back under the release level. 0 if it hasn't yet
+  - id: humidity_boost_below_release_since_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+    # False from when a boost starts until the humidity is back to normal.
+    # Without this a boost that hit the max runtime would just start again after the cooldown.
+  - id: humidity_boost_armed
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+
+    # How many samples the baseline has so far
+  - id: humidity_baseline_samples
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+switch:
+  - platform: template
+    name: "Humidity Boost Enable"
+    id: humidity_boost_enable
+    icon: "mdi:shower"
+    optimistic: True
+    restore_mode: RESTORE_DEFAULT_ON
+
+  # On while boosting. You can also turn it on yourself, it ends the same way as a normal boost.
+  - platform: template
+    name: "Humidity Boost"
+    id: humidity_boost
+    icon: "mdi:water-alert"
+    optimistic: false
+    # Don't pick a boost back up after a reboot, we no longer know which mode to go back to
+    restore_mode: ALWAYS_OFF
+    lambda: |-
+      return id(humidity_boost_active);
+
+    turn_on_action:
+      - lambda: |-
+          if (id(humidity_boost_active)) {
+            return;
+          }
+
+          // Leave it alone if it's stopped
+          if (id(server)->read_holding_register(flexit_modbus_server::REG_MODE) == 0) {
+            ESP_LOGW("humidity", "Not boosting, the unit is stopped");
+            return;
+          }
+
+          id(humidity_boost_active) = true;
+          id(humidity_boost_armed) = false;
+          id(humidity_boost_start_ms) = millis();
+          id(humidity_boost_below_release_since_ms) = 0;
+
+          // Ask for max. See mode_arbiter in controls.yaml
+          ESP_LOGI("humidity", "Boost on");
+          id(mode_requests)["humidity boost"] = 3;
+          id(mode_arbiter).execute();
+
+          id(humidity_boost).publish_state(true);
+
+    turn_off_action:
+      - lambda: |-
+          if (!id(humidity_boost_active)) {
+            return;
+          }
+
+          id(humidity_boost_active) = false;
+          id(humidity_boost_end_ms) = millis();
+          id(humidity_boost_below_release_since_ms) = 0;
+
+          // The arbiter goes back to the old mode if nobody else wants max
+          ESP_LOGI("humidity", "Boost off");
+          id(mode_requests).erase("humidity boost");
+          id(mode_arbiter).execute();
+
+          id(humidity_boost).publish_state(false);
+
+number:
+  # Boost starts when the humidity is this much above the baseline
+  - platform: template
+    name: "Humidity Boost Trigger Delta"
+    id: humidity_trigger_delta
+    entity_category: config
+    unit_of_measurement: "%"
+    icon: "mdi:arrow-up-bold"
+    min_value: 2
+    max_value: 30
+    step: 0.5
+    initial_value: 8
+    optimistic: True
+    restore_value: True
+    mode: BOX
+
+  # and ends when it has been less than this much above it for the release minutes
+  - platform: template
+    name: "Humidity Boost Release Delta"
+    id: humidity_release_delta
+    entity_category: config
+    unit_of_measurement: "%"
+    icon: "mdi:arrow-down-bold"
+    min_value: 0
+    max_value: 20
+    step: 0.5
+    initial_value: 3
+    optimistic: True
+    restore_value: True
+    mode: BOX
+
+  - platform: template
+    name: "Humidity Boost Release Minutes"
+    id: humidity_release_minutes
+    entity_category: config
+    unit_of_measurement: "min"
+    min_value: 1
+    max_value: 30
+    step: 1
+    initial_value: 5
+    optimistic: True
+    restore_value: True
+    disabled_by_default: True
+    mode: BOX
+
+  - platform: template
+    name: "Humidity Boost Min Minutes"
+    id: humidity_boost_min_minutes
+    entity_category: config
+    unit_of_measurement: "min"
+    min_value: 0
+    max_value: 60
+    step: 1
+    initial_value: 5
+    optimistic: True
+    restore_value: True
+    mode: BOX
+
+  - platform: template
+    name: "Humidity Boost Max Minutes"
+    id: humidity_boost_max_minutes
+    entity_category: config
+    unit_of_measurement: "min"
+    min_value: 5
+    max_value: 240
+    step: 5
+    initial_value: 45
+    optimistic: True
+    restore_value: True
+    mode: BOX
+
+  - platform: template
+    name: "Humidity Boost Cooldown Minutes"
+    id: humidity_boost_cooldown_minutes
+    entity_category: config
+    unit_of_measurement: "min"
+    min_value: 0
+    max_value: 120
+    step: 5
+    initial_value: 15
+    optimistic: True
+    restore_value: True
+    disabled_by_default: True
+    mode: BOX
+
+sensor:
+  - platform: template
+    id: humidity_baseline
+    entity_category: diagnostic
+    name: "Humidity Baseline"
+    device_class: humidity
+    state_class: measurement
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    update_interval: 60s
+    lambda: |-
+      // One sample a minute. The median of the window is what we call normal humidity.
+      // A shower hardly moves a median, but it still follows the weather over the day.
+      if (id(humidity_boost_active)) {
+        return {};  // No samples while boosting, or the shower ends up in the baseline
+      }
+      if (!id(${flexit_humidity_sensor}).has_state() || std::isnan(id(${flexit_humidity_sensor}).state)) {
+        return {};
+      }
+      if (id(humidity_baseline_samples) < ${flexit_humidity_baseline_window}) {
+        id(humidity_baseline_samples)++;
+      }
+      return id(${flexit_humidity_sensor}).state;
+    filters:
+      - median:
+          window_size: ${flexit_humidity_baseline_window}
+          send_every: 1
+
+  # Handy to graph when picking the trigger and release deltas
+  - platform: template
+    id: humidity_delta
+    entity_category: diagnostic
+    name: "Humidity Above Baseline"
+    state_class: measurement
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    update_interval: 30s
+    lambda: |-
+      if (!id(${flexit_humidity_sensor}).has_state() || !id(humidity_baseline).has_state()) {
+        return {};
+      }
+      float delta = id(${flexit_humidity_sensor}).state - id(humidity_baseline).state;
+      if (std::isnan(delta)) {
+        return {};
+      }
+      return delta;
+
+interval:
+  - interval: 10s
+    then:
+      - lambda: |-
+          const uint32_t now = millis();
+
+          // Reasons to stop come first. They have to work without a humidity reading,
+          // otherwise a dead sensor could leave the unit in max forever.
+          if (id(humidity_boost_active)) {
+            const uint32_t runtime = now - id(humidity_boost_start_ms);
+
+            // The arbiter drops our request when somebody changes the mode by hand
+            if (id(mode_requests).count("humidity boost") == 0) {
+              ESP_LOGW("humidity", "Stopping boost, mode was changed by hand");
+              id(humidity_boost).turn_off();
+              return;
+            }
+
+            if (!id(humidity_boost_enable).state) {
+              ESP_LOGI("humidity", "Stopping boost, it was disabled");
+              id(humidity_boost).turn_off();
+              return;
+            }
+
+            // Gave it long enough. Laundry drying, a sensor that died, something like that.
+            if (runtime >= (uint32_t)(id(humidity_boost_max_minutes).state * 60000.0f)) {
+              ESP_LOGW("humidity", "Stopping boost after %u min, humidity never came back down",
+                       (unsigned)(runtime / 60000));
+              id(humidity_boost).turn_off();
+              return;
+            }
+          }
+
+          // Wait for 10 minutes of baseline before trusting it
+          if (id(humidity_baseline_samples) < 10) {
+            return;
+          }
+
+          if (!id(${flexit_humidity_sensor}).has_state() || !id(humidity_baseline).has_state()) {
+            return;
+          }
+
+          const float humidity = id(${flexit_humidity_sensor}).state;
+          const float baseline = id(humidity_baseline).state;
+          if (std::isnan(humidity) || std::isnan(baseline)) {
+            return;
+          }
+
+          const float delta = humidity - baseline;
+
+          // Release has to be below trigger, or a boost would end right after it started
+          float release = id(humidity_release_delta).state;
+          if (release >= id(humidity_trigger_delta).state) {
+            release = id(humidity_trigger_delta).state - 0.5f;
+          }
+
+          if (!id(humidity_boost_active)) {
+            if (!id(humidity_boost_armed)) {
+              if (delta > release) {
+                return;
+              }
+              id(humidity_boost_armed) = true;
+            }
+
+            if (!id(humidity_boost_enable).state) {
+              return;
+            }
+
+            // Cooldown, so the end of one shower doesn't set off a second boost
+            if (id(humidity_boost_end_ms) != 0 &&
+                now - id(humidity_boost_end_ms) <
+                    (uint32_t)(id(humidity_boost_cooldown_minutes).state * 60000.0f)) {
+              return;
+            }
+
+            if (id(server)->read_holding_register(flexit_modbus_server::REG_MODE) == 0) {
+              return;  // stopped
+            }
+
+            if (delta >= id(humidity_trigger_delta).state) {
+              ESP_LOGI("humidity", "Humidity %.1f%% is %.1f%% above the baseline (%.1f%%)",
+                       humidity, delta, baseline);
+              id(humidity_boost).turn_on();
+            }
+            return;
+          }
+
+          // Boosting. Check if the humidity is back down.
+          if (delta <= release) {
+            if (id(humidity_boost_below_release_since_ms) == 0) {
+              id(humidity_boost_below_release_since_ms) = now;
+            }
+          } else {
+            id(humidity_boost_below_release_since_ms) = 0;  // Went back up, start over
+          }
+
+          // Always run for the minimum time, so it doesn't flip in and out of max
+          const uint32_t runtime = now - id(humidity_boost_start_ms);
+          if (runtime < (uint32_t)(id(humidity_boost_min_minutes).state * 60000.0f)) {
+            return;
+          }
+
+          // Back down, and stayed down for long enough
+          if (id(humidity_boost_below_release_since_ms) != 0 &&
+              now - id(humidity_boost_below_release_since_ms) >=
+                  (uint32_t)(id(humidity_release_minutes).state * 60000.0f)) {
+            ESP_LOGI("humidity", "Humidity back down to %.1f%% (%.1f%% above baseline) after %u min",
+                     humidity, delta, (unsigned)(runtime / 60000));
+            id(humidity_boost).turn_off();
+          }
