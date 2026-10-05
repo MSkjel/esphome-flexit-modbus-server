@@ -8,11 +8,6 @@ globals:
     restore_value: no
     initial_value: 'false'
 
-  - id: previous_mode_before_fireplace
-    type: int
-    restore_value: yes
-    initial_value: '2'  # Default to Normal mode if we somehow fail
-
   - id: fireplace_duration_minutes
     type: int
     restore_value: yes
@@ -38,8 +33,7 @@ globals:
     restore_value: yes
     initial_value: '20'
 
-    # Track when mode was last changed to debounce conflict detection
-
+    # When fireplace mode was turned on
   - id: fireplace_mode_change_timestamp
     type: unsigned long
     restore_value: no
@@ -55,98 +49,94 @@ switch:
 
     turn_on_action:
       - lambda: |-
-          // Edge case: Don't activate if system is in Stop mode
-          int current_mode = id(server)->read_holding_register(flexit_modbus_server::REG_MODE);
-          if (current_mode == 0) {
-            ESP_LOGW("fireplace", "Cannot activate Fireplace mode while system is stopped");
+          // Already on. Keep what we saved, the rest just restarts the timer.
+          if (id(fireplace_mode_active)) {
             return;
           }
 
-          // Save current mode and fan speeds before switching
-          id(previous_mode_before_fireplace) = current_mode;
+          // Leave it alone if it's stopped
+          if (id(server)->read_holding_register(flexit_modbus_server::REG_MODE) == 0) {
+            ESP_LOGW("fireplace", "Not starting fireplace mode, the unit is stopped");
+            return;
+          }
 
-          // Save current Max mode fan speeds (read from the number components)
-          // keep the old values if we don't know them yet
+          // Remember the max fan speeds so we can put them back.
+          // Keep the old values if we don't know the speeds yet.
           if (!std::isnan(id(supply_air_percentage_max).state))
             id(original_supply_fan_max) = id(supply_air_percentage_max).state;
           if (!std::isnan(id(extract_air_percentage_max).state))
             id(original_extract_fan_max) = id(extract_air_percentage_max).state;
 
-          ESP_LOGI("fireplace", "Saving current mode: %s (Supply: %.0f%%, Extract: %.0f%%)",
-                   flexit_modbus_server::mode_to_string(current_mode).c_str(),
+          ESP_LOGI("fireplace", "Fireplace mode on (max speeds were supply %.0f%%, extract %.0f%%)",
                    id(original_supply_fan_max),
                    id(original_extract_fan_max));
 
-          ESP_LOGI("fireplace", "Activating Fireplace mode");
           id(fireplace_mode_active) = true;
-
-          // Record timestamp BEFORE making changes to prevent false conflict detection
           id(fireplace_mode_change_timestamp) = millis();
 
-      # Set fireplace fan speeds using the existing number components
-      - number.set:
-          id: supply_air_percentage_max
-          value: !lambda "return id(fireplace_supply_fan_speed);"
-      - number.set:
-          id: extract_air_percentage_max
-          value: !lambda "return id(fireplace_extract_fan_speed);"
+      # Only continue if it was turned on. A return in the lambda above
+      # doesn't stop the rest of the actions.
+      - if:
+          condition:
+            lambda: "return id(fireplace_mode_active);"
+          then:
+            # Fireplace fan speeds go into the max mode speeds
+            - number.set:
+                id: supply_air_percentage_max
+                value: !lambda "return id(fireplace_supply_fan_speed);"
+            - number.set:
+                id: extract_air_percentage_max
+                value: !lambda "return id(fireplace_extract_fan_speed);"
 
-      - delay: 200ms  # Wait for fan speeds to apply
+            - delay: 200ms  # let the fan speeds go out first
 
-      # Switch to Max mode using the existing select component
-      - select.set:
-          id: set_mode
-          option: "Max"
+            # Ask for max. See mode_arbiter in controls.yaml
+            - lambda: |-
+                id(mode_requests)["fireplace"] = 3;
+                id(mode_arbiter).execute();
 
-      # Start the auto-shutoff timer
-      - script.execute: fireplace_timer
+            # Turns it off again after the set duration
+            - script.execute: fireplace_timer
 
-      # Update the switch state
-      - lambda: |-
-          id(fireplace_mode_switch).publish_state(true);
+            - lambda: |-
+                id(fireplace_mode_switch).publish_state(true);
 
     turn_off_action:
       - script.stop: fireplace_timer
-      - lambda: |-
-          if (!id(fireplace_mode_active)) {
-            ESP_LOGW("fireplace", "Fireplace mode already inactive");
-            return;
-          }
+      - if:
+          condition:
+            lambda: "return id(fireplace_mode_active);"
+          else:
+            - lambda: |-
+                ESP_LOGW("fireplace", "Fireplace mode is already off");
+          then:
+            - lambda: |-
+                ESP_LOGI("fireplace", "Fireplace mode off");
+                id(fireplace_mode_active) = false;
 
-          ESP_LOGI("fireplace", "Deactivating Fireplace mode");
-          id(fireplace_mode_active) = false;
+            # Put the max mode fan speeds back
+            - number.set:
+                id: supply_air_percentage_max
+                value: !lambda "return id(original_supply_fan_max);"
+            - number.set:
+                id: extract_air_percentage_max
+                value: !lambda "return id(original_extract_fan_max);"
 
-      # Restore original fan speeds using the existing number components
-      - number.set:
-          id: supply_air_percentage_max
-          value: !lambda "return id(original_supply_fan_max);"
-      - number.set:
-          id: extract_air_percentage_max
-          value: !lambda "return id(original_extract_fan_max);"
+            - delay: 200ms  # let the fan speeds go out first
 
-      - delay: 200ms  # Wait for fan speeds to apply
+            # We no longer need max. The arbiter goes back to the old mode if nobody else does.
+            - lambda: |-
+                id(mode_requests).erase("fireplace");
+                id(mode_arbiter).execute();
 
-      # Restore previous mode using the existing select component
-      - lambda: |-
-          int restore_mode = id(previous_mode_before_fireplace);
-          std::string mode_str = flexit_modbus_server::mode_to_string(restore_mode);
-          ESP_LOGI("fireplace", "Restoring previous mode: %s", mode_str.c_str());
-
-          // Record timestamp for debouncing conflict detection
-          id(fireplace_mode_change_timestamp) = millis();
-
-          auto call = id(set_mode).make_call();
-          call.set_option(mode_str);
-          call.perform();
-
-      # Update the switch state
-      - lambda: |-
-          id(fireplace_mode_switch).publish_state(false);
+            - lambda: |-
+                id(fireplace_mode_switch).publish_state(false);
 
 number:
   - platform: template
     name: "Fireplace Mode Duration"
     id: fireplace_duration
+    entity_category: config
     min_value: 1
     max_value: 240
     step: 1
@@ -158,12 +148,13 @@ number:
     set_action:
       - lambda: |-
           id(fireplace_duration_minutes) = (int)x;
-          ESP_LOGI("fireplace", "Duration set to %d minutes", (int)x);
+          ESP_LOGI("fireplace", "Fireplace duration set to %d min", (int)x);
       - component.update: fireplace_duration
 
   - platform: template
     name: "Fireplace Supply Fan Speed"
     id: fireplace_supply_speed_control
+    entity_category: config
     min_value: 1
     max_value: 100
     step: 1
@@ -181,6 +172,7 @@ number:
   - platform: template
     name: "Fireplace Extract Fan Speed"
     id: fireplace_extract_speed_control
+    entity_category: config
     min_value: 1
     max_value: 100
     step: 1
@@ -205,23 +197,16 @@ binary_sensor:
         return false;
       }
 
-      // Debounce: Allow 5 seconds after mode change for Modbus to propagate
-      unsigned long time_since_change = millis() - id(fireplace_mode_change_timestamp);
-      if (time_since_change < 10000) {  // 10 second debounce
-        return false;  // Too soon after our mode change, ignore
+      // Our request only goes in after the fan speeds, so give it a few seconds
+      if (millis() - id(fireplace_mode_change_timestamp) < 5000) {
+        return false;
       }
 
-      // Check if mode was manually changed away from Max while fireplace mode is active
-      int current_mode = id(server)->read_holding_register(flexit_modbus_server::REG_MODE);
-      if (current_mode != 3) {  // Not in Max mode
-        ESP_LOGD("fireplace", "Conflict detected: current_mode=%d (expected 3), time_since_change=%lums",
-                 current_mode, time_since_change);
-        return true;  // Conflict detected
-      }
-      return false;
+      // The arbiter drops our request when somebody changes the mode by hand
+      return id(mode_requests).count("fireplace") == 0;
     on_press:
       - lambda: |-
-          ESP_LOGW("fireplace", "Mode changed manually during Fireplace mode - deactivating");
+          ESP_LOGW("fireplace", "Mode was changed by hand, turning fireplace mode off");
       - switch.turn_off: fireplace_mode_switch
 
 script:
@@ -230,8 +215,8 @@ script:
     then:
       - lambda: |-
           int duration = id(fireplace_duration_minutes);
-          ESP_LOGI("fireplace", "Starting %d minute timer", duration);
+          ESP_LOGI("fireplace", "Fireplace timer started, %d min", duration);
       - delay: !lambda "return id(fireplace_duration_minutes) * 60 * 1000;"
       - lambda: |-
-          ESP_LOGI("fireplace", "Fireplace timer expired, deactivating");
+          ESP_LOGI("fireplace", "Fireplace timer done, turning off");
       - switch.turn_off: fireplace_mode_switch

@@ -1,0 +1,297 @@
+# CO2 control around one target level. You pick how in Home Assistant:
+# Stepped runs max when the CO2 is well over the target.
+# Proportional turns the normal fan speeds up the further over the target it is.
+# PI keeps turning them up until the CO2 is back at the target.
+# The last two are for EC fans only.
+# This is done on the ESP, the CS60 doesn't have it.
+# Needs core.yaml, controls.yaml and your own CO2 sensor, with its id in flexit_co2_sensor
+substitutions:
+  flexit_co2_sensor: co2
+
+globals:
+  - id: co2_boost_active
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: co2_boost_start_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+    # False after somebody changed the mode during a boost, until the CO2 is back under the low level
+  - id: co2_boost_armed
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+
+    # Proportional and PI: true while we have turned the fans up. Saved to flash with the speeds
+    # from before, so we can still put those back after a reboot.
+  - id: co2_fan_engaged
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+
+  - id: co2_fan_original_supply
+    type: int
+    restore_value: yes
+    initial_value: '0'
+
+  - id: co2_fan_original_extract
+    type: int
+    restore_value: yes
+    initial_value: '0'
+
+    # How much we have added to the fan speeds right now. -1 = don't know, send again
+  - id: co2_fan_added
+    type: int
+    restore_value: no
+    initial_value: '-1'
+
+    # PI: the integral part, in fan %
+  - id: co2_pi_integral
+    type: float
+    restore_value: no
+    initial_value: '0'
+
+select:
+  - platform: template
+    name: "CO2 Control"
+    id: co2_control
+    icon: "mdi:molecule-co2"
+    optimistic: true
+    restore_value: true
+    initial_option: "Off"
+    options:
+      - "Off"
+      - "Stepped"
+      - "Proportional"
+      - "PI"
+
+number:
+  # The level to keep the CO2 at. Under this the CO2 control does nothing.
+  - platform: template
+    name: "CO2 Target"
+    id: co2_target
+    entity_category: config
+    unit_of_measurement: "ppm"
+    icon: "mdi:target"
+    min_value: 400
+    max_value: 1500
+    step: 50
+    initial_value: 800
+    optimistic: True
+    restore_value: True
+    mode: BOX
+
+  # How far over the target is "high". Stepped goes to max there, proportional has
+  # added the full fan increase there, and both fan modes go from min to normal there.
+  - platform: template
+    name: "CO2 Band"
+    id: co2_band
+    entity_category: config
+    unit_of_measurement: "ppm"
+    min_value: 50
+    max_value: 1500
+    step: 50
+    initial_value: 400
+    optimistic: True
+    restore_value: True
+    disabled_by_default: True
+    mode: BOX
+
+  # Proportional and PI. The most that is added to the normal fan speeds.
+  - platform: template
+    name: "CO2 Max Fan Increase"
+    id: co2_max_fan_increase
+    entity_category: config
+    unit_of_measurement: "%"
+    icon: "mdi:fan-plus"
+    min_value: 5
+    max_value: 60
+    step: 5
+    initial_value: 30
+    optimistic: True
+    restore_value: True
+    mode: BOX
+
+  # PI only. Fan % added for every 100 ppm over the target.
+  - platform: template
+    name: "CO2 PI Gain"
+    id: co2_pi_gain
+    entity_category: config
+    unit_of_measurement: "%"
+    min_value: 1
+    max_value: 30
+    step: 0.5
+    initial_value: 5
+    optimistic: True
+    restore_value: True
+    disabled_by_default: True
+    mode: BOX
+
+  # PI only. How long it takes the integral part to add as much as the gain does.
+  # Longer is calmer. Too short and the fans go up and down.
+  - platform: template
+    name: "CO2 PI Integral Time"
+    id: co2_pi_integral_time
+    entity_category: config
+    unit_of_measurement: "min"
+    min_value: 5
+    max_value: 240
+    step: 5
+    initial_value: 30
+    optimistic: True
+    restore_value: True
+    disabled_by_default: True
+    mode: BOX
+
+sensor:
+  # What proportional or PI has added to the normal fan speeds right now. Graph it against the CO2 when tuning.
+  - platform: template
+    name: "CO2 Fan Increase"
+    id: co2_fan_increase
+    entity_category: diagnostic
+    icon: "mdi:fan-plus"
+    state_class: measurement
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    update_interval: 30s
+    lambda: |-
+      return id(co2_fan_engaged) ? std::max(id(co2_fan_added), 0) : 0;
+
+binary_sensor:
+  - platform: template
+    name: "CO2 Control Active"
+    id: co2_control_active
+    device_class: running
+    icon: "mdi:molecule-co2"
+    lambda: |-
+      return id(co2_boost_active) || id(co2_fan_engaged);
+
+interval:
+  - interval: 30s
+    then:
+      - lambda: |-
+          const uint32_t now = millis();
+
+          // 0 = Off, 1 = Stepped, 2 = Proportional, 3 = PI
+          const auto index = id(co2_control).active_index();
+          const int control = index.has_value() ? (int) *index : 0;
+
+          const float ppm = id(${flexit_co2_sensor}).state;
+          const bool valid = id(${flexit_co2_sensor}).has_state() && !std::isnan(ppm);
+
+          const float low = id(co2_target).state;
+          const float high = low + id(co2_band).state;
+
+          // Above the high level we ask for a higher mode, until it is back under the target.
+          // Stepped asks for max. The fan modes ask for normal, which only does something
+          // when the unit is in min, where the normal fan speeds aren't used.
+          const int wanted_mode = control == 1 ? 3 : control >= 2 ? 2 : 0;
+
+          if (id(co2_boost_active)) {
+            const auto request = id(mode_requests).find("co2");
+            bool stop = false;
+            if (request == id(mode_requests).end()) {
+              // The arbiter drops our request when somebody changes the mode by hand
+              ESP_LOGW("co2", "Stopping boost, mode was changed by hand");
+              id(co2_boost_armed) = false;
+              stop = true;
+            } else if (request->second != wanted_mode) {
+              ESP_LOGI("co2", "Stopping boost, CO2 control was changed");
+              stop = true;
+            } else if (!valid) {
+              ESP_LOGW("co2", "Stopping boost, no CO2 reading");
+              stop = true;
+            } else if (ppm < low && now - id(co2_boost_start_ms) >= 10 * 60000UL) {
+              // Runs at least 10 minutes, so it doesn't flip back and forth
+              ESP_LOGI("co2", "CO2 back down to %.0f ppm, boost off", ppm);
+              stop = true;
+            }
+            if (stop) {
+              id(co2_boost_active) = false;
+              id(mode_requests).erase("co2");
+              id(mode_arbiter).execute();
+            }
+          } else if (wanted_mode == 0) {
+            id(co2_boost_armed) = true;
+          } else if (valid) {
+            if (!id(co2_boost_armed)) {
+              if (ppm < low) {
+                id(co2_boost_armed) = true;
+              }
+            } else if (ppm >= high &&
+                       id(server)->read_holding_register(flexit_modbus_server::REG_MODE) != 0) {
+              ESP_LOGI("co2", "CO2 at %.0f ppm, asking for %s", ppm,
+                       flexit_modbus_server::mode_to_string(wanted_mode).c_str());
+              id(co2_boost_active) = true;
+              id(co2_boost_start_ms) = now;
+              id(mode_requests)["co2"] = wanted_mode;
+              id(mode_arbiter).execute();
+            }
+          }
+
+          // Proportional and PI: the fan speeds
+          auto set_fans = [](int supply, int extract) {
+            id(server)->send_cmd(flexit_modbus_server::REG_CMD_PERCENTAGE_SUPPLY_FAN_NORMAL, std::min(supply, 100));
+            id(server)->send_cmd(flexit_modbus_server::REG_CMD_PERCENTAGE_EXTRACT_FAN_NORMAL, std::min(extract, 100));
+          };
+
+          const float max_add = id(co2_max_fan_increase).state;
+          int add = 0;
+          if (control == 3 && valid) {
+            const float gain = id(co2_pi_gain).state / 100.0f;  // fan % per ppm
+            const float error = ppm - low;
+
+            // The integral only counts in normal mode, in the other modes the fan speeds
+            // we set aren't used. It also stays between 0 and the max increase, so it
+            // can't build up while the fans are already as high as they go.
+            if (id(server)->read_holding_register(flexit_modbus_server::REG_MODE) == 2) {
+              id(co2_pi_integral) += gain * error * 0.5f / id(co2_pi_integral_time).state;  // 0.5 = the 30s interval in minutes
+            }
+            id(co2_pi_integral) = clamp(id(co2_pi_integral), 0.0f, max_add);
+
+            add = (int) lroundf(clamp(gain * error + id(co2_pi_integral), 0.0f, max_add));
+          } else {
+            id(co2_pi_integral) = 0;
+            if (control == 2 && valid && ppm > low) {
+              // Nothing at the target, the full increase at the high level
+              add = (int) lroundf(std::min((ppm - low) / (high - low), 1.0f) * max_add);
+            }
+          }
+
+          // Done when the CO2 is back at the target and there is nothing left to add
+          const bool fans_done = control < 2 || !valid || (ppm <= low && add == 0);
+
+          if (id(co2_fan_engaged)) {
+            if (fans_done) {
+              ESP_LOGI("co2", "Fan speeds back to supply %d%%, extract %d%%",
+                       id(co2_fan_original_supply), id(co2_fan_original_extract));
+              set_fans(id(co2_fan_original_supply), id(co2_fan_original_extract));
+              id(co2_fan_engaged) = false;
+              id(co2_fan_added) = -1;
+              global_preferences->sync();
+            } else if (id(co2_fan_added) < 0 || abs(add - id(co2_fan_added)) >= 2) {
+              // Only in steps of 2% or more, so the fans don't change speed all the time
+              ESP_LOGI("co2", "CO2 at %.0f ppm, fan speeds +%d%%", ppm, add);
+              set_fans(id(co2_fan_original_supply) + add, id(co2_fan_original_extract) + add);
+              id(co2_fan_added) = add;
+            }
+          } else if (control >= 2 && add >= 2) {
+            // Remember the speeds from before. 0 means the CS60 hasn't told us yet.
+            const int supply = id(server)->read_holding_register(flexit_modbus_server::REG_CMD_PERCENTAGE_SUPPLY_FAN_NORMAL);
+            const int extract = id(server)->read_holding_register(flexit_modbus_server::REG_CMD_PERCENTAGE_EXTRACT_FAN_NORMAL);
+            if (supply == 0 || extract == 0) {
+              return;
+            }
+            id(co2_fan_original_supply) = supply;
+            id(co2_fan_original_extract) = extract;
+            id(co2_fan_engaged) = true;
+            global_preferences->sync();
+
+            ESP_LOGI("co2", "CO2 at %.0f ppm, fan speeds +%d%% (were supply %d%%, extract %d%%)",
+                     ppm, add, supply, extract);
+            set_fans(supply + add, extract + add);
+            id(co2_fan_added) = add;
+          }

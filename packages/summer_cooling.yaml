@@ -1,0 +1,173 @@
+# Summer cooling. Runs max when it's too warm inside and cooler outside.
+# Too warm is also measured against the setpoint, and it never runs while the heater is on.
+# The CS60 still holds the supply air at its setpoint, so a lower setpoint cools more.
+# This is done on the ESP, the CS60 doesn't have it.
+# Needs core.yaml and controls.yaml
+
+globals:
+  - id: summer_cooling_active
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: summer_cooling_start_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: '0'
+
+    # False after somebody changed the mode during cooling, until there is no reason to cool anymore
+  - id: summer_cooling_armed
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+
+switch:
+  - platform: template
+    name: "Summer Cooling Enable"
+    id: summer_cooling_enable
+    icon: "mdi:snowflake"
+    optimistic: True
+    restore_mode: RESTORE_DEFAULT_ON
+
+number:
+  # Cool when the extract air is warmer than this
+  - platform: template
+    name: "Summer Cooling Above"
+    id: summer_cooling_above
+    entity_category: config
+    unit_of_measurement: "°C"
+    device_class: temperature
+    min_value: 18
+    max_value: 30
+    step: 0.5
+    initial_value: 24
+    optimistic: True
+    restore_value: True
+    mode: BOX
+
+  # and also this much warmer than the setpoint, so it doesn't cool a house the unit is trying to heat
+  - platform: template
+    name: "Summer Cooling Above Setpoint"
+    id: summer_cooling_above_setpoint
+    entity_category: config
+    unit_of_measurement: "°C"
+    min_value: 0
+    max_value: 10
+    step: 0.5
+    initial_value: 1
+    optimistic: True
+    restore_value: True
+    mode: BOX
+
+  # and the outdoor air is at least this much colder than the extract air
+  - platform: template
+    name: "Summer Cooling Min Difference"
+    id: summer_cooling_min_difference
+    entity_category: config
+    unit_of_measurement: "°C"
+    min_value: 1
+    max_value: 10
+    step: 0.5
+    initial_value: 2
+    optimistic: True
+    restore_value: True
+    mode: BOX
+
+  # Never below this outdoor temperature. Keeps it from running in winter
+  # when a wood stove has made the house warm.
+  - platform: template
+    name: "Summer Cooling Min Outdoor"
+    id: summer_cooling_min_outdoor
+    entity_category: config
+    unit_of_measurement: "°C"
+    device_class: temperature
+    min_value: 0
+    max_value: 25
+    step: 1
+    initial_value: 12
+    optimistic: True
+    restore_value: True
+    disabled_by_default: True
+    mode: BOX
+
+binary_sensor:
+  - platform: template
+    name: "Summer Cooling Active"
+    id: summer_cooling_running
+    device_class: running
+    icon: "mdi:snowflake"
+    lambda: |-
+      return id(summer_cooling_active);
+
+interval:
+  - interval: 30s
+    then:
+      - lambda: |-
+          const uint32_t now = millis();
+          const float inside = id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_EXTRACT_AIR);
+          const float outside = id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_OUTDOOR_AIR);
+
+          const float setpoint = id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_SETPOINT);
+          const bool heating = id(server)->read_holding_register(flexit_modbus_server::REG_PERCENTAGE_HEATING) != 0;
+
+          // Too warm means above the set temperature, and far enough above the setpoint
+          const float above = std::max(id(summer_cooling_above).state,
+                                       setpoint + id(summer_cooling_above_setpoint).state);
+          const float difference = id(summer_cooling_min_difference).state;
+          const float min_outdoor = id(summer_cooling_min_outdoor).state;
+
+          if (id(summer_cooling_active)) {
+            bool stop = false;
+            if (id(mode_requests).count("summer cooling") == 0) {
+              // The arbiter drops our request when somebody changes the mode by hand
+              ESP_LOGW("cooling", "Stopping, mode was changed by hand");
+              id(summer_cooling_armed) = false;
+              stop = true;
+            } else if (!id(summer_cooling_enable).state) {
+              ESP_LOGI("cooling", "Stopping, it was disabled");
+              stop = true;
+            } else if (heating) {
+              ESP_LOGI("cooling", "Stopping, the heater is on");
+              stop = true;
+            } else if (inside < setpoint) {
+              ESP_LOGI("cooling", "Stopping, %.1f°C inside is under the setpoint (%.1f°C)", inside, setpoint);
+              stop = true;
+            } else if (now - id(summer_cooling_start_ms) >= 15 * 60000UL) {
+              // Runs at least 15 minutes. The stop levels are a bit past the start
+              // levels, so it doesn't flip in and out of max.
+              if (inside <= above - 0.5f) {
+                ESP_LOGI("cooling", "Cooled down to %.1f°C, stopping", inside);
+                stop = true;
+              } else if (outside >= inside - difference / 2 || outside < min_outdoor - 1.0f) {
+                ESP_LOGI("cooling", "Outdoor air (%.1f°C) is no use anymore, stopping at %.1f°C", outside, inside);
+                stop = true;
+              }
+            }
+            if (stop) {
+              id(summer_cooling_active) = false;
+              id(mode_requests).erase("summer cooling");
+              id(mode_arbiter).execute();
+            }
+            return;
+          }
+
+          const bool cool = id(summer_cooling_enable).state &&
+                            !heating &&
+                            inside >= above &&
+                            outside <= inside - difference &&
+                            outside >= min_outdoor;
+
+          if (!id(summer_cooling_armed)) {
+            if (!cool) {
+              id(summer_cooling_armed) = true;
+            }
+            return;
+          }
+
+          if (cool && id(server)->read_holding_register(flexit_modbus_server::REG_MODE) != 0) {
+            ESP_LOGI("cooling", "%.1f°C inside and %.1f°C outside, cooling", inside, outside);
+            id(summer_cooling_active) = true;
+            id(summer_cooling_start_ms) = now;
+            id(mode_requests)["summer cooling"] = 3;
+            id(mode_arbiter).execute();
+          }
