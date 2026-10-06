@@ -146,6 +146,10 @@ sensor:
   - id: !remove return_water_temperature       # no water heating coil
 ```
 
+Packages are applied first and your own config last, so anything you put in your YAML wins over the same
+thing in a package. The `substitutions:` in `core.yaml` are only defaults for the ones you don't set
+yourself. `esphome config yourfile.yaml` prints the merged result if you want to check what a build uses.
+
 Hardware settings are substitutions in `core.yaml`: `flexit_tx_pin`, `flexit_rx_pin`, `flexit_address`,
 and two optional ones that depend on your RS485 hardware:
 `flexit_tx_enable_pin` (the DE/RE pin, only if your transceiver has one wired to the ESP; default `none`) and
