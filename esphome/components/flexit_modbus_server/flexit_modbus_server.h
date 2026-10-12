@@ -5,7 +5,6 @@
 #include "esphome/components/uart/uart.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
-#include "esp_log.h"
 #include "esphome.h"
 #include "ModbusRTUServer.h"
 
