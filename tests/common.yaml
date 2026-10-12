@@ -1,0 +1,36 @@
+api:
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: "ci"
+  password: "ci-password"
+
+# Listed after core.yaml's GitHub source
+external_components:
+  - source:
+      type: local
+      path: ../esphome/components
+    components: [flexit_modbus_server]
+
+packages:
+  core: !include ../packages/core.yaml
+  controls: !include ../packages/controls.yaml
+  sensors: !include ../packages/sensors.yaml
+  diagnostics: !include ../packages/diagnostics.yaml
+  fan_speeds: !include ../packages/fan_speeds.yaml
+  fireplace: !include ../packages/fireplace.yaml
+  humidity_boost: !include ../packages/humidity_boost.yaml
+  co2: !include ../packages/co2.yaml
+  summer_cooling: !include ../packages/summer_cooling.yaml
+  computed: !include ../packages/computed.yaml
+  advanced: !include ../packages/advanced.yaml
+
+# Stand-ins for the sensors
+sensor:
+  - platform: template
+    id: inside_humidity
+    lambda: return 50.0;
+  - platform: template
+    id: co2
+    lambda: return 600.0;

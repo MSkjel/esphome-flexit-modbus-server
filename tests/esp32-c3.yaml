@@ -1,0 +1,18 @@
+# The board from example.yaml: XIAO ESP32-C3 on the XIAO RS485 board
+esphome:
+  name: flexit-ci-esp32-c3
+
+esp32:
+  board: seeed_xiao_esp32c3
+  framework:
+    type: arduino
+
+logger:
+
+substitutions:
+  flexit_tx_pin: GPIO6
+  flexit_rx_pin: GPIO7
+  flexit_tx_enable_pin: GPIO4
+
+packages:
+  common: !include common.yaml

@@ -1,0 +1,20 @@
+# ESP8266 without a DE pin, with the TCP bridge
+esphome:
+  name: flexit-ci-esp8266
+
+esp8266:
+  board: d1_mini
+
+logger:
+  hardware_uart: UART1
+
+substitutions:
+  flexit_tx_pin: GPIO1
+  flexit_rx_pin: GPIO3
+
+packages:
+  common: !include common.yaml
+
+flexit_modbus_server:
+  - id: !extend server
+    tcp_bridge_enabled: true

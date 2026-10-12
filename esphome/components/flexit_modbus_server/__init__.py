@@ -3,6 +3,7 @@ import esphome.config_validation as cv
 from esphome.components import uart
 from esphome.const import CONF_ADDRESS, CONF_ID
 from esphome import pins
+from esphome.core import CORE
 import os
 
 CONF_TX_ENABLE_PIN = "tx_enable_pin"
@@ -66,7 +67,9 @@ async def to_code(config):
 
     if config[CONF_TCP_BRIDGE_ENABLED]:
         cg.add_define("USE_FLEXIT_TCP_BRIDGE")
-        cg.add_library("WiFi", None)
+        # ESP8266 has its WiFi built in as ESP8266WiFi
+        if CORE.is_esp32:
+            cg.add_library("WiFi", None)
 
     id = config[CONF_ID]
     uart = await cg.get_variable(config["uart_id"])

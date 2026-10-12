@@ -1,0 +1,22 @@
+# Classic ESP32 with a DE pin and the TCP bridge
+esphome:
+  name: flexit-ci-esp32
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+
+substitutions:
+  flexit_tx_pin: GPIO17
+  flexit_rx_pin: GPIO16
+  flexit_tx_enable_pin: GPIO4
+
+packages:
+  common: !include common.yaml
+
+flexit_modbus_server:
+  - id: !extend server
+    tcp_bridge_enabled: true
