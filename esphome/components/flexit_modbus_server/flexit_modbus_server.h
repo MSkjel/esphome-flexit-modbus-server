@@ -456,6 +456,9 @@ private:
   void restore_runtime_();
   void save_runtime_if_needed_();
 
+  /// @brief Passes bytes from the bus on to the TCP bridge as one block. Does nothing without it.
+  void mirror_rx_(const uint8_t *data, size_t len);
+
   // ----------------------------------------------------------------
   // TCP Bridge Members
   // ----------------------------------------------------------------
@@ -472,14 +475,25 @@ private:
   /// @brief TCP server instance.
   WiFiServer *tcp_server_{nullptr};
 
+  // The bridge must never hold up the bus or eat the heap, so both buffers
+  // have a fixed limit and a client that reads too slowly misses data.
+  static constexpr size_t TCP_BUFFER_MAX = 2048;
+  static constexpr size_t NO_TCP_BLOCK = SIZE_MAX;
+
+  struct TcpClient {
+    WiFiClient client;
+    std::vector<uint8_t> pending;  // blocks the socket had no room for yet
+    bool lagging;
+  };
+
   /// @brief Connected TCP clients.
-  std::vector<WiFiClient> tcp_clients_;
+  std::vector<TcpClient> tcp_clients_;
 
-  /// @brief Buffer for data from UART TX to be sent to TCP clients.
-  std::vector<uint8_t> uart_to_tcp_buffer_;
+  /// @brief Blocks collected since the last loop, with their headers, in bus order.
+  std::vector<uint8_t> tcp_out_;
 
-  /// @brief Buffer for data from UART RX to be sent to TCP clients.
-  std::vector<uint8_t> uart_rx_mirror_;
+  /// @brief Where in tcp_out_ the reply being written starts, or NO_TCP_BLOCK.
+  size_t tcp_tx_block_{NO_TCP_BLOCK};
 
   /**
    * @brief Initialize the TCP server.
@@ -500,6 +514,11 @@ private:
    * @brief Remove disconnected TCP clients.
    */
   void cleanup_tcp_clients_();
+
+  /**
+   * @brief Send the collected blocks to the clients without waiting for any of them.
+   */
+  void send_to_tcp_clients_();
 #endif  // USE_FLEXIT_TCP_BRIDGE
 };
 

@@ -1,6 +1,9 @@
 #include "flexit_modbus_server.h"
 #ifdef USE_FLEXIT_TCP_BRIDGE
 #include "esphome/components/wifi/wifi_component.h"
+#ifdef USE_ESP32
+#include <lwip/sockets.h>
+#endif
 #endif
 
 namespace esphome {
@@ -110,6 +113,7 @@ void FlexitModbusServer::setup() {
   // validates, dispatch it, and keep any trailing partial frame for next time.
   mb_.onRawBuffer = [this](uint8_t* data, size_t length) -> size_t {
     size_t offset = 0;
+    size_t mirrored = 0;                         // how far the TCP bridge has been given
 
     while (length - offset >= MIN_FRAME_LENGTH) {
       size_t avail = length - offset;
@@ -126,6 +130,12 @@ void FlexitModbusServer::setup() {
         continue;
       }
 
+      // The bridge gets the bytes we skipped and then the frame, each as its own
+      // block, before a reply to it is written.
+      mirror_rx_(data + mirrored, offset - mirrored);
+      mirror_rx_(data + offset, len);
+      mirrored = offset + len;
+
       // The startup input-register reads (0x04) aren't implemented, so they reply
       // with an exception via onInvalidFunction. That's still a valid response, so
       // the CS60 sees us as online without us having to serve input registers.
@@ -133,6 +143,7 @@ void FlexitModbusServer::setup() {
       offset += len;
     }
 
+    mirror_rx_(data + mirrored, offset - mirrored);
     return offset;
   };
 
@@ -444,8 +455,18 @@ size_t FlexitModbusServer::write(uint8_t data) {
   size_t result = uart::UARTDevice::write(data);
 
 #ifdef USE_FLEXIT_TCP_BRIDGE
-  if (tcp_bridge_enabled_ && tcp_server_ != nullptr && !tcp_clients_.empty()) {
-    uart_to_tcp_buffer_.push_back(data);
+  if (!tcp_clients_.empty()) {
+    // A reply is written byte by byte, so the block grows until flush() ends it
+    if (tcp_tx_block_ == NO_TCP_BLOCK && tcp_out_.size() + 3 < TCP_BUFFER_MAX) {
+      tcp_tx_block_ = tcp_out_.size();
+      tcp_out_.insert(tcp_out_.end(), {FRAME_DIR_TX, 0, 0});
+    }
+    if (tcp_tx_block_ != NO_TCP_BLOCK && tcp_out_.size() < TCP_BUFFER_MAX) {
+      tcp_out_.push_back(data);
+      size_t len = tcp_out_.size() - tcp_tx_block_ - 3;
+      tcp_out_[tcp_tx_block_ + 1] = static_cast<uint8_t>(len >> 8);
+      tcp_out_[tcp_tx_block_ + 2] = static_cast<uint8_t>(len & 0xFF);
+    }
   }
 #endif
 
@@ -457,19 +478,7 @@ int FlexitModbusServer::available() {
 }
 
 int FlexitModbusServer::read() {
-  int v = uart::UARTDevice::read();
-  
-  if (v < 0) {
-    return v;
-  }
-
-#ifdef USE_FLEXIT_TCP_BRIDGE
-  if (tcp_bridge_enabled_ && tcp_server_ != nullptr && !tcp_clients_.empty()) {
-    uart_rx_mirror_.push_back(static_cast<uint8_t>(v));
-  }
-#endif
-
-  return v;
+  return uart::UARTDevice::read();
 }
 
 int FlexitModbusServer::peek() {
@@ -480,45 +489,46 @@ void FlexitModbusServer::flush() {
   uart::UARTDevice::flush();
 
 #ifdef USE_FLEXIT_TCP_BRIDGE
-  if (!(tcp_bridge_enabled_ && tcp_server_ != nullptr))
+  tcp_tx_block_ = NO_TCP_BLOCK;  // the reply is complete
+#endif
+}
+
+void FlexitModbusServer::mirror_rx_(const uint8_t *data, size_t len) {
+#ifdef USE_FLEXIT_TCP_BRIDGE
+  if (len == 0 || tcp_clients_.empty())
     return;
 
-  auto send_framed_block = [this](const std::vector<uint8_t> &buf, uint8_t dir) {
-    if (buf.empty())
-      return;
+  tcp_tx_block_ = NO_TCP_BLOCK;
+  if (tcp_out_.size() + 3 + len > TCP_BUFFER_MAX)
+    return;
 
-    uint16_t len = static_cast<uint16_t>(buf.size());
-    uint8_t header[3] = {
-      dir,
-      static_cast<uint8_t>((len >> 8) & 0xFF),
-      static_cast<uint8_t>(len & 0xFF),
-    };
-
-    for (auto &client : tcp_clients_) {
-      if (!client.connected())
-        continue;
-
-      client.write(header, sizeof(header));
-      client.write(buf.data(), buf.size());
-    }
-  };
-
-  if (!uart_to_tcp_buffer_.empty()) {
-    send_framed_block(uart_to_tcp_buffer_, FRAME_DIR_TX);
-    uart_to_tcp_buffer_.clear();
-  }
-
-  if (!uart_rx_mirror_.empty()) {
-    send_framed_block(uart_rx_mirror_, FRAME_DIR_RX);
-    uart_rx_mirror_.clear();
-  }
-#endif  // USE_FLEXIT_TCP_BRIDGE
+  tcp_out_.insert(tcp_out_.end(), {FRAME_DIR_RX, static_cast<uint8_t>(len >> 8), static_cast<uint8_t>(len & 0xFF)});
+  tcp_out_.insert(tcp_out_.end(), data, data + len);
+#endif
 }
 
 // ---------------------------------------------------------
 // TCP Bridge Implementation
 // ---------------------------------------------------------
 #ifdef USE_FLEXIT_TCP_BRIDGE
+// Hands over what fits in the socket's send buffer and returns right away
+static size_t write_nonblocking(WiFiClient &client, const uint8_t *data, size_t len) {
+  if (len == 0)
+    return 0;
+
+#ifdef USE_ESP32
+  // WiFiClient::write() waits up to 10 s for a client that has stopped reading
+  int fd = client.fd();
+  if (fd < 0)
+    return 0;
+  ssize_t sent = lwip_send(fd, data, len, MSG_DONTWAIT);
+  return sent > 0 ? static_cast<size_t>(sent) : 0;
+#else
+  size_t room = client.availableForWrite();
+  return room == 0 ? 0 : client.write(data, std::min(len, room));
+#endif
+}
+
 void FlexitModbusServer::setup_tcp_bridge_() {
   if (wifi::global_wifi_component == nullptr ||
       !wifi::global_wifi_component->is_connected()) {
@@ -533,6 +543,7 @@ void FlexitModbusServer::setup_tcp_bridge_() {
   tcp_server_ = new WiFiServer(tcp_bridge_port_);
   tcp_server_->begin();
   tcp_server_->setNoDelay(true);
+  tcp_out_.reserve(TCP_BUFFER_MAX);
 
   char ip_buf[network::IP_ADDRESS_BUFFER_SIZE];
   ips[0].str_to(ip_buf);
@@ -551,6 +562,7 @@ void FlexitModbusServer::handle_tcp_bridge_() {
 
   accept_tcp_clients_();
   cleanup_tcp_clients_();
+  send_to_tcp_clients_();
 }
 
 void FlexitModbusServer::accept_tcp_clients_() {
@@ -562,7 +574,7 @@ void FlexitModbusServer::accept_tcp_clients_() {
               tcp_bridge_max_clients_, new_client.remoteIP().toString().c_str());
       new_client.stop();
     } else {
-      tcp_clients_.push_back(new_client);
+      tcp_clients_.push_back({new_client, {}, false});
       ESP_LOGI(TAG, "TCP Bridge: Client connected from %s (total: %u)",
               new_client.remoteIP().toString().c_str(), tcp_clients_.size());
     }
@@ -571,16 +583,44 @@ void FlexitModbusServer::accept_tcp_clients_() {
 
 void FlexitModbusServer::cleanup_tcp_clients_() {
   for (auto it = tcp_clients_.begin(); it != tcp_clients_.end();) {
-    if (!it->connected()) {
+    if (!it->client.connected()) {
       ESP_LOGI(TAG, "TCP Bridge: Client disconnected from %s (total: %u)",
-              it->remoteIP().toString().c_str(), tcp_clients_.size() - 1);
+              it->client.remoteIP().toString().c_str(), tcp_clients_.size() - 1);
 
-      it->stop();
+      it->client.stop();
       it = tcp_clients_.erase(it);
     } else {
       ++it;
     }
   }
+}
+
+void FlexitModbusServer::send_to_tcp_clients_() {
+  for (auto &c : tcp_clients_) {
+    if (c.pending.empty()) {
+      c.lagging = false;
+      size_t sent = write_nonblocking(c.client, tcp_out_.data(), tcp_out_.size());
+      if (sent < tcp_out_.size())
+        c.pending.assign(tcp_out_.begin() + sent, tcp_out_.end());
+      continue;
+    }
+
+    // This client is behind. What's new is queued whole or skipped whole, so it
+    // never gets half a block.
+    if (c.pending.size() + tcp_out_.size() <= TCP_BUFFER_MAX) {
+      c.pending.insert(c.pending.end(), tcp_out_.begin(), tcp_out_.end());
+    } else if (!c.lagging) {
+      c.lagging = true;
+      ESP_LOGW(TAG, "TCP Bridge: Client %s reads too slowly, it will miss data",
+              c.client.remoteIP().toString().c_str());
+    }
+
+    size_t sent = write_nonblocking(c.client, c.pending.data(), c.pending.size());
+    c.pending.erase(c.pending.begin(), c.pending.begin() + sent);
+  }
+
+  tcp_out_.clear();
+  tcp_tx_block_ = NO_TCP_BLOCK;
 }
 #endif  // USE_FLEXIT_TCP_BRIDGE
 
