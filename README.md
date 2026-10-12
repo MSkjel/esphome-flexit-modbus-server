@@ -160,6 +160,10 @@ and two optional ones that depend on your RS485 hardware:
 branch or a release tag to pin a version. While testing a branch you keep pushing to, set
 `flexit_refresh: 0s` so every build fetches the latest commit.
 
+`modbus_library_ref` does the same for [ESP-ModbusRTUServer](https://github.com/MSkjel/ESP-ModbusRTUServer),
+the Modbus library the component is built on (default `main`). `flexit_refresh` doesn't apply to it:
+PlatformIO keeps the copy it downloaded, so to get new commits on the same branch use Clean Build Files.
+
 ### In Home Assistant
 
 A few things that are the same for all packages:
