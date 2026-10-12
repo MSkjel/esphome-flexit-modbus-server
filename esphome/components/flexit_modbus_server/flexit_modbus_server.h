@@ -314,6 +314,20 @@ public:
    */
   void set_tx_enable_direct(bool val);
 
+  /**
+   * @brief Enable/disable keeping the setting registers in flash.
+   *
+   * @param val False to neither restore them at boot nor save them.
+   */
+  void set_persist_settings(bool val);
+
+  /**
+   * @brief Enable/disable keeping the runtime counters in flash.
+   *
+   * @param val False to neither restore them at boot nor save them.
+   */
+  void set_persist_runtime_counters(bool val);
+
 #ifdef USE_FLEXIT_TCP_BRIDGE
   /**
    * @brief Enable/disable TCP bridge mode.
@@ -358,6 +372,12 @@ private:
 
   /// @brief Whether TX enable is active high (true) or low.
   bool tx_enable_direct_{true};
+
+  /// @brief Whether the setting registers are restored from and saved to flash.
+  bool persist_settings_{true};
+
+  /// @brief Whether the runtime counters are restored from and saved to flash.
+  bool persist_runtime_counters_{true};
 
   // ----------------------------------------------------------------
   // Settings persistence
