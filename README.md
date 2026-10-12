@@ -440,6 +440,7 @@ When enabled, the TCP bridge creates a server that:
 - Accepts TCP connections on the configured port (default: 502)
 - Mirrors all UART data to connected clients in real-time (both TX and RX)
 - Sends data with directional framing so you can distinguish between sent and received frames
+- Never waits for a client, so it can't hold up the bus. A client that reads too slowly misses data instead
 
 ### Frame Protocol
 
@@ -449,6 +450,8 @@ Data is sent to TCP clients using a simple 3-byte header + payload format:
 ```
 - **Direction**: `'T'` (0x54) for TX (ESP→UART), `'R'` (0x52) for RX (UART→ESP)
 - **Length**: 16-bit big-endian payload length
+
+Each block is one frame. Bytes from the bus that aren't part of a valid frame come as an RX block of their own.
 
 ### Configuration Options
 
