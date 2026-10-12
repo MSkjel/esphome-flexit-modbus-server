@@ -10,6 +10,7 @@ substitutions:
   flexit_address: "3"            # 1-3. Heater on/off needs 1, but that clashes with a CI600
   flexit_ref: main               # branch/tag, use the same as for the packages
   flexit_refresh: 1d             # 0s when testing a branch else 1d
+  modbus_library_ref: main       # branch/tag of ESP-ModbusRTUServer, the Modbus library
 
 external_components:
   - source: github://MSkjel/esphome-flexit-modbus-server@${flexit_ref}
@@ -28,3 +29,4 @@ flexit_modbus_server:
     address: ${flexit_address}
     tx_enable_pin: ${flexit_tx_enable_pin}
     tx_enable_direct: ${flexit_tx_enable_direct}
+    modbus_library_ref: ${modbus_library_ref}

@@ -5,12 +5,14 @@ from esphome.const import CONF_ADDRESS, CONF_ID
 from esphome import pins
 from esphome.core import CORE
 import os
+import re
 
 CONF_TX_ENABLE_PIN = "tx_enable_pin"
 CONF_TX_ENABLE_DIRECT = "tx_enable_direct"
 CONF_PERSIST_SETTINGS = "persist_settings"
 CONF_PERSIST_RUNTIME_COUNTERS = "persist_runtime_counters"
 CONF_TCP_BRIDGE_ENABLED = "tcp_bridge_enabled"
+CONF_MODBUS_LIBRARY_REF = "modbus_library_ref"
 CONF_TCP_BRIDGE_PORT = "tcp_bridge_port"
 CONF_TCP_BRIDGE_MAX_CLIENTS = "tcp_bridge_max_clients"
 
@@ -18,6 +20,15 @@ flexit_modbus_server_ns = cg.esphome_ns.namespace("flexit_modbus_server")
 FlexitModbusDeviceComponent = flexit_modbus_server_ns.class_("FlexitModbusServer", cg.Component)
 
 DEPENDENCIES = ["uart"]
+
+LIBRARY_REPOSITORY = "https://github.com/MSkjel/ESP-ModbusRTUServer.git"
+
+
+def validate_ref(value):
+    value = cv.string_strict(value)
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+", value):
+        raise cv.Invalid(f"'{value}' is not a branch, tag or commit")
+    return value
 
 CONFIG_SCHEMA = (
     cv.Schema(
@@ -35,6 +46,8 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_TCP_BRIDGE_ENABLED, False): cv.boolean,
             cv.Optional(CONF_TCP_BRIDGE_PORT, 502): cv.port,
             cv.Optional(CONF_TCP_BRIDGE_MAX_CLIENTS, 4): cv.int_range(min=1, max=10),
+            # Branch, tag or commit of ESP-ModbusRTUServer. Not used with a local copy.
+            cv.Optional(CONF_MODBUS_LIBRARY_REF): validate_ref,
         }
     )
     .extend(uart.UART_DEVICE_SCHEMA)
@@ -64,11 +77,11 @@ async def to_code(config):
                 break
 
     if not local_lib_exists:
-        cg.add_library(
-            name="ModbusRTUServer",
-            repository="https://github.com/MSkjel/ESP-ModbusRTUServer.git",
-            version=None
-        )
+        # ESPHome leaves out the version for git libraries, so the ref goes on the URL
+        repository = LIBRARY_REPOSITORY
+        if CONF_MODBUS_LIBRARY_REF in config:
+            repository += f"#{config[CONF_MODBUS_LIBRARY_REF]}"
+        cg.add_library(name="ModbusRTUServer", repository=repository, version=None)
 
     if config[CONF_TCP_BRIDGE_ENABLED]:
         cg.add_define("USE_FLEXIT_TCP_BRIDGE")
