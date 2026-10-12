@@ -237,6 +237,11 @@ public:
    */
   void dump_config() override;
 
+  /**
+   * @brief Saves settings that are still waiting, before a reboot or OTA update.
+   */
+  void on_safe_shutdown() override;
+
   // ----------------------------------------------------------------
   // Custom methods for manipulating registers and coils
   // ----------------------------------------------------------------
@@ -360,7 +365,10 @@ private:
   // ----------------------------------------------------------------
   // The CS60 only sends all settings when it boots, so we keep a copy in
   // flash and load it on our own boot. Only setting registers are saved,
-  // not status/runtime values that change all the time.
+  // not status/runtime values that change all the time. Automations like the
+  // CO2 control can change fan speeds every minute, so a change is only saved
+  // once the settings have stayed the same for 10 minutes, or after an hour if
+  // they never do.
   struct SettingsRange {
     uint16_t start;
     uint16_t count;
@@ -374,6 +382,8 @@ private:
   };
   static constexpr size_t NUM_SAVED_REGISTERS = 0x1C + 0x08 + 0x04 + 0x39 + 0x04;
   static constexpr uint32_t SAVE_CHECK_INTERVAL_MS = 10000;
+  static constexpr uint32_t SETTINGS_SETTLE_MS = 10 * 60 * 1000;
+  static constexpr uint32_t SETTINGS_MAX_DELAY_MS = 60 * 60 * 1000;
 
   struct SavedSettings {
     uint16_t values[NUM_SAVED_REGISTERS];
@@ -381,11 +391,15 @@ private:
 
   ESPPreferenceObject settings_pref_;
   SavedSettings saved_settings_{};
+  SavedSettings last_settings_{};     // as of the last check
+  uint32_t settings_changed_at_{0};   // when they last changed
+  uint32_t settings_unsaved_since_{0};
+  bool settings_unsaved_{false};
   uint32_t last_save_check_{0};
 
   void collect_settings_(SavedSettings &out);
   void restore_settings_();
-  void save_settings_if_changed_();
+  void save_settings_if_changed_(bool force = false);
 
   // ----------------------------------------------------------------
   // Runtime counter persistence

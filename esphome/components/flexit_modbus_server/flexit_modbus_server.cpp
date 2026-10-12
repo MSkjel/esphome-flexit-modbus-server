@@ -223,17 +223,41 @@ void FlexitModbusServer::restore_settings_() {
   ESP_LOGI(TAG, "Restored %u saved settings", (unsigned) NUM_SAVED_REGISTERS);
 }
 
-void FlexitModbusServer::save_settings_if_changed_() {
+void FlexitModbusServer::save_settings_if_changed_(bool force) {
   SavedSettings current;
   collect_settings_(current);
+  const uint32_t ms = millis();
 
-  if (memcmp(&current, &saved_settings_, sizeof(SavedSettings)) == 0)
+  if (memcmp(&current, &last_settings_, sizeof(SavedSettings)) != 0) {
+    last_settings_ = current;
+    settings_changed_at_ = ms;
+  }
+
+  // Back to what's in flash already, e.g. a boost that put the fan speeds back
+  if (memcmp(&current, &saved_settings_, sizeof(SavedSettings)) == 0) {
+    settings_unsaved_ = false;
+    return;
+  }
+
+  if (!settings_unsaved_) {
+    settings_unsaved_ = true;
+    settings_unsaved_since_ = ms;
+  }
+
+  if (!force && ms - settings_changed_at_ < SETTINGS_SETTLE_MS &&
+      ms - settings_unsaved_since_ < SETTINGS_MAX_DELAY_MS)
     return;
 
   // ESPHome batches the actual flash writes (flash_write_interval)
   saved_settings_ = current;
   settings_pref_.save(&saved_settings_);
+  settings_unsaved_ = false;
   ESP_LOGD(TAG, "Settings changed, saved");
+}
+
+void FlexitModbusServer::on_safe_shutdown() {
+  // Runs before ESPHome writes everything to flash on a reboot
+  save_settings_if_changed_(true);
 }
 
 int FlexitModbusServer::runtime_index_(uint16_t high_reg) const {
