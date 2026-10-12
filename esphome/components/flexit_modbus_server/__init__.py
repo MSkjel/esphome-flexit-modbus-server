@@ -8,6 +8,8 @@ import os
 
 CONF_TX_ENABLE_PIN = "tx_enable_pin"
 CONF_TX_ENABLE_DIRECT = "tx_enable_direct"
+CONF_PERSIST_SETTINGS = "persist_settings"
+CONF_PERSIST_RUNTIME_COUNTERS = "persist_runtime_counters"
 CONF_TCP_BRIDGE_ENABLED = "tcp_bridge_enabled"
 CONF_TCP_BRIDGE_PORT = "tcp_bridge_port"
 CONF_TCP_BRIDGE_MAX_CLIENTS = "tcp_bridge_max_clients"
@@ -27,6 +29,9 @@ CONFIG_SCHEMA = (
                 cv.one_of("none", lower=True), pins.gpio_output_pin_schema
             ),
             cv.Optional(CONF_TX_ENABLE_DIRECT, True): cv.boolean,
+            # false = never restored from flash at boot and never saved to it
+            cv.Optional(CONF_PERSIST_SETTINGS, True): cv.boolean,
+            cv.Optional(CONF_PERSIST_RUNTIME_COUNTERS, True): cv.boolean,
             cv.Optional(CONF_TCP_BRIDGE_ENABLED, False): cv.boolean,
             cv.Optional(CONF_TCP_BRIDGE_PORT, 502): cv.port,
             cv.Optional(CONF_TCP_BRIDGE_MAX_CLIENTS, 4): cv.int_range(min=1, max=10),
@@ -77,6 +82,8 @@ async def to_code(config):
     cg.add(server.set_uart_parent(uart))
     cg.add(server.set_server_address(config[CONF_ADDRESS]))
     cg.add(server.set_tx_enable_direct(config[CONF_TX_ENABLE_DIRECT]))
+    cg.add(server.set_persist_settings(config[CONF_PERSIST_SETTINGS]))
+    cg.add(server.set_persist_runtime_counters(config[CONF_PERSIST_RUNTIME_COUNTERS]))
 
     if CONF_TX_ENABLE_PIN in config and config[CONF_TX_ENABLE_PIN] != "none":
         pin_config = config[CONF_TX_ENABLE_PIN]
