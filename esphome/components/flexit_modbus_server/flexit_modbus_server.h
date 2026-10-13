@@ -1,11 +1,13 @@
 #pragma once
 
+#include "esphome/core/defines.h"
 #include "esphome/core/component.h"
-#include "esphome/core/gpio.h"
 #include "esphome/components/uart/uart.h"
 #include "esphome/core/hal.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
-#include "esphome.h"
+#include "esphome/core/preferences.h"
+#include "esphome/core/string_ref.h"
 #include "ModbusRTUServer.h"
 
 #ifdef USE_FLEXIT_TCP_BRIDGE
@@ -16,25 +18,16 @@
 #endif
 #endif
 
+#include <string>
 #include <vector>
-
-#define MODBUS_DISABLE_READ_INPUT_REGISTERS
-#define MODBUS_DISABLE_WRITE_MULTIPLE_COILS
-#define MODBUS_DISABLE_WRITE_SINGLE_COIL
-#define MODBUS_DISABLE_REPORT_SERVER_ID
 
 namespace {
 static constexpr const char *const TAG = "FlexitModbus";
 
-// The starting addresses of each Modbus table (coils, holding regs, etc.).
-static constexpr uint16_t COIL_START_ADDRESS              = 0x00;
-static constexpr uint16_t HOLDING_REGISTER_START_ADDRESS  = 0x00;
-
 static constexpr uint16_t MAX_NUM_COILS                   = 1000;
 
-// Frame size bounds.
+// Shortest frame we try to parse (an exception response).
 static constexpr size_t MIN_FRAME_LENGTH                  = 5;
-static constexpr size_t MAX_FRAME_LENGTH                  = 256;
 
 static constexpr uint8_t FRAME_DIR_TX  = 'T';
 static constexpr uint8_t FRAME_DIR_RX  = 'R';
@@ -64,21 +57,22 @@ namespace flexit_modbus_server {
  */
 enum HoldingRegisterIndex {
   // Main registers
-  REG_TEMPERATURE_SETPOINT                  = 0xBE,
-  REG_MODE                                  = 0xBF,
-  REG_UNKNOWN_1                             = 0xC0, // Possibly related to the MAX TIMER function.
-  REG_UNKNOWN_2                             = 0xC1,
-  REG_TEMPERATURE_SETPOINT_2                = 0xC2,
-  REG_TEMPERATURE_SUPPLY_AIR                = 0xC3,
-  REG_TEMPERATURE_EXTRACT_AIR               = 0xC4,
-  REG_TEMPERATURE_OUTDOOR_AIR               = 0xC5,
-  REG_TEMPERATURE_RETURN_WATER              = 0xC6,
-  REG_PERCENTAGE_COOLING                    = 0xC7,
-  REG_PERCENTAGE_HEAT_EXCHANGER             = 0xC8,
-  REG_PERCENTAGE_HEATING                    = 0xC9,
-  REG_PERCENTAGE_SUPPLY_FAN                 = 0xCA,
+  REG_TEMPERATURE_SETPOINT                  = 0xBE, // x0.1 C, setpoint from the panels (or the external pot)
+  REG_MODE                                  = 0xBF, // 0 = stop, 1 = min, 2 = normal, 3 = max
+  REG_HOURS_SINCE_FILTER_RESET              = 0xC0, // h
+  REG_SECONDS_REMAINING_MAX_TIMER           = 0xC1, // s, 0 = not running
+  REG_TEMPERATURE_SETPOINT_2                = 0xC2, // x0.1 C, setpoint in use (after week program, home/away etc.)
+  REG_TEMPERATURE_SUPPLY_AIR                = 0xC3, // x0.1 C, signed
+  REG_TEMPERATURE_EXTRACT_AIR               = 0xC4, // x0.1 C, signed
+  REG_TEMPERATURE_OUTDOOR_AIR               = 0xC5, // x0.1 C, signed
+  REG_TEMPERATURE_RETURN_WATER              = 0xC6, // x0.1 C, signed
+  REG_PERCENTAGE_COOLING                    = 0xC7, // %
+  REG_PERCENTAGE_HEAT_EXCHANGER             = 0xC8, // %
+  REG_PERCENTAGE_HEATING                    = 0xC9, // %
+  REG_PERCENTAGE_SUPPLY_FAN                 = 0xCA, // %
+  REG_HOURS_TOTAL_RUNTIME                   = 0xCB, // h
 
-  // Alarm registers
+  // Alarm registers (1 = active)
   REG_ALARM_SENSOR_SUPPLY_FAULTY            = 0x104,
   REG_ALARM_SENSOR_EXTRACT_FAULTY           = 0x105,
   REG_ALARM_SENSOR_OUTDOOR_FAULTY           = 0x106,
@@ -88,31 +82,31 @@ enum HoldingRegisterIndex {
   REG_ALARM_SENSOR_WATER_COIL_FAULTY        = 0x10A,
   REG_ALARM_SENSOR_HEAT_EXCHANGER_FAULTY    = 0x10B,
   REG_ALARM_FILTER_CHANGE                   = 0x10C,
-  REG_CMD_CLEAR_FILTER_ALARM                = 0x116,
-  REG_CMD_CLEAR_ALARMS                      = 0x13C,
+  REG_CMD_CLEAR_FILTER_ALARM                = 0x116, // write 1, also restarts the filter hours
+  REG_CMD_CLEAR_ALARMS                      = 0x13C, // write 1
 
   // Control variables
-  REG_CMD_MODE                              = 0x00,
-  REG_CMD_PERCENTAGE_SUPPLY_FAN_MIN         = 0x02,
-  REG_CMD_PERCENTAGE_SUPPLY_FAN_NORMAL      = 0x03,
-  REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX         = 0x04,
-  REG_CMD_PERCENTAGE_EXTRACT_FAN_MIN        = 0x07,
-  REG_CMD_PERCENTAGE_EXTRACT_FAN_NORMAL     = 0x08,
-  REG_CMD_PERCENTAGE_EXTRACT_FAN_MAX        = 0x09,
-  REG_CMD_TEMPERATURE_SETPOINT              = 0x0C,
-  REG_CMD_TEMPERATURE_SUPPLY_MIN            = 0x0D,
-  REG_CMD_TEMPERATURE_SUPPLY_MAX            = 0x0E,
-  REG_CMD_DAYS_FILTER_CHANGE_INTERVAL       = 0x16,
-  REG_CMD_MINUTES_MAX_TIMER                 = 0x91,
-  REG_CMD_TEMPERATURE_SUPPLY_AIR_CONTROL    = 0x114,
-  REG_CMD_START_MAX_TIMER                   = 0x13A,
-  REG_CMD_STOP_MAX_TIMER                    = 0x13B,
+  REG_CMD_MODE                              = 0x00,  // 0 = stop, 1 = min, 2 = normal, 3 = max
+  REG_CMD_PERCENTAGE_SUPPLY_FAN_MIN         = 0x02,  // %
+  REG_CMD_PERCENTAGE_SUPPLY_FAN_NORMAL      = 0x03,  // %, only taken from the lowest panel address
+  REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX         = 0x04,  // %
+  REG_CMD_PERCENTAGE_EXTRACT_FAN_MIN        = 0x07,  // %
+  REG_CMD_PERCENTAGE_EXTRACT_FAN_NORMAL     = 0x08,  // %, only taken from the lowest panel address
+  REG_CMD_PERCENTAGE_EXTRACT_FAN_MAX        = 0x09,  // %
+  REG_CMD_TEMPERATURE_SETPOINT              = 0x0C,  // x0.1 C, only taken from the lowest panel address
+  REG_CMD_TEMPERATURE_SUPPLY_MIN            = 0x0D,  // x0.1 C
+  REG_CMD_TEMPERATURE_SUPPLY_MAX            = 0x0E,  // x0.1 C
+  REG_CMD_DAYS_FILTER_CHANGE_INTERVAL       = 0x16,  // days
+  REG_CMD_MINUTES_MAX_TIMER                 = 0x91,  // min
+  REG_CMD_TEMPERATURE_SUPPLY_AIR_CONTROL    = 0x114, // 1 = supply air, 0 = extract air regulation
+  REG_CMD_START_MAX_TIMER                   = 0x13A, // write 1
+  REG_CMD_STOP_MAX_TIMER                    = 0x13B, // write 1
 
   // Heater
-  REG_STATUS_HEATER                         = 0x10E,
-  REG_CMD_HEATER                            = 0x13F,
+  REG_STATUS_HEATER                         = 0x10E, // 1 = heater allowed to run
+  REG_CMD_HEATER                            = 0x13F, // heater on/off flag of panel address 1
 
-  // Runtime registers
+  // Runtime registers (seconds, 32 bit split in a high and low word)
   REG_RUNTIME_STOP_HIGH                     = 0x14C,
   REG_RUNTIME_STOP_LOW                      = 0x14D,
   REG_RUNTIME_MIN_HIGH                      = 0x14E,
@@ -126,20 +120,20 @@ enum HoldingRegisterIndex {
   REG_RUNTIME_HEATER_HIGH                   = 0x156,
   REG_RUNTIME_HEATER_LOW                    = 0x157,
 
-  REG_RUNTIME_HIGH                          = 0x15C,
+  REG_RUNTIME_HIGH                          = 0x15C, // total
   REG_RUNTIME_LOW                           = 0x15D,
-  REG_RUNTIME_FILTER_HIGH                   = 0x15E,
+  REG_RUNTIME_FILTER_HIGH                   = 0x15E, // since the last filter reset
   REG_RUNTIME_FILTER_LOW                    = 0x15F,
 
   // Status / diagnostics (read only)
   REG_SW_VERSION_CONTROLLER                 = 0x097, // major << 8 | minor
-  REG_NUM_FILTER_RESETS                     = 0x0CC,
+  REG_NUM_FILTER_RESETS                     = 0x0CC, // count
   REG_OVERRIDING_SYSTEM_ACTIVE              = 0x10D, // Home/away input active
   REG_DS1_HEATING_TYPE                      = 0x10F, // DIP switch: 0 = water, 1 = electric
   REG_DS2_ROTOR_GUARD_TYPE                  = 0x110, // DIP switch
   REG_DS3_ROTOR_MOTOR_TYPE                  = 0x111, // DIP switch
   REG_DS4_FAN_TYPE                          = 0x112, // DIP switch: 0 = EC, 1 = AC
-  REG_WEEK_PROGRAM_ACTIVE                   = 0x117,
+  REG_WEEK_PROGRAM_ACTIVE                   = 0x117, // 1 = a week program period is running
 
   // Advanced settings (CI600 "Advanced user" / "Service" menus)
   REG_CMD_AIR_VOLUME_COMP_SUPPLY_SPEED      = 0x005, // AC fans: supply mode 1-3 while hood/fireplace input is active
@@ -164,7 +158,7 @@ enum HoldingRegisterIndex {
   REG_CMD_HOME_AWAY_TIME_DELAY              = 0x0A5, // min
   REG_CMD_HOME_AWAY_SPEED                   = 0x0A6, // 1-3
   REG_CMD_HOME_AWAY_TEMPERATURE             = 0x0A7, // x0.1 C
-  REG_CMD_FILTER_GUARD_ENABLE               = 0x113,
+  REG_CMD_FILTER_GUARD_ENABLE               = 0x113, // filter pressure switch
   REG_CMD_COOLING_ENABLE                    = 0x115,
   REG_CMD_EXTERNAL_TEMP_CONTROL_ENABLE      = 0x134, // setpoint from external potentiometer
   REG_CMD_SENSOR_SUPPLY_ENABLE              = 0x135,
@@ -172,7 +166,7 @@ enum HoldingRegisterIndex {
   REG_CMD_SENSOR_OUTDOOR_ENABLE             = 0x137,
   REG_CMD_SENSOR_RETURN_WATER_ENABLE        = 0x138,
   REG_CMD_COOLNESS_RECOVERY_ENABLE          = 0x139,
-  REG_CMD_CLEAR_ALARM_LOG                   = 0x13D,
+  REG_CMD_CLEAR_ALARM_LOG                   = 0x13D, // write 1
   REG_CMD_ROTOR_ALARM_TYPE                  = 0x14B, // 0 = A (stop unit), 1 = B (continue)
   REG_CMD_DEICING_ENABLE                    = 0x158,
   REG_CMD_DEICING_START_TEMP                = 0x159, // x0.1 C, signed

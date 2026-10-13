@@ -1,4 +1,8 @@
 #include "flexit_modbus_server.h"
+#include <algorithm>
+#include <cinttypes>
+#include <cmath>
+#include <cstring>
 #ifdef USE_FLEXIT_TCP_BRIDGE
 #include "esphome/components/wifi/wifi_component.h"
 #ifdef USE_ESP32
@@ -63,7 +67,7 @@ FlexitModbusServer::FlexitModbusServer() {}
 void FlexitModbusServer::dump_config() {
   ESP_LOGCONFIG(TAG, "Flexit Modbus Server:");
   ESP_LOGCONFIG(TAG, "  Address: 0x%02X", server_address_);
-  ESP_LOGCONFIG(TAG, "  Baud Rate: %u", baudRate());
+  ESP_LOGCONFIG(TAG, "  Baud Rate: %" PRIu32, baudRate());
 
   if (tx_enable_pin_ >= 0) {
     ESP_LOGCONFIG(TAG, "  TX Enable Pin: GPIO%d", tx_enable_pin_);
@@ -136,9 +140,9 @@ void FlexitModbusServer::setup() {
       mirror_rx_(data + offset, len);
       mirrored = offset + len;
 
-      // The startup input-register reads (0x04) aren't implemented, so they reply
-      // with an exception via onInvalidFunction. That's still a valid response, so
-      // the CS60 sees us as online without us having to serve input registers.
+      // The CS60 finds its panels at startup by reading 4 input registers (0x04).
+      // The library answers that with zeros, which is enough for it to see us as
+      // online. An exception reply would make it treat us as not present.
       mb_.processFrame(data + offset, len);
       offset += len;
     }
