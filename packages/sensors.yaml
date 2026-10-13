@@ -1,4 +1,4 @@
-# Temperatures, heating/cooling/rotor %, runtime counters and alarms.
+# Temperatures, heating/cooling/rotor %, max timer, runtime counters and alarms.
 # Needs core.yaml
 
 sensor:
@@ -102,6 +102,20 @@ sensor:
       return id(server)->read_holding_register(
         flexit_modbus_server::REG_PERCENTAGE_SUPPLY_FAN
       );
+
+  - platform: template
+    id: max_timer_remaining
+    name: "Max Timer Remaining"
+    update_interval: 5s
+    device_class: duration
+    unit_of_measurement: "min"
+    accuracy_decimals: 0
+    lambda: |-
+      // register is in seconds, rounded up so it only shows 0 when the timer is off
+      uint16_t seconds = id(server)->read_holding_register(
+        flexit_modbus_server::REG_SECONDS_REMAINING_MAX_TIMER
+      );
+      return (seconds + 59) / 60;
 
   - platform: template
     id: runtime

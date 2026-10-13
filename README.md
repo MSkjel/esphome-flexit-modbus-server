@@ -120,7 +120,7 @@ Each package is a YAML file in [`packages/`](packages). Add the ones you want to
 |---|---|---|
 | [`core.yaml`](packages/core.yaml) | UART + `flexit_modbus_server` (`id: server`) | Required. Pins and address via substitutions |
 | [`controls.yaml`](packages/controls.yaml) | Mode, setpoint, heater, supply air control, max timer, filter interval, supply temp min/max, alarm/filter reset | |
-| [`sensors.yaml`](packages/sensors.yaml) | Temperatures, heating/cooling/heat exchanger %, runtime counters, alarms | |
+| [`sensors.yaml`](packages/sensors.yaml) | Temperatures, heating/cooling/heat exchanger %, max timer remaining, runtime counters, alarms | |
 | [`diagnostics.yaml`](packages/diagnostics.yaml) | Fan type (EC/AC), heating type, controller SW version, week program active, home/away input, filter resets | Read only |
 | [`fan_speeds.yaml`](packages/fan_speeds.yaml) | Supply/extract fan % for MIN/NORMAL/MAX | EC fans only. Disabled by default |
 | [`fireplace.yaml`](packages/fireplace.yaml) | Fireplace mode (temporary MAX with custom fan speeds) | Needs `controls.yaml` and `fan_speeds.yaml` |
