@@ -37,4 +37,9 @@ jobs:
           key: pio-${{ runner.os }}-${{ matrix.config }}-${{ steps.esphome.outputs.version }}
 
       - name: Build
-        run: esphome compile tests/${{ matrix.config }}.yaml
+        run: |
+          set -o pipefail
+          esphome compile tests/${{ matrix.config }}.yaml 2>&1 | tee build.log
+
+      - name: Check for warnings in our code
+        run: tests/check_warnings.sh build.log

@@ -1,3 +1,14 @@
+# Stricter warnings than a normal build. CI fails on any warning from our own
+# code, see check_warnings.sh.
+esphome:
+  build_flags:
+    - -Wall
+    - -Wextra
+    - -Wno-unused-parameter
+    - -Wsign-compare
+    - -Wunused-but-set-variable
+    - -Wunused-variable
+
 api:
 ota:
   - platform: esphome
