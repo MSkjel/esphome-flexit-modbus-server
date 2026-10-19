@@ -1,0 +1,17 @@
+# One of the CS60's settings as a select in HA, disabled until you enable it. Used by advanced.yaml.
+#   - file: parts/setting_select.yaml
+#     vars: {id: home_away_speed, name: Home Away Speed, register: REG_CMD_HOME_AWAY_SPEED, first: 1,
+#            options: [Min, Normal, Max]}
+# The options are the values first, first + 1 and so on.
+select:
+  - platform: template
+    id: ${id}
+    name: ${name}
+    entity_category: config
+    disabled_by_default: true
+    options: ${options}
+    update_interval: 1s
+    # nothing for a value that isn't one of them
+    lambda: return id(${id}).at(id(server)->read_holding_register(flexit_modbus_server::${register}) - ${first});
+    set_action:
+      lambda: id(server)->send_cmd(flexit_modbus_server::${register}, ${first} + *id(${id}).index_of(x.c_str()));

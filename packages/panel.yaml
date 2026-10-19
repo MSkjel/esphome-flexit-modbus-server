@@ -1,0 +1,291 @@
+# A CI600 panel running the replacement firmware (github.com/MSkjel/flexit-ci600-firmware) on the same bus.
+# ESP32 only. Needs ESPHome 2026.9 or newer and core.yaml with flexit_address: "1". The panel uses address 3.
+# Only address 1 may change the setpoint and the NORMAL fan speeds, so this ESP does that for the panel.
+# Gives you the panel's temperature and the settings you might automate, "Panel Connected", a "Panel Action" event
+# for actions picked on the panel, and actions for notifications, views, pictures, animations and every other
+# setting. More in packages/panel/. From your own YAML, call the same as C++ in a lambda, like
+# flexit::panel::notify("Filter change due in a week", "filter", "warning").
+
+time:
+  - platform: homeassistant
+    id: flexit_panel_time
+    on_time_sync:
+      - lambda: flexit::panel::send_time();  # the panel also sets the CS60's clock from this
+
+esphome:
+  includes:
+    - code/panel
+  on_boot:
+    - priority: 600
+      then:
+        - lambda: flexit::panel::setup();
+    - priority: -100                      # all pictures and animations are registered by now
+      then:
+        - lambda: |-
+            auto p = id(panel_picture).current_option();
+            if (!p.empty() && !(p == "None"))
+              flexit::panel::picture::show(std::string(p.c_str(), p.size()));
+            auto a = id(panel_animation).current_option();
+            if (!a.empty() && !(a == "None"))
+              flexit::panel::anim::show(std::string(a.c_str(), a.size()));
+
+interval:
+  # what the panel sent, its items, pictures and animations. A picture gets its own 16 colours and is compressed a
+  # few rows per loop so the bus still gets answered. Then it goes whole, or just the rows that differ.
+  - interval: 20ms
+    then:
+      - lambda: flexit::panel::loop();
+
+binary_sensor:
+  - platform: template
+    id: panel_connected
+    name: "Panel Connected"
+    device_class: connectivity
+    entity_category: diagnostic
+    lambda: return flexit::panel::link::connected;
+
+sensor:
+  - platform: template
+    id: panel_temperature
+    name: "Panel Temperature"
+    device_class: temperature
+    state_class: measurement
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    update_interval: never
+
+text_sensor:
+  - platform: template
+    id: panel_firmware
+    name: "Panel Firmware"
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    id: panel_picture_status
+    name: "Panel Picture Status"
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    id: panel_animation_status
+    name: "Panel Animation Status"
+    entity_category: diagnostic
+    update_interval: never
+
+event:
+  # fired when one of these is picked in the panel's menu
+  - platform: template
+    id: panel_action
+    name: "Panel Action"
+    event_types: [reset_filter, reset_alarms, clear_history, restart, factory_reset]
+
+# The panel's settings show what it reports, unknown until it has, and what's set from here. The rest of them are in
+# its own menu and the panel_set action.
+select:
+  - platform: template
+    id: panel_screensaver
+    name: "Panel Screensaver"
+    entity_category: config
+    icon: "mdi:monitor-shimmer"
+    options: ["Off", Clock, Clock and temperatures, Picture, Picture and clock, Picture and everything]
+    lambda: return {};
+    update_interval: never
+    set_action:
+      - lambda: flexit::panel::set("screensaver", (int) id(panel_screensaver).index_of(x.c_str(), x.size()).value_or(1));
+  # the panel's LEDs. Auto works like the stock firmware, the rest let this ESP decide
+  - platform: template
+    id: panel_led_alarm
+    name: "Panel Alarm LED"
+    entity_category: config
+    icon: "mdi:led-on"
+    optimistic: true
+    restore_value: true
+    options: [Auto, "Off", "On", Blink]
+    on_value:
+      - lambda: flexit::panel::send_leds();
+  - platform: template
+    id: panel_led_filter
+    name: "Panel Filter LED"
+    entity_category: config
+    icon: "mdi:led-on"
+    optimistic: true
+    restore_value: true
+    options: [Auto, "Off", "On", Blink]
+    on_value:
+      - lambda: flexit::panel::send_leds();
+  - platform: template
+    id: panel_led_ok
+    name: "Panel OK LED"
+    entity_category: config
+    icon: "mdi:led-on"
+    optimistic: true
+    restore_value: true
+    options: [Auto, "Off", "On", Blink]
+    on_value:
+      - lambda: flexit::panel::send_leds();
+  # the screensaver picture. packages/panel/picture.yaml adds its name to the options.
+  - platform: template
+    id: panel_picture
+    name: "Panel Picture"
+    icon: "mdi:image"
+    optimistic: true
+    restore_value: true                   # on_boot shows it again after a restart
+    options: [None]
+    set_action:
+      - lambda: |-
+          if (x == "None")
+            flexit::panel::picture::clear();
+          else
+            flexit::panel::picture::show(std::string(x.c_str(), x.size()));
+  # the screensaver animation. packages/panel/animation.yaml adds its name to the options.
+  - platform: template
+    id: panel_animation
+    name: "Panel Animation"
+    icon: "mdi:animation-play"
+    optimistic: true
+    restore_value: true
+    options: [None]
+    set_action:
+      - lambda: |-
+          if (x == "None")
+            flexit::panel::anim::clear();
+          else
+            flexit::panel::anim::show(std::string(x.c_str(), x.size()));
+
+number:
+  - platform: template
+    id: panel_brightness
+    name: "Panel Brightness"
+    entity_category: config
+    icon: "mdi:brightness-6"
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 5
+    lambda: return {};
+    update_interval: never
+    set_action:
+      - lambda: flexit::panel::set("brightness", (int) lroundf(x));
+  - platform: template
+    id: panel_idle_brightness
+    name: "Panel Idle Brightness"
+    entity_category: config
+    icon: "mdi:brightness-4"
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 5
+    lambda: return {};
+    update_interval: never
+    set_action:
+      - lambda: flexit::panel::set("idle_brightness", (int) lroundf(x));
+
+switch:
+  - platform: template
+    id: panel_night
+    name: "Panel Night Mode"
+    icon: "mdi:weather-night"
+    optimistic: true
+    restore_mode: DISABLED                # follows the panel
+    turn_on_action:
+      - lambda: flexit::panel::link::send(K_NIGHT, 1);
+    turn_off_action:
+      - lambda: flexit::panel::link::send(K_NIGHT, 0);
+  # hold ? on the panel for 3 s to lock or unlock it there
+  - platform: template
+    id: panel_key_lock
+    name: "Panel Key Lock"
+    icon: "mdi:lock"
+    optimistic: true
+    restore_mode: DISABLED
+    turn_on_action:
+      - lambda: flexit::panel::link::send(K_KEY_LOCK, 1);
+    turn_off_action:
+      - lambda: flexit::panel::link::send(K_KEY_LOCK, 0);
+
+button:
+  - platform: template
+    id: panel_restart
+    name: "Panel Restart"
+    entity_category: config
+    icon: "mdi:restart"
+    on_press:
+      - lambda: flexit::panel::link::send(K_ACTION, A_RESTART);
+
+api:
+  actions:
+    # in Home Assistant: esphome.<device>_panel_notify etc.
+    # A notification up to 64 bytes. level is info, warning or alarm, icon an id from code/panel/plink_icons.h in
+    # lower case.
+    - action: panel_notify
+      variables:
+        message: string
+        icon: string
+        level: string
+      then:
+        - lambda: flexit::panel::notify(message, icon, level);
+    # view is dashboard, airflow, trends, sensors, comfort or smart_home
+    - action: panel_show_view
+      variables:
+        view: string
+      then:
+        - lambda: flexit::panel::show_view(view);
+    # a screensaver picture from packages/panel/, for one of the Picture screensaver modes. One from a URL is
+    # downloaded again first.
+    - action: panel_show_picture
+      variables:
+        name: string
+      then:
+        - lambda: flexit::panel::picture::show(name);
+    - action: panel_clear_picture
+      then:
+        - lambda: flexit::panel::picture::clear();
+    # an animation from packages/panel/animation.yaml, over the picture
+    - action: panel_show_animation
+      variables:
+        name: string
+      then:
+        - lambda: flexit::panel::anim::show(name);
+    - action: panel_clear_animation
+      then:
+        - lambda: flexit::panel::anim::clear();
+    # A panel setting, value in the panel's own units. theme 0-2, brightness 0-100, idle_brightness 0-100,
+    # idle_after 0-7 for 15 s to 30 min or never, screensaver 0-5, home_view 0-5, night 0/1, night_from and
+    # night_to 0-23, night_brightness 0-100 when in use, night_idle_brightness 0-100 with 0 = dark, key_lock 0/1,
+    # indoor_source 0 extract air / 1 the panel, clock_24h and key_hints 0/1, room_offset in 0.1 C,
+    # tile1-tile4 the dashboard tiles as TILE_* in code/panel/plink_values.h, language 0 English / 1 Norwegian.
+    # The LEDs have their own selects.
+    - action: panel_set
+      variables:
+        setting: string
+        value: int
+      then:
+        - lambda: flexit::panel::set(setting, value);
+
+# The same for your own YAML, like script.execute: {id: panel_notify, message: Hi, icon: bell, level: info}
+script:
+  - id: panel_notify
+    parameters: {message: string, icon: string, level: string}
+    then:
+      - lambda: flexit::panel::notify(message, icon, level);
+  - id: panel_show_view
+    parameters: {view: string}
+    then:
+      - lambda: flexit::panel::show_view(view);
+  - id: panel_set
+    parameters: {setting: string, value: int}
+    then:
+      - lambda: flexit::panel::set(setting, value);
+  - id: panel_show_picture
+    parameters: {name: string}
+    then:
+      - lambda: flexit::panel::picture::show(name);
+  - id: panel_clear_picture
+    then:
+      - lambda: flexit::panel::picture::clear();
+  - id: panel_show_animation
+    parameters: {name: string}
+    then:
+      - lambda: flexit::panel::anim::show(name);
+  - id: panel_clear_animation
+    then:
+      - lambda: flexit::panel::anim::clear();

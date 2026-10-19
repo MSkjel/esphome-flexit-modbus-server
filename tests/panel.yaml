@@ -1,0 +1,39 @@
+# The CI600 panel packages, ESP32 only. esp32.yaml and esp32-c3.yaml include this.
+packages:
+  panel: !include ../packages/panel.yaml
+  panel_fireplace: !include ../packages/panel/fireplace.yaml
+  panel_humidity_boost: !include ../packages/panel/humidity_boost.yaml
+  panel_co2: !include ../packages/panel/co2.yaml
+  panel_summer_cooling: !include ../packages/panel/summer_cooling.yaml
+  panel_bathroom: !include
+    file: ../packages/panel/sensor.yaml
+    vars:
+      entity: inside_humidity
+      label: Bathroom|Bad
+      unit: "%"
+      icon: humidity
+      trend: "true"
+      levels: "20, 30, 60, 70"
+  panel_heater_on: !include
+    file: ../packages/panel/binary_sensor.yaml
+    vars: {entity: heater_enabled, label: Heater on|Varme på, icon: fire, on_text: Allowed|Tillatt,
+           off_text: Blocked|Sperret}
+  panel_heater: !include
+    file: ../packages/panel/switch.yaml
+    vars: {entity: heater, label: Heater|Varme, icon: radiator}
+  panel_setpoint: !include
+    file: ../packages/panel/number.yaml
+    vars: {entity: temperature, label: Setpoint, unit: "°C", icon: thermo, page: comfort}  # 1 decimal from its step
+  panel_clear_alarms: !include
+    file: ../packages/panel/button.yaml
+    vars: {entity: clear_alarms, label: Clear alarms, icon: bell, view: "false"}
+  panel_picture: !include
+    file: ../packages/panel/picture.yaml
+    vars: {name: dusk, file: panel_picture.png}
+  panel_animation: !include
+    file: ../packages/panel/animation.yaml
+    vars: {name: ball, file: panel_animation.gif, resize: 32x32, x: 256, y: 16, scale: 2}
+  panel_weather: !include
+    file: ../packages/panel/met.yaml
+    vars: {latitude: "59.9139", longitude: "10.7522"}
+  panel_update: !include ../packages/panel/update.yaml

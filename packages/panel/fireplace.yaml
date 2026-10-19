@@ -1,0 +1,24 @@
+# Fireplace mode on the panel's comfort page, and how long it lasts. Needs panel.yaml and fireplace.yaml.
+packages:
+  fireplace_on: !include
+    file: switch.yaml
+    vars:
+      name: fireplace
+      entity: fireplace_mode_switch
+      label: Fireplace|Peis
+      icon: fireplace
+      page: comfort
+      help: >-
+        Blows in more air than it takes out for a while, so the fireplace draws well.|Blåser inn mer luft enn den tar
+        ut en stund, så peisen trekker godt.
+  fireplace_minutes: !include
+    file: number.yaml
+    vars:
+      name: fireplace_minutes
+      entity: fireplace_duration
+      label: Fireplace time|Peistid
+      unit: min
+      icon: timer_sand
+      page: comfort
+      view: "false"
+      help: How long fireplace mode lasts.|Hvor lenge peismodus varer.

@@ -1,4 +1,7 @@
 # The modbus server itself. All the other packages need this one.
+esphome:
+  min_version: 2026.9.0
+
 # Set these in your own config:
 substitutions:
   flexit_tx_pin: GPIO1
@@ -7,7 +10,7 @@ substitutions:
   flexit_tx_enable_pin: none
   # Set to "false" if your board wants DE active low
   flexit_tx_enable_direct: "true"
-  flexit_address: "3"            # 1-3. Heater on/off needs 1, but that clashes with a CI600
+  flexit_address: "3"            # 1-3. A stock CI600 is at 1, and the week program and boosts need something there
   flexit_ref: main               # branch/tag, use the same as for the packages
   flexit_refresh: 1d             # 0s when testing a branch else 1d
   modbus_library_ref: main       # branch/tag of ESP-ModbusRTUServer, the Modbus library

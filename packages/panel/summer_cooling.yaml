@@ -1,0 +1,11 @@
+# Summer cooling on the panel's comfort page. Needs panel.yaml and summer_cooling.yaml.
+packages:
+  summer_cooling: !include
+    file: switch.yaml
+    vars:
+      name: summer_cooling
+      entity: summer_cooling_enable
+      label: Summer cooling|Sommerkjøling
+      icon: sun_thermo
+      page: comfort
+      help: Runs at MAX when it's warm inside and cooler outside.|Kjører på MAKS når det er varmt inne og kjøligere ute.

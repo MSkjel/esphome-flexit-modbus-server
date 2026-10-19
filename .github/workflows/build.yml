@@ -12,6 +12,54 @@ permissions:
   contents: read
 
 jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install formatters
+        run: pip install clang-format==23.1.3 ruff==0.17.1
+
+      - name: C/C++ (clang-format, ESPHome's style)
+        run: clang-format --dry-run --Werror $(git ls-files '*.c' '*.h' '*.cpp')
+
+      - name: Python (ruff format)
+        run: ruff format --check
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The packages that change the CS60 for a while, across reboots
+        run: |
+          g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -Ipackages/code \
+            tests/restart_test.cpp -o restart_test
+          ./restart_test
+
+      - name: The panel updater's probe
+        run: |
+          g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stubs -Ipackages/code/panel \
+            tests/update_test.cpp packages/code/panel/pbus.c -o update_test
+          ./update_test
+
+      - uses: actions/checkout@v4
+        with:
+          repository: MSkjel/ESP-ModbusRTUServer
+          path: modbus-library
+
+      - name: The component on the bus
+        run: |
+          g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Itests/stubs -Iesphome/components/flexit_modbus_server -Imodbus-library tests/server_test.cpp \
+            esphome/components/flexit_modbus_server/flexit_modbus_server.cpp modbus-library/ModbusRTUServer.cpp \
+            -o server_test
+          ./server_test
+
   build:
     runs-on: ubuntu-latest
     strategy:
@@ -31,10 +79,12 @@ jobs:
           pip install esphome
           echo "version=$(esphome version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v4  # PlatformIO for ESP8266, ESPHome's ESP-IDF toolchain for ESP32
         with:
-          path: ~/.platformio
-          key: pio-${{ runner.os }}-${{ matrix.config }}-${{ steps.esphome.outputs.version }}
+          path: |
+            ~/.platformio
+            ~/.cache/esphome/idf
+          key: build-${{ runner.os }}-${{ matrix.config }}-${{ steps.esphome.outputs.version }}
 
       - name: Build
         run: |

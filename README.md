@@ -11,7 +11,6 @@ This project implements a Modbus server for Flexit ventilation systems using ESP
 - Control Flexit ventilation systems (tested on CS60, may work with others compatible with CI600 panel)
 - Works with ESP8266 or ESP32 microcontrollers
 - Integrates with ESPHome for easy Home Assistant support
-- No CI66 needed
 
 ---
 
@@ -19,6 +18,7 @@ This project implements a Modbus server for Flexit ventilation systems using ESP
 
 - Flexit ventilation system with CS60 (or similar) controller
 - ESP8266 or ESP32 device
+- ESPHome 2026.9 or newer
 - UART-to-RS485 transceiver (e.g., MAX485, MAX1348)
 - Basic ESPHome YAML configuration knowledge
 
@@ -36,9 +36,9 @@ This project implements a Modbus server for Flexit ventilation systems using ESP
 
 - **Supply Air Temperature:** Can only be set if no CI600 is connected (CS60 limitation).
 - **Startup Order:** ESP must be powered on before CS60, or CS60 won’t poll it.
-- **Settings read-back:** Settings are read from what the CS60 broadcasts: all of them when the CS60 starts, and every change made from any panel. The ESP saves them to flash and loads them on boot, so if a setting was changed on the CI600 while the ESP was off it shows the old value until it changes again or the CS60 restarts. On a fresh install they show up once the CS60 has restarted with the ESP running. To spare the flash, changes are saved once the settings have stayed the same for 10 minutes, or after an hour if they keep changing, and always before a reboot or update.
+- **Settings read-back:** Settings are read from what the CS60 broadcasts: all of them when the CS60 starts, and every change made from any panel. The ESP writes each change to flash right away and loads them on boot (all but the week program's slot times, speeds and temperatures). A change made on a CI600 while the ESP is off or restarting isn't heard: it shows the old value until it changes again or the CS60 restarts, and a boost may put the old value back. On a fresh install the settings show up once the CS60 has restarted with the ESP running.
 - **Runtime counters:** The CS60 only sends a counter word when it changes, so the ESP saves them to flash and loads them on boot. On a fresh install they show as unknown until the CS60 has sent both words (at the latest when it restarts).
-- **Address:** Address 1 is required for Heater On/Off to function, but this wont work if you have a CI600 connected.
+- **Address:** The CS60 only takes the setpoint and the NORMAL fan speeds from the lowest address, and runs the week program and boosts only when something answers at 1. With a stock CI600 at 1 the ESP has to use 3, and changing those from Home Assistant won't take, nor will CO2 control's proportional and PI modes. Heater on/off works from any address. A CI600 with the [replacement firmware](#ci600-panel-replacement-firmware) runs at 3, so the ESP can be 1.
 
 ---
 
@@ -57,10 +57,8 @@ This project implements a Modbus server for Flexit ventilation systems using ESP
      name: flexit
      friendly_name: Flexit
 
-   esp32:
+   esp32:                           # ESP-IDF, ESPHome's default. ESP8266 boards use esp8266: instead
      board: seeed_xiao_esp32c3
-     framework:
-       type: arduino
 
    logger:
      level: WARN
@@ -100,7 +98,7 @@ This project implements a Modbus server for Flexit ventilation systems using ESP
          - packages/sensors.yaml
          - packages/diagnostics.yaml
          - packages/fan_speeds.yaml   # EC fans only
-         # - packages/fireplace.yaml  # needs controls + fan_speeds
+         # - packages/fireplace.yaml       # needs controls, EC fans only
          # - packages/humidity_boost.yaml  # needs controls + your own humidity sensor
          # - packages/co2.yaml             # needs controls + your own CO2 sensor
          # - packages/summer_cooling.yaml  # needs controls
@@ -108,13 +106,17 @@ This project implements a Modbus server for Flexit ventilation systems using ESP
          # - packages/advanced.yaml
    ```
 
-3. **Pick the packages you want** from the table below, then flash.
+3. **Pick the packages you want** from the table below, then flash. Moving an ESP32 from `type: arduino`:
+   `esptool erase-flash`, then flash over USB once.
 
 ---
 
 ## Packages
 
-Each package is a YAML file in [`packages/`](packages). Add the ones you want to the `files:` list.
+Each package is a YAML file in [`packages/`](packages). Add the ones you want to the `files:` list. Packages
+with logic beyond plain entities keep their code in [`packages/code/`](packages/code), one C++ header each
+(`controls.h`, `humidity_boost.h`, ...), included from the YAML. [`packages/parts/`](packages/parts) holds
+pieces the packages share, you don't add those yourself.
 
 | Package | Contents | Notes |
 |---|---|---|
@@ -123,12 +125,13 @@ Each package is a YAML file in [`packages/`](packages). Add the ones you want to
 | [`sensors.yaml`](packages/sensors.yaml) | Temperatures, heating/cooling/heat exchanger %, max timer remaining, runtime counters, alarms | |
 | [`diagnostics.yaml`](packages/diagnostics.yaml) | Fan type (EC/AC), heating type, controller SW version, week program active, home/away input, filter resets | Read only |
 | [`fan_speeds.yaml`](packages/fan_speeds.yaml) | Supply/extract fan % for MIN/NORMAL/MAX | EC fans only. Disabled by default |
-| [`fireplace.yaml`](packages/fireplace.yaml) | Fireplace mode (temporary MAX with custom fan speeds) | Needs `controls.yaml` and `fan_speeds.yaml` |
+| [`fireplace.yaml`](packages/fireplace.yaml) | Fireplace mode (temporary MAX with custom fan speeds) | Needs `controls.yaml`. EC fans only |
 | [`humidity_boost.yaml`](packages/humidity_boost.yaml) | Humidity boost (temporary MAX when humidity spikes, e.g. a shower) | Needs `controls.yaml` and a humidity sensor of your own |
 | [`co2.yaml`](packages/co2.yaml) | CO2 control around a target: stepped (MAX), proportional or PI (fan speeds) | Needs `controls.yaml` and a CO2 sensor of your own. The fan speed modes are EC fans only |
 | [`summer_cooling.yaml`](packages/summer_cooling.yaml) | Summer cooling (MAX when it is warm inside and cooler outside) | Needs `controls.yaml` |
 | [`computed.yaml`](packages/computed.yaml) | Heat recovery efficiency, heater power/energy, filter days remaining, combined alarm | Read only |
 | [`advanced.yaml`](packages/advanced.yaml) | Installer settings from the CI600 menus (see below) | All disabled by default |
+| [`panel.yaml`](packages/panel.yaml) | A CI600 running the [replacement firmware](#ci600-panel-replacement-firmware): its settings in Home Assistant, notifications, pictures, your values on its screen | ESP32 only, ESP at address 1. Extras in [`packages/panel/`](packages/panel) |
 
 All settings are read back from the CS60, so changes made on a CI600 panel show up in Home Assistant as well
 (see [Limitations](#limitations)).
@@ -153,22 +156,24 @@ yourself. `esphome config yourfile.yaml` prints the merged result if you want to
 Hardware settings are substitutions in `core.yaml`: `flexit_tx_pin`, `flexit_rx_pin`, `flexit_address`,
 and two optional ones that depend on your RS485 hardware:
 `flexit_tx_enable_pin` (the DE/RE pin, only if your transceiver has one wired to the ESP; default `none`) and
-`flexit_tx_enable_direct` (default `true`; set `false` to invert the DE signal if your transceiver needs it). Other server options can be added with `!extend server`, see
-[TCP Bridge](#optional-extras).
+`flexit_tx_enable_direct` (default `true`; set `false` to invert the DE signal if your transceiver needs it).
+On ESP32 the pin goes to the UART's RS-485 mode, which switches it right at the end of each transmission. Any
+GPIO will do. Other server options can be added with `!extend server`, see [TCP Bridge](#optional-extras).
 
 `flexit_ref` selects the branch or tag for both the packages and the component, e.g. `dev` to test a
 branch or a release tag to pin a version. While testing a branch you keep pushing to, set
 `flexit_refresh: 0s` so every build fetches the latest commit.
 
 `modbus_library_ref` does the same for [ESP-ModbusRTUServer](https://github.com/MSkjel/ESP-ModbusRTUServer),
-the Modbus library the component is built on (default `main`). `flexit_refresh` doesn't apply to it:
-PlatformIO keeps the copy it downloaded, so to get new commits on the same branch use Clean Build Files.
+the Modbus library the component is built on (default `main`). `flexit_refresh` doesn't apply to it: ESPHome
+(PlatformIO on ESP8266) keeps the copy it downloaded, so to get new commits on the same branch use Clean Build
+Files.
 
 ### In Home Assistant
 
 A few things that are the same for all packages:
 
-- **Where things show up.** The device page has three lists. *Controls* and *Sensors* hold what you use day
+- **Where things show up.** The device page has four lists. *Controls* and *Sensors* hold what you use day
   to day. *Configuration* holds settings you set once, like thresholds and timers. *Diagnostic* holds values
   that are mostly useful when tuning or troubleshooting.
 - **Hidden settings.** Rarely needed entities are disabled by default, marked *hidden* in the tables below.
@@ -190,28 +195,45 @@ combination of them. `Mode Boosted By` shows who is asking right now.
 
 Changing the mode yourself (Home Assistant, a CI600, the week program) always wins. It cancels the boosts
 that are running, and each of them waits until its reason is gone before it starts again. A stopped unit is
-never started by a boost. If the ESP reboots during a boost, it goes back to the old mode when it is up again.
+never started by a boost. The mode and fan speeds a boost sets (CO2 control's normal speeds, fireplace mode's
+max speeds) are never saved, the ESP keeps the real ones. If it restarts or loses power during a boost, even
+right as one starts or ends, it sends the real ones back when it is up again. If you set a fan speed while a
+boost has it raised, that is the real one from then on: CO2 control adds to it, fireplace mode ends.
 
-To add your own, put a request in from a lambda and take it out when you're done:
+To add your own, ask for a mode from a lambda and release it when you're done:
+
+```yaml
+- lambda: flexit::controls::request("cooker hood", 3);   // 1 = min, 2 = normal, 3 = max
+- delay: 20min
+- lambda: flexit::controls::release("cooker hood");
+```
+
+To change a setting for a while, send it as temporary, worked out from the real value, and restore it when
+you're done. A reboot in between is taken care of, and `id(server).add_on_setting_callback()` tells you when
+someone changes a setting by hand meanwhile.
 
 ```yaml
 - lambda: |-
-    id(mode_requests)["cooker hood"] = 3;      // 1 = min, 2 = normal, 3 = max
-    id(mode_arbiter).execute();
+    auto reg = flexit_modbus_server::REG_CMD_PERCENTAGE_EXTRACT_FAN_MAX;
+    uint16_t real = id(server).real_value(reg);    // 0 until the CS60 has sent it
+    if (real)
+      id(server).send_cmd(reg, std::min(real + 20, 100), true);
 - delay: 20min
-- lambda: |-
-    id(mode_requests).erase("cooker hood");
-    id(mode_arbiter).execute();
+- lambda: id(server).restore(flexit_modbus_server::REG_CMD_PERCENTAGE_EXTRACT_FAN_MAX);
 ```
+
+An automation in Home Assistant that changes the unit's settings (fan speeds and so on) makes real changes
+instead. Each one is written to flash right away, and the automation has to put the old value back itself.
+Changing them often means writing the flash often, which matters most on an ESP8266.
 
 ### Fireplace mode
 
 Temporarily switches to MAX with separate supply/extract fan speeds (for example high supply, low extract to
 help a fireplace draw), then restores the fan speeds after the configured duration.
 
-It uses the mode select and the MAX fan speeds from two other packages, so all three go in the `files:` list.
-The defaults are 60 minutes at 90 % supply and 20 % extract. Change them in Home Assistant, or set another
-starting value in the config. A value changed in Home Assistant is saved and wins over the config.
+It needs `controls.yaml`, and EC fans, since it changes the MAX fan speeds. The defaults are 60 minutes at
+90 % supply and 20 % extract. Change them in Home Assistant, or set another starting value in the config. A
+value changed in Home Assistant is saved and wins over the config.
 
 ```yaml
 packages:
@@ -220,7 +242,6 @@ packages:
     files:
       - packages/core.yaml
       - packages/controls.yaml
-      - packages/fan_speeds.yaml
       - packages/fireplace.yaml
 
 globals:
@@ -425,6 +446,20 @@ type, de-icing, and clearing the alarm log. They are `disabled_by_default`; enab
 Home Assistant. Some only apply to one hardware variant: the fan type (DIP switch DS4, shown by
 `diagnostics.yaml`) decides whether the EC fan percentages or the AC-fan speed settings are used, and the
 return water settings only matter for units with a water heating coil.
+
+---
+
+## CI600 panel (replacement firmware)
+
+With the [replacement CI600 firmware](https://github.com/MSkjel/flexit-ci600-firmware), the panel and this ESP
+share the bus. The panel shows what the ESP is doing, Home Assistant puts its own sensors and switches on the
+panel's screen and sends it messages and pictures, and the panel's firmware is flashed from Home Assistant. ESP32
+only.
+
+<p align="center"><img src="https://github.com/MSkjel/flexit-ci600-firmware/raw/screens/readme/tour.png" width="420" alt="The panel's views"></p>
+
+How to set it up, every package with pictures of what it makes, the actions and the flashing are in
+**[docs/panel.md](docs/panel.md)**.
 
 ---
 

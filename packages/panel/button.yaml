@@ -1,0 +1,25 @@
+# One of your buttons on the panel, on the smart home or comfort page.
+#   - path: packages/panel/button.yaml
+#     vars: {entity: open_garage, label: Garage door|Garasjeport, icon: door}
+# name, label, help, icon, page, view and menu work as in sensor.yaml
+defaults:
+  name: ""
+  icon: circle
+  help: ""
+  page: smart_home
+  view: "true"
+  menu: "true"
+
+esphome:
+  on_boot:
+    - then:
+        - lambda: |-
+            flexit::panel::Item(std::string("${name}").empty() ? "${entity}" : "${name}", ITEM_BUTTON)
+                .label("${label}")
+                .help("${help}")
+                .icon("${icon}")
+                .page("${page}")
+                .view(${view})
+                .menu(${menu})
+                .on_set([](float) { id(${entity}).press(); })
+                .add();

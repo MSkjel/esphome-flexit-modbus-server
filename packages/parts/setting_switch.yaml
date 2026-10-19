@@ -1,0 +1,15 @@
+# One of the CS60's on/off settings as a switch in HA, disabled until you enable it. Used by advanced.yaml.
+#   - file: parts/setting_switch.yaml
+#     vars: {id: cooling_enabled, name: Cooling Enabled, register: REG_CMD_COOLING_ENABLE}
+switch:
+  - platform: template
+    id: ${id}
+    name: ${name}
+    entity_category: config
+    disabled_by_default: true
+    restore_mode: DISABLED
+    lambda: return id(server)->read_holding_register(flexit_modbus_server::${register}) != 0;
+    turn_on_action:
+      - lambda: id(server)->send_cmd(flexit_modbus_server::${register}, 1);
+    turn_off_action:
+      - lambda: id(server)->send_cmd(flexit_modbus_server::${register}, 0);

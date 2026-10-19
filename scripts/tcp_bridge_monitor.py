@@ -40,7 +40,9 @@ class ModbusFrameParser:
         return crc
 
     @staticmethod
-    def decode_frame(frame: bytes, verbose: bool = False) -> tuple[str, Optional[Dict[int, bool]]]:
+    def decode_frame(
+        frame: bytes, verbose: bool = False
+    ) -> tuple[str, Optional[Dict[int, bool]]]:
         """
         Decode Modbus frame into human-readable format.
         Returns: (decoded_string, coil_states_dict or None)
@@ -50,7 +52,9 @@ class ModbusFrameParser:
 
         slave_id = frame[0]
         function_code = frame[1]
-        fn_name = ModbusFrameParser.FUNCTION_CODES.get(function_code, f"Unknown (0x{function_code:02X})")
+        fn_name = ModbusFrameParser.FUNCTION_CODES.get(
+            function_code, f"Unknown (0x{function_code:02X})"
+        )
 
         # Custom 0x65 function
         if function_code == 0x65:
@@ -58,8 +62,14 @@ class ModbusFrameParser:
             value = (frame[4] << 8) | frame[5]
             value_signed = value if value < 32768 else value - 65536
             if verbose:
-                return f"ID:{slave_id:02X} {fn_name} Addr:0x{addr:04X} Val:{value_signed}", None
-            return f"ID:{slave_id:02X} {fn_name} Addr:0x{addr:04X} Val:{value_signed}", None
+                return (
+                    f"ID:{slave_id:02X} {fn_name} Addr:0x{addr:04X} Val:{value_signed}",
+                    None,
+                )
+            return (
+                f"ID:{slave_id:02X} {fn_name} Addr:0x{addr:04X} Val:{value_signed}",
+                None,
+            )
 
         # Read Holding (0x03) or Input Registers (0x04)
         if function_code in [0x03, 0x04]:
@@ -68,29 +78,38 @@ class ModbusFrameParser:
                 # Request: Slave + Fn + StartAddr(2) + Quantity(2) + CRC(2)
                 start_addr = (frame[2] << 8) | frame[3]
                 quantity = (frame[4] << 8) | frame[5]
-                return f"ID:{slave_id:02X} {fn_name} Request Addr:0x{start_addr:04X} Qty:{quantity}", None
+                return (
+                    f"ID:{slave_id:02X} {fn_name} Request Addr:0x{start_addr:04X} Qty:{quantity}",
+                    None,
+                )
             elif len(frame) >= 3:
                 # Response: Slave + Fn + ByteCount + Data + CRC(2)
                 byte_count = frame[2]
-                data = frame[3:3+byte_count]
+                data = frame[3 : 3 + byte_count]
                 # Parse as registers (16-bit values)
                 registers = []
                 limit = byte_count if verbose else min(byte_count, 10)
                 for i in range(0, limit, 2):
-                    if i+1 < byte_count:
-                        reg_val = (data[i] << 8) | data[i+1]
+                    if i + 1 < byte_count:
+                        reg_val = (data[i] << 8) | data[i + 1]
                         reg_val_signed = reg_val if reg_val < 32768 else reg_val - 65536
                         registers.append(f"{reg_val_signed}")
 
                 more = "..." if byte_count > 10 and not verbose else ""
-                return f"ID:{slave_id:02X} {fn_name} Response Regs:[{', '.join(registers)}{more}]", None
+                return (
+                    f"ID:{slave_id:02X} {fn_name} Response Regs:[{', '.join(registers)}{more}]",
+                    None,
+                )
 
         # Write Single Register (0x06)
         if function_code == 0x06:
             addr = (frame[2] << 8) | frame[3]
             value = (frame[4] << 8) | frame[5]
             value_signed = value if value < 32768 else value - 65536
-            return f"ID:{slave_id:02X} {fn_name} Addr:0x{addr:04X} Val:{value_signed}", None
+            return (
+                f"ID:{slave_id:02X} {fn_name} Addr:0x{addr:04X} Val:{value_signed}",
+                None,
+            )
 
         # Read Coils (0x01)
         if function_code == 0x01:
@@ -99,11 +118,14 @@ class ModbusFrameParser:
                 # Request: Slave + Fn + StartAddr(2) + Quantity(2) + CRC(2)
                 start_addr = (frame[2] << 8) | frame[3]
                 quantity = (frame[4] << 8) | frame[5]
-                return f"ID:{slave_id:02X} {fn_name} Request Addr:{start_addr} Qty:{quantity}", None
+                return (
+                    f"ID:{slave_id:02X} {fn_name} Request Addr:{start_addr} Qty:{quantity}",
+                    None,
+                )
             elif len(frame) >= 3:
                 # Response: Slave + Fn + ByteCount + Data + CRC(2)
                 byte_count = frame[2]
-                coil_data = frame[3:3+byte_count]
+                coil_data = frame[3 : 3 + byte_count]
 
                 # Parse coil states
                 coil_states = {}
@@ -118,10 +140,18 @@ class ModbusFrameParser:
 
                 if verbose:
                     # Show all coils
-                    coil_str = ", ".join([f"{i}:{'ON' if v else 'OFF'}" for i, v in coil_states.items()])
-                    return f"ID:{slave_id:02X} {fn_name} Response ({on_count}/{num_coils} ON) [{coil_str}]", coil_states
+                    coil_str = ", ".join(
+                        [f"{i}:{'ON' if v else 'OFF'}" for i, v in coil_states.items()]
+                    )
+                    return (
+                        f"ID:{slave_id:02X} {fn_name} Response ({on_count}/{num_coils} ON) [{coil_str}]",
+                        coil_states,
+                    )
                 else:
-                    return f"ID:{slave_id:02X} {fn_name} Response ({on_count}/{num_coils} ON)", coil_states
+                    return (
+                        f"ID:{slave_id:02X} {fn_name} Response ({on_count}/{num_coils} ON)",
+                        coil_states,
+                    )
 
         # Write Single Coil (0x05)
         if function_code == 0x05:
@@ -175,41 +205,26 @@ def main():
     parser = argparse.ArgumentParser(
         description="Monitor UART traffic via TCP bridge with Modbus decoding"
     )
+    parser.add_argument("--host", required=True, help="ESP IP address")
     parser.add_argument(
-        "--host",
-        required=True,
-        help="ESP IP address"
+        "--port", type=int, default=502, help="TCP bridge port (default: 502)"
     )
     parser.add_argument(
-        "--port",
-        type=int,
-        default=502,
-        help="TCP bridge port (default: 502)"
+        "--no-tx", action="store_true", help="Don't show TX frames (ESP→UART)"
     )
     parser.add_argument(
-        "--no-tx",
-        action="store_true",
-        help="Don't show TX frames (ESP→UART)"
+        "--no-rx", action="store_true", help="Don't show RX frames (UART→ESP)"
     )
     parser.add_argument(
-        "--no-rx",
-        action="store_true",
-        help="Don't show RX frames (UART→ESP)"
-    )
-    parser.add_argument(
-        "--raw",
-        action="store_true",
-        help="Show raw hex instead of decoded Modbus"
+        "--raw", action="store_true", help="Show raw hex instead of decoded Modbus"
     )
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Show verbose output (all coils, all registers)"
+        help="Show verbose output (all coils, all registers)",
     )
     parser.add_argument(
-        "--coil-changes",
-        action="store_true",
-        help="Only show when coils change state"
+        "--coil-changes", action="store_true", help="Only show when coils change state"
     )
 
     args = parser.parse_args()
@@ -237,12 +252,12 @@ def main():
             frame = recv_exact(sock, length)
 
             # Determine direction
-            if direction == 'T':
+            if direction == "T":
                 if args.no_tx:
                     continue
                 dir_label = "TX (ESP→UART)"
                 color = "\033[94m"  # Blue
-            elif direction == 'R':
+            elif direction == "R":
                 if args.no_rx:
                     continue
                 dir_label = "RX (UART→ESP)"
@@ -259,7 +274,9 @@ def main():
                 print(f"  HEX:   {hex_str}")
                 print()
             else:
-                decoded, coil_states = ModbusFrameParser.decode_frame(frame, args.verbose)
+                decoded, coil_states = ModbusFrameParser.decode_frame(
+                    frame, args.verbose
+                )
 
                 # Handle coil change tracking
                 if coil_tracker and coil_states:
@@ -293,6 +310,7 @@ def main():
     except Exception as e:
         print(f"\n\nERROR: Unexpected error: {e}")
         import traceback
+
         traceback.print_exc()
     finally:
         sock.close()

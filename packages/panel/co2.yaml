@@ -1,0 +1,61 @@
+# CO2 control and the CO2 level with its last 24 hours, on the panel's comfort page. Needs panel.yaml and co2.yaml.
+# The panel only has on/off. On brings back the control type last picked in Home Assistant.
+# Set help to say where the sensor is, as "English|Norsk".
+defaults:
+  help: "CO₂ level in the house.|CO₂-nivået i huset."
+
+globals:
+  - id: co2_last_on  # the control type the panel turns on, Stepped until another one is picked
+    type: int
+    restore_value: true
+    initial_value: "1"
+
+switch:
+  - platform: template  # on/off for the panel, Home Assistant has the select
+    id: co2_control_on
+    internal: true
+    restore_mode: DISABLED  # only follows the select, never sets it at boot
+    lambda: |-
+      auto i = id(co2_control).active_index().value_or(0);
+      if (i)
+        id(co2_last_on) = i;
+      return i != 0;
+    turn_on_action:
+      - lambda: id(co2_control).make_call().set_index(id(co2_last_on)).perform();
+    turn_off_action:
+      - lambda: id(co2_control).make_call().set_index(0).perform();
+
+packages:
+  co2_level: !include
+    file: sensor.yaml
+    vars:
+      name: co2
+      entity: ${flexit_co2_sensor}
+      label: CO₂
+      unit: ppm
+      icon: co2
+      page: comfort
+      trend: "true"
+      levels: "0, 0, 800, 1200"
+      max: "2000"
+      help: ${help}
+  co2_control: !include
+    file: switch.yaml
+    vars:
+      name: co2_control
+      entity: co2_control_on
+      label: CO₂ control|CO₂-styring
+      icon: co2
+      page: comfort
+      help: Runs the fans faster when CO₂ is above the target.|Kjører viftene fortere når CO₂ er over målet.
+  co2_target: !include
+    file: number.yaml
+    vars:
+      name: co2_target
+      entity: co2_target
+      label: CO₂ target|CO₂-mål
+      unit: ppm
+      icon: co2
+      page: comfort
+      view: "false"
+      help: Keep CO₂ below this.|Hold CO₂ under dette.

@@ -1,11 +1,11 @@
-# Classic ESP32 with a DE pin and the TCP bridge
+# Classic ESP32 with a DE pin, the TCP bridge, the panel packages and an online picture
 esphome:
   name: flexit-ci-esp32
 
 esp32:
   board: esp32dev
   framework:
-    type: arduino
+    type: esp-idf
 
 logger:
 
@@ -16,6 +16,10 @@ substitutions:
 
 packages:
   common: !include common.yaml
+  panel: !include panel.yaml
+  panel_online_picture: !include
+    file: ../packages/panel/online_picture.yaml
+    vars: {name: radar, url: "http://homeassistant.local:8123/local/radar.png"}
 
 flexit_modbus_server:
   - id: !extend server

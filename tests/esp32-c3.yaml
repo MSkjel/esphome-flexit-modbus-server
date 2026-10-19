@@ -5,14 +5,23 @@ esphome:
 esp32:
   board: seeed_xiao_esp32c3
   framework:
-    type: arduino
+    type: esp-idf
 
+# ERROR, so every other log compiles out and catches one left as the only statement of an if. The other tests
+# build with them all.
 logger:
+  level: ERROR
 
 substitutions:
   flexit_tx_pin: GPIO6
   flexit_rx_pin: GPIO7
   flexit_tx_enable_pin: GPIO4
+  flexit_tx_enable_direct: "false"  # builds the inverted DE pin, esp32.yaml has the direct one
 
 packages:
   common: !include common.yaml
+  panel: !include panel.yaml
+
+flexit_modbus_server:
+  - id: !extend server
+    tcp_bridge_enabled: true

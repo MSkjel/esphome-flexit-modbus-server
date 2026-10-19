@@ -1,0 +1,48 @@
+# A screensaver picture for the panel from a URL, like a camera snapshot or a weather map. It's downloaded each
+# time it's shown and every update_interval, and only what changed is sent to the panel. A failed download is
+# tried again after 30 s, then twice as long each time up to 30 min.
+#   - path: packages/panel/online_picture.yaml
+#     vars: {name: radar, url: "http://homeassistant.local:8123/local/radar.png", update_interval: 10min}
+#   - path: packages/panel/online_picture.yaml          # a Frigate camera, scaled by Frigate itself
+#     vars: {name: entrance, url: "http://frigate.local:5000/api/entrance/latest.jpg?h=120"}
+# RAM: online_image keeps a 4 KB download buffer from boot. A JPEG has to fit in it whole, so it grows to the file's
+# size on the first download and stays that big, and the server has to send the size (Content-Length). The picture
+# takes width x height x 2 bytes until it's converted, 38 KB at the default resize of 160x120, which gets blown up
+# to fill the screen. With PSRAM you can use resize: 320x240, 150 KB.
+# format: PNG, JPEG, BMP or AUTO
+# encoding and quality work as in picture.yaml.
+# Home Assistant's own camera URLs need a token we can't send. Use the camera's own address, like Frigate's, or
+# have HA save a snapshot in /config/www and use http://homeassistant.local:8123/local/...
+defaults:
+  format: AUTO
+  resize: 160x120
+  update_interval: never
+  encoding: auto
+  quality: auto
+
+display: []
+http_request:
+
+image:
+  - platform: online_image
+    id: panel_picture_${name}
+    url: ${url}
+    format: ${format}
+    type: RGB565
+    resize: ${resize}
+    buffer_size: 4096  # online_image's default is 64 KB
+    update_interval: ${update_interval}
+    on_download_finished:
+      - lambda: flexit::panel::picture::changed("${name}");
+    on_error:
+      - lambda: flexit::panel::picture::failed("${name}");  # the panel keeps showing what it has
+
+select:
+  - id: !extend panel_picture
+    options: ["${name}"]
+
+esphome:
+  on_boot:
+    - then:
+        - lambda: |-
+            flexit::panel::picture::add_online_image("${name}", id(panel_picture_${name}), "${encoding}", "${quality}");

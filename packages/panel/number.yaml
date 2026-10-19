@@ -1,0 +1,37 @@
+# One of your numbers on the panel, to change from the smart home or comfort page. Range, step and unit come from
+# the number entity, and the decimals from its step.
+#   - path: packages/panel/number.yaml
+#     vars: {entity: hot_water_target, label: Hot water|Varmtvann, icon: water}
+# name, label, help, icon, page, view and menu work as in sensor.yaml, and so do unit and decimals if you set them
+defaults:
+  name: ""
+  unit: ""
+  decimals: ""
+  icon: circle
+  help: ""
+  page: smart_home
+  view: "true"
+  menu: "true"
+
+esphome:
+  on_boot:
+    - then:
+        - lambda: |-
+            auto &t = id(${entity}).traits;
+            static int i = flexit::panel::Item(std::string("${name}").empty() ? "${entity}" : "${name}", ITEM_NUMBER)
+                               .label("${label}")
+                               .unit(std::string("${unit}").empty() ? id(${entity}).get_unit_of_measurement_ref().str()
+                                                                    : "${unit}")
+                               .help("${help}")
+                               .icon("${icon}")
+                               .decimals(std::string("${decimals}").empty() ? flexit::panel::decimals_of(t.get_step())
+                                                                        : atoi("${decimals}"))
+                               .range(t.get_min_value(), t.get_max_value(), t.get_step())
+                               .page("${page}")
+                               .view(${view})
+                               .menu(${menu})
+                               .on_set([](float v) { id(${entity}).make_call().set_value(v).perform(); })
+                               .add();
+            id(${entity}).add_on_state_callback([](float v) { flexit::panel::item_value(i, v); });
+            if (id(${entity}).has_state())
+              flexit::panel::item_value(i, id(${entity}).state);

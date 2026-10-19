@@ -1,0 +1,139 @@
+# The weather as a screensaver picture, drawn on the ESP from MET Norway's forecast. Needs panel.yaml.
+# Show it with the "Panel Picture" select or the panel_show_picture action.
+#   - path: packages/panel/met.yaml
+#     vars: {latitude: "59.9139", longitude: "10.7522"}
+# latitude and longitude go out with 4 decimals, as MET Norway asks. Every update_interval we check whether the
+# forecast has expired and only then ask again, with If-Modified-Since. When refused or not answered we back off,
+# from an hour up to 12. The picture is redrawn every redraw_interval. name, encoding and quality work as in
+# picture.yaml.
+# "Panel Weather Scene" picks the landscape and starts at scene. "Panel Weather Aurora" starts at aurora, where auto
+# means some clear nights north of 55 degrees. "Panel Weather Forecast" draws the forecast over the picture.
+# The current weather is also a dashboard tile on the panel, under Display > Home screen > Dashboard tiles. It's
+# listed by the weather right now, like Fair or Cloudy. The cabin's chimney smokes when the heater is on.
+# Weather data: MET Norway, CC BY 4.0.
+defaults:
+  name: weather
+  encoding: auto
+  quality: auto
+  update_interval: 5min
+  redraw_interval: 5min
+  scene: hills
+  aurora: auto
+
+http_request:
+  useragent: esphome-flexit-modbus-server (github.com/MSkjel/esphome-flexit-modbus-server)
+
+# api.met.no's certificate is from HARICA. ESP-IDF's default root bundle doesn't have it, also with Arduino,
+# so we take the full one. About 70 KB more flash.
+esp32:
+  framework:
+    sdkconfig_options:
+      CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL: "y"
+
+select:
+  - id: !extend panel_picture
+    options: ["${name}"]
+  - platform: template
+    id: panel_weather_scene
+    name: "Panel Weather Scene"
+    entity_category: config
+    icon: "mdi:image-filter-hdr"
+    options: ["hills", "coast", "mountains", "city"]
+    initial_option: "${scene}"
+    optimistic: true
+    restore_value: true
+    set_action:
+      - lambda: |-
+          flexit::panel::met::options.ground = flexit::panel::met::ground_of(x.c_str());
+          flexit::panel::met::redraw();
+  - platform: template
+    id: panel_weather_aurora
+    name: "Panel Weather Aurora"
+    entity_category: config
+    icon: "mdi:aurora"
+    options: ["auto", "off", "always"]
+    initial_option: "${aurora}"
+    optimistic: true
+    restore_value: true
+    set_action:
+      - lambda: |-
+          flexit::panel::met::options.aurora = flexit::panel::met::aurora_of(x.c_str());
+          flexit::panel::met::redraw();
+
+switch:
+  - platform: template
+    id: panel_weather_forecast
+    name: "Panel Weather Forecast"
+    entity_category: config
+    icon: "mdi:weather-cloudy-clock"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - lambda: flexit::panel::met::with_forecast = true; flexit::panel::met::redraw();
+    on_turn_off:
+      - lambda: flexit::panel::met::with_forecast = false; flexit::panel::met::redraw();
+
+text_sensor:
+  - platform: template
+    id: panel_weather
+    name: "Panel Weather"
+    entity_category: diagnostic
+    icon: "mdi:weather-partly-cloudy"
+
+script:
+  - id: panel_weather_fetch
+    mode: single
+    then:
+      - if:
+          condition:
+            lambda: return flexit::panel::met::due();
+          then:
+            # If-Modified-Since only once we have a Last-Modified to send. Same request otherwise.
+            - if:
+                condition:
+                  lambda: return flexit::panel::met::modified.empty();
+                then:
+                  # we only read the first 20 KB, about the next 12 hours. The coming hour is in the first 3 KB.
+                  - http_request.get: &panel_weather_get
+                      url: !lambda return std::string(flexit::panel::met::url);
+                      collect_headers: [last-modified, expires]
+                      capture_response: true
+                      max_response_buffer_size: 20kB
+                      on_response:
+                        then:
+                          - lambda: |-
+                              flexit::panel::met::fetched(response->status_code, body,
+                                                          response->get_response_header("last-modified"),
+                                                          response->get_response_header("expires"));
+                      on_error:
+                        then:
+                          - lambda: flexit::panel::met::unreachable();
+                else:
+                  - http_request.get:
+                      <<: *panel_weather_get
+                      request_headers:
+                        If-Modified-Since: !lambda return flexit::panel::met::modified.c_str();
+
+esphome:
+  on_boot:
+    - then:
+        - lambda: |-
+            flexit::panel::met::setup(${latitude}, ${longitude}, "${name}", "${encoding}", "${quality}");
+            flexit::panel::met::options.ground = flexit::panel::met::ground_of(id(panel_weather_scene).current_option().c_str());
+            flexit::panel::met::options.aurora = flexit::panel::met::aurora_of(id(panel_weather_aurora).current_option().c_str());
+            flexit::panel::met::on_status = [](const std::string &s) { id(panel_weather).publish_state(s); };
+        - wait_until:
+            condition:
+              lambda: return network::is_connected() && id(flexit_panel_time).now().is_valid();
+        - delay: 30s  # let the network and the panel's first transfers settle
+        - script.execute: panel_weather_fetch
+
+interval:
+  - interval: ${update_interval}
+    then:
+      - script.execute: panel_weather_fetch
+  - interval: ${redraw_interval}
+    then:
+      - lambda: |-
+          flexit::panel::met::options.heater_pct = id(server).read_holding_register(flexit_modbus_server::REG_PERCENTAGE_HEATING);
+          flexit::panel::met::redraw();
