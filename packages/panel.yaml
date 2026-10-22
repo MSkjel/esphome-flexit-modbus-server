@@ -241,7 +241,7 @@ api:
     - action: panel_clear_animation
       then:
         - lambda: flexit::panel::anim::clear();
-    # move the animation: glide to x, y over ms (0 jumps), or drift at vx, vy pixels per second round the screen
+    # move the animation: glide to x, y over ms (0 jumps, 65535 at most), or drift at vx, vy px/s round the screen
     - action: panel_move_animation
       variables:
         x: int

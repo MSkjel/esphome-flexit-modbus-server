@@ -21,7 +21,15 @@ struct Source {
 };
 inline std::map<std::string, Source> sources;
 
-inline void add(const std::string &name, Source s) { sources[name] = std::move(s); }
+// frame_ms is sent in 10 ms steps up to 2550, and the panel shows a frame for 40 ms at least
+inline void add(const std::string &name, Source s) {
+  int ms = std::max(40, std::min(2550, s.frame_ms));
+  if (ms != s.frame_ms) {
+    ESP_LOGW("panel", "Animation %s: frame_ms %d is outside 40..2550, it plays at %d", name.c_str(), s.frame_ms, ms);
+  }
+  s.frame_ms = ms;
+  sources[name] = std::move(s);
+}
 
 // An animated GIF (animation.yaml)
 template<typename Img>
@@ -42,7 +50,7 @@ enum Phase { IDLE, COUNT, MAKE, SEND };
 inline struct {
   std::string want, name;  // the one asked for, "" = none, and the one the panel shows
   const Source *src = nullptr;
-  int phase = IDLE, f = 0, tries = 0, w = 0, h = 0, scale = 1;
+  int phase = IDLE, f = 0, tries = 0, w = 0, h = 0, scale = 1, x = 0, y = 0;
   bool half = false, failed = false, head = false, ended = false, any_transp = false;
   uint8_t transp = ANIM_OPAQUE, id = 0;
   uint32_t pal[16] = {};
@@ -105,32 +113,52 @@ inline uint32_t px(int f, int x, int y) {
   return n >= 2 ? 0xFF000000u | (r / n) << 16 | (g / n) << 8 | b / n : 0;
 }
 
+// Frees what count() and make() work in
+inline void drop_work() {
+  picture::drop(A.hist);
+  picture::drop(A.frame);
+  picture::drop(A.prev);
+  picture::drop(A.first);
+}
+
+// Gives up on it with the reason in the status, always false
+inline bool fail(const std::string &why) {
+  status(A.want + ": " + why);
+  A.failed = true;
+  A.head = false;
+  A.phase = IDLE;
+  drop_work();
+  return false;
+}
+
+// The panel draws 2x at most, so only scale 1 can go to half size
+inline bool can_halve() { return !A.half && A.src->scale == 1; }
+
+inline std::string too_big(size_t n) {
+  return (A.half ? "too big even at half size (over " : "too big at scale 2 (over ") + std::to_string(n) + " bytes)";
+}
+
 // False if there's no such animation or it doesn't fit on the screen where it goes. Straight to half size if a
-// frame alone is over ANIM_POOL.
+// frame alone is over ANIM_POOL and it can.
 inline bool start() {
   auto it = sources.find(A.want);
-  if (it == sources.end()) {
-    status(A.want + ": no animation with that name");
-    A.failed = true;
-    return false;
-  }
+  if (it == sources.end())
+    return fail("no animation with that name");
   const Source &s = *(A.src = &it->second);
-  if ((size_t) ((s.w + 1) & ~1) / 2 * s.h > ANIM_POOL)
+  if (s.scale != 1 && s.scale != 2)
+    return fail("scale has to be 1 or 2");
+  if (s.frames < 1 || s.x < 0 || s.y < 0 || s.x + s.w * s.scale > 320 || s.y + s.h * s.scale > 240)
+    return fail("doesn't fit on the screen at " + std::to_string(s.x) + "," + std::to_string(s.y));
+  if ((size_t) ((s.w + 1) & ~1) / 2 * s.h > ANIM_POOL && can_halve())
     A.half = true;
   A.scale = s.scale * (A.half ? 2 : 1);
   A.w = ((A.half ? (s.w + 1) / 2 : s.w) + 1) & ~1;  // even, so rows are whole bytes
   A.h = A.half ? (s.h + 1) / 2 : s.h;
-  if (s.frames < 1 || A.h > 255 || s.x + A.w * A.scale > 320 || s.y + A.h * A.scale > 240) {
-    status(A.want + ": doesn't fit on the screen at " + std::to_string(s.x) + "," + std::to_string(s.y));
-    A.failed = true;
-    return false;
-  }
+  A.x = std::min(s.x, 320 - A.w * A.scale);  // the sizes round up, so it moves in from the edge
+  A.y = std::min(s.y, 240 - A.h * A.scale);
   size_t frame = (size_t) A.w / 2 * A.h;
-  if (frame > ANIM_POOL) {
-    status(A.want + ": too big even at half size (over " + std::to_string(frame) + " bytes)");
-    A.failed = true;
-    return false;
-  }
+  if (frame > ANIM_POOL)
+    return fail(too_big(frame));
   A.hist.assign(4096, 0);
   A.any_transp = false;
   A.f = 0;
@@ -168,14 +196,14 @@ inline void count() {
 inline bool record(const std::vector<uint8_t> *from, const std::vector<uint8_t> &to) {
   size_t at = A.data.size();
   A.data.resize(at + 5 + PDEFLATE_BOUND((size_t) A.w / 2 * A.h));
-  uint8_t delay = (uint8_t) std::max(1, std::min(255, A.src->frame_ms / 10));
+  uint8_t delay = (uint8_t) (A.src->frame_ms / 10);
   unsigned n = plink_anim_record(from ? from->data() : nullptr, to.data(), A.w, A.h, delay, A.data.data() + at);
   A.data.resize(at + n);
   return n != 0;
 }
 
 // Maps one frame to the palette and adds its record, and after the last one back to the first frame. Stops as
-// soon as it's over ANIM_POOL or there's no memory to compress it, to try again at half size.
+// soon as it's over ANIM_POOL or there's no memory to compress it, to try again at half size if it can.
 inline void make() {
   A.frame.assign((size_t) A.w / 2 * A.h, 0);
   for (int y = 0; y < A.h; y++)
@@ -194,12 +222,10 @@ inline void make() {
   size_t need = (size_t) A.w / 2 * A.h + A.data.size();
   if (ok && !last && need <= ANIM_POOL)
     return;
-  picture::drop(A.frame);
-  picture::drop(A.prev);
-  picture::drop(A.first);
+  drop_work();
   if (!ok || need > ANIM_POOL) {
     picture::drop(A.data);
-    if (!A.half) {
+    if (can_halve()) {
       if (ok) {
         ESP_LOGI("panel", "Animation %s: over %u bytes after %d of %d frames, making it at half size", A.want.c_str(),
                  (unsigned) ANIM_POOL, A.f, A.src->frames);
@@ -210,10 +236,7 @@ inline void make() {
       start();
       return;
     }
-    status(A.want + (ok ? ": too big even at half size (over " + std::to_string(need) + " bytes)"
-                        : std::string(": no memory to compress it")));
-    A.failed = true;
-    A.phase = IDLE;
+    fail(ok ? too_big(need) : "no memory to compress it");
     return;
   }
   A.data.shrink_to_fit();
@@ -232,9 +255,7 @@ inline void send() {
     if (++A.tries <= 2) {
       ESP_LOGW("panel", "Animation %s: no answer from the panel, sending it again", A.want.c_str());
     } else {
-      status(A.want + ": the panel didn't answer");
-      A.failed = true;
-      A.phase = IDLE;
+      fail("the panel didn't answer");
     }
     return;
   }
@@ -246,8 +267,8 @@ inline void send() {
     picture::put16(h + 1, A.w);
     picture::put16(h + 3, A.h);
     h[5] = (uint8_t) A.scale;
-    picture::put16(h + 6, A.src->x);
-    picture::put16(h + 8, A.src->y);
+    picture::put16(h + 6, A.x);
+    picture::put16(h + 8, A.y);
     h[10] = A.transp;
     picture::put32(h + 11, A.data.size());
     picture::put_palette(h + 15, A.pal);
@@ -270,29 +291,32 @@ inline void ack(uint32_t a) {
   } else if (st == PIC_DONE) {
     A.phase = IDLE;
     A.head = false;
+    A.tries = 0;
     A.name = A.want;
     if (A.motion != ANIM_STOP)  // the panel put it at the header's x, y and still
       send_move();
     status(shown());
-  } else if (st == PIC_TOO_BIG && !A.half) {
+  } else if (st == PIC_TOO_BIG && can_halve()) {
     A.half = true;
     A.head = false;
     start();
   } else if ((st == PIC_BAD || st == PIC_BAD_CRC) && ++A.tries <= 2) {
     A.head = false;  // send it all again
   } else {
-    status(A.want + ": the panel didn't take it (" + std::to_string(st) + ")");
-    A.failed = true;
-    A.head = false;
-    A.phase = IDLE;
+    fail("the panel didn't take it (" + std::to_string(st) + ")");
   }
 }
 
-// The panel restarted and lost the animation, so send what it had or was getting again
+// The panel restarted and lost the animation, so send what it had or was getting again, or retry a failed one
 inline void restarted() {
   A.head = false;
-  if (A.phase == IDLE && !A.name.empty() && !A.data.empty())
+  if (A.failed && !A.want.empty()) {
+    A.failed = A.half = false;
+    A.tries = 0;
+    A.name.clear();
+  } else if (A.phase == IDLE && !A.name.empty() && !A.data.empty()) {
     A.phase = SEND;
+  }
 }
 
 // The Panel Animation select's set_action. "None" or "" is none.
@@ -302,6 +326,7 @@ inline void picked(const std::string &name) {
     A.name.clear();
     A.motion = ANIM_STOP;
     picture::drop(A.data);
+    drop_work();
     A.failed = A.head = false;
     A.phase = IDLE;
     link::send(K_ANIM_CLEAR, 0);
@@ -347,6 +372,10 @@ inline void move(int x, int y, int ms) {
   A.motion = ANIM_GLIDE;
   A.move = {(int16_t) std::max(-32768, std::min(32767, x)), (int16_t) std::max(-32768, std::min(32767, y)),
             (uint16_t) std::max(0, std::min(65535, ms))};
+  if (A.move.x != x || A.move.y != y || A.move.ms != ms) {
+    ESP_LOGW("panel", "panel_move_animation: %d,%d over %d ms is out of range, it goes to %d,%d over %d ms", x, y, ms,
+             A.move.x, A.move.y, A.move.ms);
+  }
   moved();
 }
 

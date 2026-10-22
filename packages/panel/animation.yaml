@@ -1,13 +1,13 @@
 # An animated GIF from next to your config, played over the screensaver picture. The panel plays it from 6 KB,
 # so keep it small. About 64x64 with a few frames, or more frames if little changes between them. If it's too
-# big it's made at half size and drawn 2x. Show it with the "Panel Animation" select or the panel_show_animation
-# action.
+# big at scale 1 it's made at half size and drawn 2x. Show it with the "Panel Animation" select or the
+# panel_show_animation action.
 #   - path: packages/panel/animation.yaml
 #     vars: {name: flame, file: animations/flame.gif, resize: 48x48, x: 256, y: 16}
 # name: letters, digits and _ only
 # x, y: top left corner on the 320x240 screen
-# scale: 2 draws each pixel 2x
-# frame_ms: how long each frame shows. The GIF's own timing isn't used.
+# scale: 1, or 2 to draw each pixel 2x
+# frame_ms: how long each frame shows, 40 to 2550. The GIF's own timing isn't used.
 # drift_x, drift_y: pixels per second it drifts across the screen, wrapping round the edges. 0 stays put. The
 #   panel_move_animation and panel_drift_animation actions change the motion while it's shown.
 defaults:
