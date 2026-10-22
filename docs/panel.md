@@ -225,7 +225,7 @@ letters, digits and `_`.
 
 `met.yaml` draws the sky for the time of day and the next hour's weather from [MET Norway](https://api.met.no)
 (CC BY 4.0). The weather right now is also an item, so it can be a dashboard tile, and the cabin's chimney smokes
-when the heater is on.
+when the heater is on. A failed request with `Code: 304` in the log is fine, the forecast just hasn't changed.
 
 ## Messages, views and settings
 

@@ -68,15 +68,12 @@ inline void redraw() {
   ESPTime t = id(flexit_panel_time).now();
   if (!t.is_valid())
     return;
-  // local time minus UTC, for the forecast hours
-  int offset = t.hour * 3600 + t.minute * 60 + t.second - (int) (t.timestamp % 86400);
-  offset += offset > 43200 ? -86400 : offset < -43200 ? 86400 : 0;
 #pragma GCC diagnostic push
 // null without the fireplace package, but with it GCC warns the check is always true
 #pragma GCC diagnostic ignored "-Waddress"
   options.fireplace = flexit_fireplace_active ? flexit_fireplace_active() : false;
 #pragma GCC diagnostic pop
-  build(scene, weather, lat, lon, (uint32_t) t.timestamp, with_forecast, offset, options);
+  build(scene, weather, lat, lon, (uint32_t) t.timestamp, with_forecast, ESPTime::timezone_offset(), options);
   drawn = true;
   row_y[0] = row_y[1] = -1;
   picture::changed(name);
@@ -110,9 +107,10 @@ inline uint32_t http_date(const std::string &s) {
 }
 
 // Whether to ask MET Norway now. They want no new request before the last answer's Expires.
+// Offline it waits for the next check, a failed request would back off for an hour.
 inline bool due() {
   ESPTime t = id(flexit_panel_time).now();
-  return t.is_valid() && (uint32_t) t.timestamp >= not_before;
+  return network::is_connected() && t.is_valid() && (uint32_t) t.timestamp >= not_before;
 }
 
 // After an error or no answer at all. Wait an hour, then twice as long each time, up to 12 hours.
@@ -147,7 +145,7 @@ inline void fetched(int status, const std::string &body, const std::string &last
     back_off();  // 429 is too many requests, 403 refused
   }
   if (status == 304) {
-    ESP_LOGD("met", "The forecast hasn't changed");
+    ESP_LOGI("met", "The forecast hasn't changed (HTTP 304)");
     return;
   }
   if (status == 203) {

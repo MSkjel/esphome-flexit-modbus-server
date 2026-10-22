@@ -3,9 +3,9 @@
 #   - path: packages/panel/met.yaml
 #     vars: {latitude: "59.9139", longitude: "10.7522"}
 # latitude and longitude go out with 4 decimals, as MET Norway asks. Every update_interval we check whether the
-# forecast has expired and only then ask again, with If-Modified-Since. When refused or not answered we back off,
-# from an hour up to 12. The picture is redrawn every redraw_interval. name, encoding and quality work as in
-# picture.yaml.
+# forecast has expired and only then ask again, with If-Modified-Since. ESPHome logs a 304 answer to that as a
+# failed request, but the forecast just hasn't changed. When refused or not answered we back off, from an hour
+# up to 12. The picture is redrawn every redraw_interval. name, encoding and quality work as in picture.yaml.
 # "Panel Weather Scene" picks the landscape and starts at scene. "Panel Weather Aurora" starts at aurora, where auto
 # means some clear nights north of 55 degrees. "Panel Weather Forecast" draws the forecast over the picture.
 # The current weather is also a dashboard tile on the panel, under Display > Home screen > Dashboard tiles. It's
