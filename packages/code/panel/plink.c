@@ -93,32 +93,38 @@ uint32_t plink_number(const uint8_t *b, int n) {
 
 void plink_init(plink_t *l) { memset(l, 0, sizeof *l); }
 
-uint8_t plink_room(const plink_t *l) { return PLINK_QUEUE - l->qn; }
+uint8_t plink_room(const plink_t *l) { return l->qn < PLINK_QUEUE - 1 ? (uint8_t) (PLINK_QUEUE - 1 - l->qn) : 0; }
 
 int plink_waiting(const plink_t *l) { return l->qn * PLINK_NUMBER_BYTES; }
 
 bool plink_send(plink_t *l, uint16_t key, uint32_t value) {
-  if (plink_kind(key) == PLINK_VALUE)  // a newer value replaces one still waiting
-    for (int i = 0; i < l->qn; i++)
-      if (l->q[i].key == key) {
-        l->q[i].value = value;
-        return true;
-      }
-  if (l->qn == PLINK_QUEUE) {
+  int i = -1;  // a newer value or help request replaces one still waiting
+  if (plink_kind(key) == PLINK_VALUE || key == K_ITEM_HELP)
+    for (int k = 0; k < l->qn; k++)
+      if (l->q[k].key == key)
+        i = k;
+  if (i < 0 && l->qn >= PLINK_QUEUE - (key != K_HELLO)) {
     l->dropped++;
     return false;
   }
-  l->q[l->qn].key = key;
-  l->q[l->qn].value = value;
-  l->qn++;
+  if (i < 0)
+    i = l->qn++;
+  if (key == K_HELLO) {  // ahead of the rest, a restarted ESP ignores everything before a HELLO
+    memmove(&l->q[1], &l->q[0], (size_t) i * sizeof l->q[0]);
+    i = 0;
+  }
+  l->q[i].key = key;
+  l->q[i].value = value;
   return true;
 }
 
-void plink_drop_events(plink_t *l) {
+void plink_forget(plink_t *l) {
   int k = 0;
-  for (int i = 0; i < l->qn; i++)
-    if (plink_kind(l->q[i].key) == PLINK_VALUE)
+  for (int i = 0; i < l->qn; i++) {
+    uint16_t key = l->q[i].key;
+    if (plink_kind(key) == PLINK_VALUE && !(key >= K_ITEM_VALUE && key < K_ITEM_VALUE + N_ITEMS))
       l->q[k++] = l->q[i];
+  }
   l->qn = (uint8_t) k;
 }
 

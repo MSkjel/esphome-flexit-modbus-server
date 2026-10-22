@@ -1,5 +1,6 @@
 // Code for packages/panel.yaml. Icons, views, actions and settings go by their ids in plink_*.h, in lower case.
 #pragma once
+#include <bitset>
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -40,14 +41,20 @@ inline std::map<uint16_t, std::function<void(uint32_t)>> handlers;
 // Set when the panel's HELLO has our link version. We ignore its other messages until then.
 inline bool compatible;
 
+// The last note, kept until the panel has it. A panel ignores what it gets before our hello, so it goes again if
+// the panel restarts before taking it.
+inline std::string note;
+inline bool note_queued;     // it's in the link's queue
+inline uint16_t note_psess;  // the panel's session at its last hello, the one the note is for
+
+// CU60 settings we've seen change since we started, see hello()
+inline std::bitset<0x200> changed;
+
 inline void notify(const std::string &message, const std::string &icon_name, const std::string &level) {
-  std::string t = cut(message, PLINK_TEXT_MAX);
-  uint8_t b[2 + PLINK_TEXT_MAX] = {(uint8_t) icon(icon_name.empty() ? "info" : icon_name),
-                                   (uint8_t) (level == "alarm"     ? NOTE_ALARM
-                                              : level == "warning" ? NOTE_WARNING
-                                                                   : NOTE_INFO)};
-  memcpy(b + 2, t.data(), t.size());
-  link::send(K_NOTIFY, b, 2 + (int) t.size());
+  int lv = level == "alarm" ? NOTE_ALARM : level == "warning" ? NOTE_WARNING : NOTE_INFO;
+  note = {(char) icon(icon_name.empty() ? "info" : icon_name), (char) lv};
+  note += cut(message, PLINK_TEXT_MAX);
+  note_queued = link::connected && link::send(K_NOTIFY, (const uint8_t *) note.data(), (int) note.size());
 }
 
 inline void show_view(const std::string &view) {
@@ -92,12 +99,12 @@ inline void send_leds() {
 }
 
 // After the panel's hello. A panel that started on its own (asked) may have missed changes to the unit's settings,
-// so they go again. Only once this ESP has them: a new one has zeros until the CS60 sends them, and the setpoint is
-// never 0. Not when the panel only answered our hello: it has them, and newer than our flash copy if we restarted.
+// so those we've seen change since we started go again. The rest we only have from flash, and the panel's copy
+// may be newer. Not when the panel only answered our hello: it has them.
 inline void hello(bool asked) {
-  if (asked && id(server).read_holding_register(flexit_modbus_server::REG_CMD_TEMPERATURE_SETPOINT))
+  if (asked)
     for (auto &v : VALUES)
-      if ((v.flags & (VF_CU60 | VF_CMD | VF_PER_PANEL)) == VF_CU60)
+      if ((v.flags & (VF_CU60 | VF_CMD | VF_PER_PANEL)) == VF_CU60 && changed[v.cu60])
         link::send(v.key,
                    (uint32_t) (id(server).read_holding_register((flexit_modbus_server::HoldingRegisterIndex) v.cu60) /
                                v.scale));
@@ -108,9 +115,12 @@ inline void hello(bool asked) {
   anim::restarted();
 }
 
-// The panel started or answered our hello
+// The panel started or answered our hello. Unsent values follow our HELLO, hello() sends the rest again.
 inline void got_hello(uint32_t v) {
   unsigned version = v >> 16;
+  link::forget();
+  note_queued = false;
+  note_psess = link::tx.psess;
   if (v & HELLO_ASK)
     link::send(K_HELLO, (uint32_t) PLINK_VERSION << 16);
   compatible = version == PLINK_VERSION;
@@ -120,16 +130,20 @@ inline void got_hello(uint32_t v) {
     return;
   }
   ESP_LOGI("panel", "Panel says hello");
-  link::forget();
   hello(v & HELLO_ASK);
 }
 
 // The panel's language from before a restart, so the items' texts go out in it straight away
 inline void restore_language() { language = (uint8_t) id(panel_language); }
 
-inline void setup() {
-  link::setup();
+// panel_address: the bus address of the panel to link with
+inline void setup(uint8_t panel_address) {
+  link::setup(panel_address);
   restore_language();
+  id(server).add_on_setting_callback([](uint16_t reg, uint16_t) {
+    if (reg < changed.size())
+      changed.set(reg);
+  });
   auto &h = handlers;
   h[K_ACTION] = [](uint32_t v) {  // an action picked in the panel's menu
     if (v > A_NONE && v <= A_REMOTE_LAST) {
@@ -212,6 +226,14 @@ inline void loop() {
     } else {
       ESP_LOGV("panel", "Nothing here for 0x%03X = %u", m.first, (unsigned) m.second);
     }
+  }
+
+  // The note, once the panel's there, until it has it
+  if (connected && !note.empty()) {
+    if (!note_queued && link::room() >= 3 + note.size())
+      note_queued = link::send(K_NOTIFY, (const uint8_t *) note.data(), (int) note.size());
+    else if (note_queued && !link::queued(K_NOTIFY) && link::tx.psess == note_psess)
+      note.clear();
   }
 
   // Each new local hour, so a DST change shows right away.

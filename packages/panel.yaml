@@ -5,6 +5,10 @@
 # for actions picked on the panel, and actions for notifications, views, pictures, animations and every other
 # setting. More in packages/panel/. From your own YAML, call the same as C++ in a lambda, like
 # flexit::panel::notify("Filter change due in a week", "filter", "warning").
+#
+# panel_address: the panel's bus address, if it isn't 3. The ESP only talks to that panel.
+defaults:
+  panel_address: "3"
 
 globals:
   - id: panel_language  # the panel's language, so its items' texts are right straight after a restart
@@ -24,7 +28,7 @@ esphome:
   on_boot:
     - priority: 600
       then:
-        - lambda: flexit::panel::setup();
+        - lambda: flexit::panel::setup(${panel_address});
     - priority: -100                      # all pictures and animations are registered by now
       then:
         - lambda: |-

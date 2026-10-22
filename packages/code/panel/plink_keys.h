@@ -4,7 +4,8 @@
 
 // ---- The link itself
 // version << 16 | HELLO_ASK. Each end sends one with HELLO_ASK when it starts and the other answers with one
-// without. On any HELLO we send our full state. Everything else is ignored until we get a HELLO with our version.
+// without. On any HELLO we send our full state. Everything else is ignored until we get a HELLO with our version,
+// so a HELLO goes ahead of whatever hasn't gone out yet.
 #define K_HELLO 0x001
 #define HELLO_ASK 1
 // ESP -> panel: local time, seconds since 2000-01-01

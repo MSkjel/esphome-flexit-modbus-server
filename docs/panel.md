@@ -18,7 +18,9 @@ way this page shows.
 ## Setup
 
 `packages/panel.yaml` is the link. Add the `panel/` packages you want after it. The panel runs at address 3, so
-the ESP goes to address 1.
+the ESP goes to address 1. If your panel is at another address, set `panel_address` to match, like
+`- path: packages/panel.yaml` with `vars: {panel_address: "2"}`. The ESP only talks to that panel. A second panel
+with this firmware works fine without the ESP, just switch ESP off under System > Equipment on that one.
 
 ```yaml
 substitutions:

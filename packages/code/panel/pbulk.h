@@ -2,12 +2,13 @@
 // The ESP starts one transaction every cycle in the CU60's quiet time, just a poll if it has nothing to send, and
 // more in the gaps after the CU60's polls while it has more.
 //
-//   ESP -> panel   F7 66 n esess num psess pnext payload[n] crc                n <= PBULK_MAX
+//   ESP -> panel   F7 66 n panel esess num psess pnext payload[n] crc          n <= PBULK_MAX
 //   panel -> ESP   F7 67 n esess enext status psess pnum want payload[n] crc   n <= PBULK_ANSWER_MAX
 //
-// Modbus CRC. Sessions and message numbers are 2 bytes, low byte first. num and pnum number the first message in
-// the frame, enext and pnext are the number the receiver wants next. The sender resends from there in frames of
-// whatever size fits, and the receiver skips what it already has. A new session doesn't restart the numbers.
+// Modbus CRC. panel is the linked panel's bus address, only that panel answers. Sessions and message numbers are
+// 2 bytes, low byte first. num and pnum number the first message in the frame, enext and pnext are the number the
+// receiver wants next. The sender resends from there in frames of whatever size fits, and the receiver skips what
+// it already has. A new session doesn't restart the numbers.
 // want is the bytes the panel has waiting that didn't fit in this answer, so the ESP leaves room for them.
 // Each end picks a random session when it starts. If the other end wants a message we never sent, it's talking to
 // an earlier session with the same number, so we pick a new one.
@@ -30,8 +31,9 @@ extern "C" {
 #define PBULK_DATA_KEY K_PIC_DATA
 
 // Byte offsets of the fields in an ESP frame
-enum { PBULK_N = 2, PBULK_ESESS = 3, PBULK_NUM = 5, PBULK_PSESS = 7, PBULK_PNEXT = 9, PBULK_PAYLOAD = 11 };
-#define PBULK_MAX 114                             // so the whole frame fits the ESP's 128-byte UART FIFO
+enum { PBULK_N = 2, PBULK_PANEL = 3, PBULK_ESESS = 4, PBULK_NUM = 6, PBULK_PSESS = 8, PBULK_PNEXT = 10 };
+enum { PBULK_PAYLOAD = 12 };
+#define PBULK_MAX 113                             // so the whole frame fits the ESP's 128-byte UART FIFO
 #define PBULK_FRAME(n) (PBULK_PAYLOAD + (n) + 2)  // frame length for an n-byte payload
 #define PBULK_FRAME_MAX PBULK_FRAME(PBULK_MAX)
 // The longest message that isn't DATA. Only DATA is split, so the rest must fit a frame, with the panel's empty
@@ -79,10 +81,11 @@ typedef struct {
 } pbulk_panel_t;
 
 void pbulk_panel_init(pbulk_panel_t *p, uint16_t session);  // session: a random number
-// A frame to PBULK_ADDR. left_us is the time until everything has to be off the bus, 0 outside the windows. say
-// is PB_OK, PB_REFUSED or PB_NO_GAPS, reported in the answer. Returns the answer's length, 0 for no answer, like
-// when it wouldn't be off the bus in time.
-int pbulk_panel_frame(pbulk_panel_t *p, const uint8_t *f, int n, uint32_t left_us, uint8_t say, uint8_t *answer);
+// A frame to PBULK_ADDR, addr is our bus address. left_us is the time until everything has to be off the bus, 0
+// outside the windows. say is PB_OK, PB_REFUSED or PB_NO_GAPS, reported in the answer. Returns the answer's
+// length, 0 for no answer, like when it wouldn't be off the bus in time or it's for another panel.
+int pbulk_panel_frame(pbulk_panel_t *p, uint8_t addr, const uint8_t *f, int n, uint32_t left_us, uint8_t say,
+                      uint8_t *answer);
 int pbulk_panel_take(pbulk_panel_t *p, uint8_t *out);  // next batch of ESP messages, out is PBULK_MAX bytes. 0 = none
 // Queues a payload from plink_pack. False until the previous one has all got through.
 bool pbulk_panel_put(pbulk_panel_t *p, const uint8_t *payload, int n);
@@ -97,6 +100,7 @@ typedef struct {
   uint16_t unsent;  // number of the first message that hasn't gone out, the panel may have the ones before
   int16_t last;     // offset of the last message, to append DATA to. -1 = none
   uint16_t session;
+  uint8_t panel;       // its bus address
   bool sent;           // a frame went out, no answer yet
   uint16_t margin_us;  // grows when answers don't come, shrinks when they do
   uint16_t psess;      // the panel's session and the number of its next message we want
@@ -110,14 +114,16 @@ typedef struct {
   uint32_t sessions;  // new sessions because the panel wanted messages we never sent
 } pbulk_esp_t;
 
-void pbulk_esp_init(pbulk_esp_t *t, uint16_t session);  // session: a random number
+void pbulk_esp_init(pbulk_esp_t *t, uint16_t session, uint8_t panel);  // session: a random number
 // Queues a message for the panel, false if there's no room. replace overwrites an unsent message with the same key,
-// for PLINK_VALUE. DATA has to be a multiple of 4 bytes, anything else at most PBULK_MAX - 3 to fit one frame.
+// for PLINK_VALUE. DATA has to be a multiple of 4 bytes, anything else at most PBULK_MAX - 3 to fit one frame. A
+// K_HELLO goes ahead of the unsent messages and replaces an unsent HELLO.
 bool pbulk_esp_send(pbulk_esp_t *t, uint16_t key, const uint8_t *b, int n, bool replace);
 // Drops unsent messages except those keep() wants, after the panel restarted.
 void pbulk_esp_drop_unsent(pbulk_esp_t *t, bool (*keep)(uint16_t key));
-unsigned pbulk_esp_room(const pbulk_esp_t *t);  // free bytes in the queue
-bool pbulk_esp_pending(const pbulk_esp_t *t);   // anything the panel doesn't have yet?
+unsigned pbulk_esp_room(const pbulk_esp_t *t);              // free bytes in the queue
+bool pbulk_esp_pending(const pbulk_esp_t *t);               // anything the panel doesn't have yet?
+bool pbulk_esp_queued(const pbulk_esp_t *t, uint16_t key);  // one with this key the panel doesn't have yet?
 // A send window. Counting from the latest the frame could start going out, there's at least left_us until
 // everything has to be off the bus. Builds a frame or a poll in out, PBULK_FRAME_MAX bytes with the CRC, and
 // returns its length. 0 if not even a poll fits or the panel refused.

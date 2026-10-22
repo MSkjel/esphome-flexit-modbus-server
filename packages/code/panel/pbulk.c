@@ -127,10 +127,13 @@ static int out_bytes_from(const pbulk_panel_t *p, int from) {  // offset of mess
   return i;
 }
 
-int pbulk_panel_frame(pbulk_panel_t *p, const uint8_t *f, int n, uint32_t left_us, uint8_t say, uint8_t *a) {
+int pbulk_panel_frame(pbulk_panel_t *p, uint8_t addr, const uint8_t *f, int n, uint32_t left_us, uint8_t say,
+                      uint8_t *a) {
+  bool ok = pbulk_frame_len(f, n) == n && pbus_crc_ok(f, n);
+  if (ok && (f[1] != PBULK_FC_SEND || f[PBULK_PANEL] != addr))
+    return 0;  // another panel's link: the ESP's frames to it, or its answers
   p->frames++;
-  if (pbulk_frame_len(f, n) != n || f[1] != PBULK_FC_SEND || !pbus_crc_ok(f, n) ||
-      pbulk_skip(f + PBULK_PAYLOAD, f[PBULK_N], 0, &(uint16_t) {0}, NULL) < 0) {
+  if (!ok || pbulk_skip(f + PBULK_PAYLOAD, f[PBULK_N], 0, &(uint16_t) {0}, NULL) < 0) {
     p->bad++;
     return 0;
   }
@@ -247,10 +250,11 @@ bool pbulk_panel_put(pbulk_panel_t *p, const uint8_t *payload, int n) {
 
 #define ESP_ROOM (PBULK_ESP_BUF - 64)  // headroom for split(), which adds 3 bytes per DATA message it cuts
 
-void pbulk_esp_init(pbulk_esp_t *t, uint16_t session) {
+void pbulk_esp_init(pbulk_esp_t *t, uint16_t session, uint8_t panel) {
   memset(t, 0, sizeof *t);
   t->last = -1;
   t->session = session ? session : 1;
+  t->panel = panel;
 }
 
 unsigned pbulk_esp_room(const pbulk_esp_t *t) { return t->qn < ESP_ROOM ? ESP_ROOM - t->qn : 0; }
@@ -265,10 +269,17 @@ static int sent_bytes(const pbulk_esp_t *t) {
 
 bool pbulk_esp_pending(const pbulk_esp_t *t) { return t->qn > 0; }
 
+bool pbulk_esp_queued(const pbulk_esp_t *t, uint16_t key) {
+  for (int at = 0; at + 3 <= t->qn; at += 3 + t->q[at + 2])
+    if (get16(t->q + at) == key)
+      return true;
+  return false;
+}
+
 bool pbulk_esp_send(pbulk_esp_t *t, uint16_t key, const uint8_t *b, int n, bool replace) {
   if (n < 0 || n > (key == PBULK_DATA_KEY ? 252 : PBULK_MSG_MAX) || (key == PBULK_DATA_KEY && n % 4))
     return false;  // DATA can be split, anything else has to fit the best window, or it would wait forever
-  if (replace)     // a newer value for a message that hasn't gone out
+  if (replace && key != K_HELLO)  // a newer value for a message that hasn't gone out
     for (int at = sent_bytes(t); at + 3 <= t->qn; at += 3 + t->q[at + 2])
       if (get16(t->q + at) == key && t->q[at + 2] == n) {
         memcpy(t->q + at + 3, b, n);
@@ -284,12 +295,25 @@ bool pbulk_esp_send(pbulk_esp_t *t, uint16_t key, const uint8_t *b, int n, bool 
     t->q[t->last + 2] = (uint8_t) (t->q[t->last + 2] + n);
     return true;
   }
+  int at = t->qn;
+  if (key == K_HELLO) {  // ahead of the unsent messages, a restarted panel ignores everything before a HELLO
+    at = sent_bytes(t);
+    for (int i = at; i + 3 <= t->qn; i += 3 + t->q[i + 2])
+      if (get16(t->q + i) == K_HELLO) {  // the newer one replaces it
+        int len = 3 + t->q[i + 2];
+        memmove(t->q + i, t->q + i + len, t->qn - i - len);
+        t->qn = (uint16_t) (t->qn - len);
+        t->last = t->last == i ? -1 : t->last > i ? (int16_t) (t->last - len) : t->last;
+        break;
+      }
+  }
   if (t->qn + 3 + n > ESP_ROOM)
     return false;
-  t->last = (int16_t) t->qn;
-  put16(t->q + t->qn, key);
-  t->q[t->qn + 2] = (uint8_t) n;
-  memcpy(t->q + t->qn + 3, b, n);
+  memmove(t->q + at + 3 + n, t->q + at, t->qn - at);
+  t->last = at == t->qn ? (int16_t) at : t->last >= at ? (int16_t) (t->last + 3 + n) : t->last;
+  put16(t->q + at, key);
+  t->q[at + 2] = (uint8_t) n;
+  memcpy(t->q + at + 3, b, n);
   t->qn = (uint16_t) (t->qn + 3 + n);
   return true;
 }
@@ -406,6 +430,7 @@ int pbulk_esp_window(pbulk_esp_t *t, uint32_t left_us, uint8_t *out) {
   out[0] = PBULK_ADDR;
   out[1] = PBULK_FC_SEND;
   out[PBULK_N] = (uint8_t) n;
+  out[PBULK_PANEL] = t->panel;
   put16(out + PBULK_ESESS, t->session);
   put16(out + PBULK_NUM, t->num);
   put16(out + PBULK_PSESS, t->psess);

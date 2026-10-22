@@ -123,8 +123,8 @@ inline size_t frame_length(const uint8_t *f, size_t available) {
   return (size_t) pbulk_frame_len(f, (int) available);
 }
 
-inline void setup() {
-  pbulk_esp_init(&tx, (uint16_t) random_uint32());
+inline void setup(uint8_t panel_address) {
+  pbulk_esp_init(&tx, (uint16_t) random_uint32(), panel_address);
   id(modbus_uart).set_rx_full_threshold(1);  // hand over every byte at once, so we know when the window began
   id(server).set_frame_length(PBULK_ADDR, frame_length);
   id(server).add_on_status_callback(window);
@@ -145,12 +145,14 @@ inline bool send(uint16_t key, uint32_t value) {
   return send(key, b, 4);
 }
 
-// The panel restarted and lost its state, so drop what's unsent except values.
+// After a hello, drop what's unsent except values. hello() sends the rest again.
 inline void forget() {
   pbulk_esp_drop_unsent(&tx, [](uint16_t key) { return plink_kind(key) == PLINK_VALUE; });
 }
 
 inline unsigned waiting() { return tx.qn; }  // bytes queued that the panel hasn't confirmed yet
+inline bool queued(uint16_t key) { return pbulk_esp_queued(&tx, key); }   // one with this key it hasn't confirmed
+inline unsigned room() { return pbulk_esp_room(&tx); }                    // free bytes in the queue
 inline bool online() { return heard_ms && millis() - heard_ms < 30000; }  // it normally answers every cycle
 
 inline void log_stats() {

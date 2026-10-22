@@ -32,11 +32,14 @@ typedef struct {
 } plink_t;
 
 void plink_init(plink_t *l);
-bool plink_send(plink_t *l, uint16_t key, uint32_t value);  // false if the queue is full
+// False if the queue is full. A help request replaces a waiting one, like a VALUE. A K_HELLO goes first,
+// replaces a waiting HELLO and always fits.
+bool plink_send(plink_t *l, uint16_t key, uint32_t value);
 // Moves the waiting messages, oldest first, into a payload of at most max bytes. Returns its length.
 int plink_pack(plink_t *l, uint8_t *out, int max);
-void plink_drop_events(plink_t *l);    // the other end restarted, events are about state it lost
-uint8_t plink_room(const plink_t *l);  // free entries
+// The other end restarted. Drops events and item values, which are about state it lost.
+void plink_forget(plink_t *l);
+uint8_t plink_room(const plink_t *l);  // free places, less the one kept for a HELLO
 int plink_waiting(const plink_t *l);   // bytes of messages waiting
 
 uint32_t plink_crc32(uint32_t crc, const void *data, unsigned n);  // start with 0, chain the result
