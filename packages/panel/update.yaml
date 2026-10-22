@@ -34,6 +34,7 @@ esp32:
       # the IDF cert bundle for https, the full set so GitHub's CA is in it. met.yaml sets DEFAULT_FULL too.
       CONFIG_MBEDTLS_CERTIFICATE_BUNDLE: "y"
       CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL: "y"
+      CONFIG_MBEDTLS_DYNAMIC_BUFFER: "y"  # see met.yaml
 
 text:
   - platform: template

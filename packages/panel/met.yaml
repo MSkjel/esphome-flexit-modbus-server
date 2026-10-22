@@ -29,6 +29,8 @@ esp32:
   framework:
     sdkconfig_options:
       CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL: "y"
+      # TLS only holds its 20 KB of buffers while a request runs, so the pictures have the RAM in between
+      CONFIG_MBEDTLS_DYNAMIC_BUFFER: "y"
 
 select:
   - id: !extend panel_picture
