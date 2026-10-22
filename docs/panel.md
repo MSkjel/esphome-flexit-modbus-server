@@ -53,7 +53,7 @@ selects, and the brightness and night mode settings. The rest of the panel's set
 | `panel/ha_sensor.yaml`, `ha_binary_sensor.yaml`, `ha_text.yaml`, `ha_switch.yaml` | A Home Assistant entity on the panel |
 | `panel/sensor.yaml`, `binary_sensor.yaml`, `text.yaml`, `switch.yaml`, `number.yaml`, `button.yaml` | One of the ESP's own entities on the panel |
 | `panel/fireplace.yaml`, `humidity_boost.yaml`, `co2.yaml`, `summer_cooling.yaml` | That package on the panel's comfort page |
-| `panel/picture.yaml`, `online_picture.yaml`, `animation.yaml`, `met.yaml` | Screensaver pictures |
+| `panel/picture.yaml`, `online_picture.yaml`, `ha_picture.yaml`, `animation.yaml`, `met.yaml` | Screensaver pictures |
 | `panel/update.yaml` | Flashes the panel's firmware from Home Assistant |
 
 ## Your own things on the panel
@@ -200,8 +200,10 @@ picks which one. The panel's own menu has the clock styles that go over it.
 ```yaml
       - path: packages/panel/picture.yaml          # a file next to your config, PNG or JPEG
         vars: {name: aurora, file: pictures/aurora.png}
-      - path: packages/panel/online_picture.yaml   # a URL, like a camera or a weather map
+      - path: packages/panel/online_picture.yaml   # a URL, like a weather map
         vars: {name: radar, url: "http://homeassistant.local:8123/local/radar.png", update_interval: 10min}
+      - path: packages/panel/ha_picture.yaml       # a Home Assistant camera or image entity
+        vars: {name: front_door, entity_id: camera.front_door, update_interval: 1min}
       - path: packages/panel/animation.yaml        # a GIF, at x, y on the picture
         vars: {name: flame, file: animations/flame.gif, resize: 48x48, x: 256, y: 16}
       - path: packages/panel/met.yaml              # the weather where you are, named "weather"
@@ -216,7 +218,8 @@ letters, digits and `_`.
 | Package | Vars |
 |---|---|
 | `picture.yaml` | `name`, `file` (PNG or JPEG next to your config). `encoding`: `auto`, `palette` (16 colours) or `jpeg`; a palette picture that doesn't fit the panel's 14 KB goes as a JPEG anyway. `quality`: the JPEG quality, or `auto` for the best that fits |
-| `online_picture.yaml` | `name`, `url`, `update_interval` (`never` = only when shown), `format` (PNG, JPEG, BMP or AUTO), `resize` (160x120 default, blown up to the screen; 320x240 needs PSRAM), plus `encoding` and `quality`. A failed download is retried after 30 s, then twice as long each time. Home Assistant's own camera URLs need a token the ESP can't send; use the camera's own address, like Frigate's `http://frigate.local:5000/api/<cam>/latest.jpg?h=120`, or have HA save a snapshot in `/config/www` |
+| `online_picture.yaml` | `name`, `url`, `update_interval` (`never` = only when shown), `format` (PNG, JPEG, BMP or AUTO), `resize` (160x120 default, blown up to the screen; 320x240 needs PSRAM), plus `encoding` and `quality`. A failed download is retried after 30 s, then twice as long each time. For a Home Assistant camera use `ha_picture.yaml` |
+| `ha_picture.yaml` | `name`, `entity_id` (a `camera.` or `image.` entity, with `kind: image` for the latter), `ha_url` (`http://homeassistant.local:8123`), `width` (320, HA scales the camera picture down to it when the camera can), plus `update_interval`, `resize`, `encoding` and `quality` as above. HA only hands out camera pictures with a token that changes now and then; the ESP follows the entity's `access_token` attribute, so nothing to set up |
 | `animation.yaml` | `name`, `file` (a GIF), `resize` (64x64 default), `x`, `y` (top left on the 320x240 screen), `scale` (2 draws each pixel 2x), `frame_ms` (the GIF's own timing isn't used), `drift_x`, `drift_y` (pixels per second it drifts, wrapping round the screen seamlessly). The panel plays it from 6 KB, so keep it small: about 64x64 with a few frames, or more frames if little changes between them. Too big and it's made at half size and drawn 2x |
 | `met.yaml` | `latitude`, `longitude`, `scene` (hills, coast, mountains, city), `aurora` (auto, off, always), `update_interval` (5 min, the forecast is only fetched again when MET says it expired), `redraw_interval`, `name` (weather). `Panel Weather Scene`, `Panel Weather Aurora` and `Panel Weather Forecast` change it from Home Assistant |
 

@@ -1,0 +1,40 @@
+# A Home Assistant camera or image entity as a screensaver picture, with one include. Home Assistant only hands
+# out camera pictures with a token that changes now and then, so the ESP follows the entity's access_token
+# attribute and asks with that. No long-lived token needed. Downloaded when shown and every update_interval, like
+# online_picture.yaml, which this includes.
+#   - path: packages/panel/ha_picture.yaml
+#     vars: {name: front_door, entity_id: camera.front_door, update_interval: 1min}
+# kind: camera, or image for an image.* entity
+# width: Home Assistant scales a camera picture down to this when the camera can, which keeps the download small.
+#   The ESP keeps a JPEG whole in RAM, so a big one needs PSRAM.
+# resize, encoding and quality work as in online_picture.yaml
+defaults:
+  ha_url: http://homeassistant.local:8123
+  kind: camera
+  width: "320"
+  update_interval: never
+  resize: 160x120
+  encoding: auto
+  quality: auto
+
+text_sensor:
+  - platform: homeassistant
+    id: ha_${name}_token
+    entity_id: ${entity_id}
+    attribute: access_token
+    internal: true
+    on_value:
+      - lambda: |-
+          id(panel_picture_${name}).set_url("${ha_url}/api/${kind}_proxy/${entity_id}?width=${width}&token=" + x);
+
+packages:
+  picture: !include
+    file: online_picture.yaml
+    vars:
+      name: ${name}
+      url: ${ha_url}/api/${kind}_proxy/${entity_id}
+      format: JPEG
+      update_interval: ${update_interval}
+      resize: ${resize}
+      encoding: ${encoding}
+      quality: ${quality}

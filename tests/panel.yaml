@@ -48,6 +48,9 @@ packages:
   panel_picture: !include
     file: ../packages/panel/picture.yaml
     vars: {name: dusk, file: panel_picture.png}
+  panel_ha_picture: !include
+    file: ../packages/panel/ha_picture.yaml
+    vars: {name: front_door, entity_id: camera.front_door, update_interval: 1min}
   panel_animation: !include
     file: ../packages/panel/animation.yaml
     vars: {name: ball, file: panel_animation.gif, resize: 32x32, x: 256, y: 16, scale: 2}
