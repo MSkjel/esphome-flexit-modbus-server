@@ -805,11 +805,14 @@ inline bool fits(const std::string &name, Online &o) {
 inline void loop() {
   if (S.to_clear && !anim::sending())
     S.to_clear = !link::send(K_PIC_CLEAR, 0);
-  auto o = online.find(S.want);  // the shown online picture downloads again every `every`
+  auto o = online.find(S.want);  // the shown online picture downloads again every `every`, if it still fits
   if (o != online.end() && o->second->every && S.phase == IDLE && !S.redo &&
-      millis() - o->second->fetched >= o->second->every && fits(S.want, *o->second)) {
+      millis() - o->second->fetched >= o->second->every) {
     o->second->fetched = millis();
-    o->second->fetch();
+    if (fits(S.want, *o->second))
+      o->second->fetch();
+    else
+      status(S.want + ": " + S.waiting);
   }
   if (!ask())
     return;
