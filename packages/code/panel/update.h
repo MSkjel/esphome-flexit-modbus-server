@@ -90,6 +90,7 @@ enum Phase {
   END,
   END_WAIT,
   RESET,
+  RESET_WAIT,
   DONE,
   FAIL
 };
@@ -102,6 +103,7 @@ inline uint32_t next_ms = 0;     // earliest time for the next request
 inline uint32_t sent_ms = 0;     // when the last request went out
 inline bool awaiting = false;    // a request is out, waiting for its reply
 inline uint8_t tries = 0;        // enter retries
+inline uint8_t reset_tries = 0;  // resets sent at the end, the loader can miss one
 inline bool cleaned = false;     // we reset the loader this session, we always start from a clean one
 inline uint8_t clean_tries = 0;  // reset requests sent. A loader busy erasing can miss one
 inline bool fresh = false;       // saw the loader starting up, so it just booted with clean RAM
@@ -315,7 +317,7 @@ inline void begin() {
       probe_addrs[probe_n++] = a;
   probe_i = probe_tries = 0;
   phase = PROBE;
-  tries = 0;
+  tries = reset_tries = 0;
   cleaned = fresh = bl_seen = false;
   clean_tries = 0;
   polls = 0;
@@ -567,6 +569,20 @@ inline void pump() {
       }
       refuse("No panel answered on the bus");
       return;
+    case RESET_WAIT:  // done once the loader stops answering or says it's starting, it missed the reset otherwise
+      if (got == R_STATUS && bl_state != ST_BOOT) {
+        if (++reset_tries >= 3) {
+          finish(false, "The panel didn't restart");
+          return;
+        }
+        enter_phase(RESET);
+        break;
+      }
+      if ((got == R_STATUS && bl_state == ST_BOOT) || now - step_ms > 1500) {
+        finish(true);
+        return;
+      }
+      break;
     case WAIT_BL:
       if (got == R_STATUS && bl_state == ST_BOOT) {
         fresh = true;  // still starting up, so it just booted with clean RAM
@@ -751,8 +767,14 @@ inline void pump() {
       enter_phase(END_WAIT);
       break;
     case RESET:
-      send(BL_ADDR, SUB_RESET);
-      finish(true);
+      send(BL_ADDR, SUB_RESET);  // no reply, it resets right away
+      awaiting = false;
+      enter_phase(RESET_WAIT);
+      next_ms = now + 300;  // the ROM says "starting" for a moment after it reboots
+      break;
+    case RESET_WAIT:
+      if (now >= next_ms)
+        poll_status();
       break;
     default:
       break;
