@@ -81,8 +81,8 @@ number:
   - platform: template
     id: max_timer_minutes
     name: "Max Timer Minutes"
-    max_value: 600
-    min_value: 1
+    max_value: 360
+    min_value: 0
     step: 1
     disabled_by_default: True
     update_interval: 1s
@@ -95,8 +95,8 @@ number:
   - platform: template
     id: temperature_supply_min
     name: "Temperature Supply Min"
-    max_value: 30
-    min_value: 10
+    max_value: 25
+    min_value: 5
     step: 0.5
     disabled_by_default: True
     mode: BOX
@@ -111,8 +111,8 @@ number:
   - platform: template
     id: temperature_supply_max
     name: "Temperature Supply Max"
-    max_value: 30
-    min_value: 10
+    max_value: 45
+    min_value: 15
     step: 0.5
     disabled_by_default: True
     mode: BOX

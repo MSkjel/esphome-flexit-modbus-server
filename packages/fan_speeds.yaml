@@ -1,4 +1,4 @@
-# Fan % for min/normal/max. Only for EC fans (DS4 = EC).
+# Fan % for min/normal/max. Only for EC fans (DS4 = EC). 20-100 like the CI600.
 # Needs core.yaml
 
 packages:
@@ -6,29 +6,29 @@ packages:
     file: parts/setting_number.yaml
     vars: {id: supply_air_percentage_min, name: Supply Air Percentage Min,
            register: REG_CMD_PERCENTAGE_SUPPLY_FAN_MIN,
-           min: 1, max: 100, unit: "%", zero_unknown: "true", category: ""}
+           min: 20, max: 100, unit: "%", zero_unknown: "true", category: ""}
   supply_air_percentage_normal: !include
     file: parts/setting_number.yaml
     vars: {id: supply_air_percentage_normal, name: Supply Air Percentage Normal,
            register: REG_CMD_PERCENTAGE_SUPPLY_FAN_NORMAL,
-           min: 1, max: 100, unit: "%", zero_unknown: "true", category: ""}
+           min: 20, max: 100, unit: "%", zero_unknown: "true", category: ""}
   supply_air_percentage_max: !include
     file: parts/setting_number.yaml
     vars: {id: supply_air_percentage_max, name: Supply Air Percentage Max,
            register: REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX,
-           min: 1, max: 100, unit: "%", zero_unknown: "true", category: ""}
+           min: 20, max: 100, unit: "%", zero_unknown: "true", category: ""}
   extract_air_percentage_min: !include
     file: parts/setting_number.yaml
     vars: {id: extract_air_percentage_min, name: Extract Air Percentage Min,
            register: REG_CMD_PERCENTAGE_EXTRACT_FAN_MIN,
-           min: 1, max: 100, unit: "%", zero_unknown: "true", category: ""}
+           min: 20, max: 100, unit: "%", zero_unknown: "true", category: ""}
   extract_air_percentage_normal: !include
     file: parts/setting_number.yaml
     vars: {id: extract_air_percentage_normal, name: Extract Air Percentage Normal,
            register: REG_CMD_PERCENTAGE_EXTRACT_FAN_NORMAL,
-           min: 1, max: 100, unit: "%", zero_unknown: "true", category: ""}
+           min: 20, max: 100, unit: "%", zero_unknown: "true", category: ""}
   extract_air_percentage_max: !include
     file: parts/setting_number.yaml
     vars: {id: extract_air_percentage_max, name: Extract Air Percentage Max,
            register: REG_CMD_PERCENTAGE_EXTRACT_FAN_MAX,
-           min: 1, max: 100, unit: "%", zero_unknown: "true", category: ""}
+           min: 20, max: 100, unit: "%", zero_unknown: "true", category: ""}
