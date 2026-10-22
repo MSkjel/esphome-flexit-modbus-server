@@ -17,7 +17,7 @@
 # reported over the link if any, then 3, 1 and 2, never the ESP's own. The first panel that answers gets flashed, a
 # stock one if it's a 7.x, ours if the file is another version, and nothing else. "Panel Firmware Force" also
 # flashes the same version again, or a stock panel that isn't 7.x. The bootloader always answers at 1, so a panel
-# elsewhere is only flashed with nothing else at 1.
+# elsewhere is only flashed with nothing else at 1. A panel left in its bootloader by a failed flash goes first.
 # A flash takes a few minutes, with the panel's screen dark and its three LEDs on.
 # Right after an OTA update of the ESP itself, wait about a minute until it has booted fine. Until then it keeps
 # its previous firmware in the spare slot in case it has to go back.

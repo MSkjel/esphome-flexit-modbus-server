@@ -1,4 +1,5 @@
-// The panel updater on a PC: the download, the FC4 reply matcher, the stream's name and what each panel gets.
+// The panel updater on a PC: the download, the FC4 reply matcher, the stream's name, what each panel gets, and a
+// panel left in its bootloader.
 //   g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stubs -Ipackages/code/panel
 //     tests/update_test.cpp packages/code/panel/pbus.c -o update_test
 #include <algorithm>
@@ -97,6 +98,9 @@ static std::vector<uint8_t> stream(const std::string &name) {
   return s;
 }
 
+// [01 64 03 02 state detail crc], the bootloader's status
+static std::vector<uint8_t> bl_status(uint8_t state) { return frame({BL_ADDR, FC, SUB_STATUS, 2, state, 0}); }
+
 static std::string last_status;
 
 // http_request's response on an ESP32, 1000 bytes a read. On silence read() blocks for its 4.5 s timeout.
@@ -136,8 +140,9 @@ static void get(Http h) {
   download(r);
 }
 
-// Starts an update with the stream staged and runs the probe, feeding each address's reply (empty = silence)
-static void probe(const std::string &name, std::vector<std::vector<uint8_t>> answers) {
+// Starts an update with the stream staged and runs the probe, feeding the replies (empty = silence)
+static void probe(const std::string &name, std::vector<std::vector<uint8_t>> answers,
+                  std::vector<uint8_t> loader = {}) {
   staged = stream(name);
   staged_len = staged.size();
   staging = &slots[1];
@@ -147,11 +152,11 @@ static void probe(const std::string &name, std::vector<std::vector<uint8_t>> ans
     pump();
     if (!awaiting)
       continue;
-    uint8_t addr = server.tx.back()[0];
-    auto &a = answers[addr];
+    auto &f = server.tx.back();
+    auto &a = f[1] == FC ? loader : answers[f[0]];
     if (!a.empty())
       on_frame(a.data(), a.size());
-    else
+    if (reply == R_NONE)  // no reply it takes, so let it time out
       now_ms += PROBE_TIMEOUT_MS + 1;
   }
 }
@@ -222,12 +227,13 @@ int main() {
   s[0] = 0x12;
   CHECK(name_version(s.data(), s.size()) == -1);
 
-  // Nobody home: every address twice, the ESP's own 1 skipped, then a refusal
+  // Nobody home: every address twice, the ESP's own 1 skipped, the bootloader twice, then a refusal
   std::vector<std::vector<uint8_t>> none(4);
   probe("ci600 0.2.0", none);
   CHECK(phase == FAIL && last_status == "No panel answered on the bus");
-  CHECK(server.tx.size() == 4);
+  CHECK(server.tx.size() == 6);
   CHECK(server.tx[0][0] == 3 && server.tx[1][0] == 3 && server.tx[2][0] == 2 && server.tx[3][0] == 2);
+  CHECK(server.tx[4] == std::vector<uint8_t>({BL_ADDR, FC, SUB_STATUS, 0}) && server.tx[5] == server.tx[4]);
   CHECK(!server.updating);
 
   // the panel reported its address, that goes first
@@ -321,11 +327,11 @@ int main() {
   pump();
   CHECK(server.tx.size() == 2 && server.tx[1][0] == 3);
   on_frame(at[3].data(), at[3].size());
-  for (int i = 0; i < 3; i++) {  // then address 2, twice
+  for (int i = 0; i < 5; i++) {  // then address 2 and the bootloader, twice each
     pump();
     now_ms += PROBE_TIMEOUT_MS + 1;
   }
-  CHECK(server.tx.size() == 5 && server.tx.back()[0] == 3 && server.tx.back()[1] == FC);
+  CHECK(server.tx.size() == 7 && server.tx.back()[0] == 3 && server.tx.back()[1] == FC);
   CHECK(phase == WAIT_BL && last_status == "Stock panel 7.0 at address 3, flashing");
 
   auto resets = [] {
@@ -358,6 +364,65 @@ int main() {
     CHECK(last_status ==
           (odd[1] == FC ? "The panel dropped out of the update" : "Lost the panel's answer at a bad moment") +
               std::string(". Nothing's broken, just try again"));
+  }
+
+  // a panel left in its bootloader by a failed flash: found by its status, reset and armed with no kick
+  auto arm = [] {
+    for (int i = 0; i < 100 && phase != ARM_WAIT && phase != FAIL; i++) {
+      pump();
+      if (awaiting) {
+        auto st = bl_status(cleaned ? ST_IDLE : ST_FAILED);  // the reset clears it
+        on_frame(st.data(), st.size());
+      }
+      now_ms += 100;
+    }
+    return phase == ARM_WAIT;
+  };
+  server.own = 2;
+  at = none;
+  at[1] = frame({1, 0x84, 1});
+  probe("ci600 0.2.0", at, bl_status(ST_FAILED));
+  CHECK(phase == WAIT_BL && last_status == "Panel is in its bootloader, flashing");
+  CHECK(server.tx.size() == 6 && server.tx[4] == std::vector<uint8_t>({BL_ADDR, FC, SUB_STATUS, 0}));  // and WAIT_BL's
+  CHECK(arm());
+  int arms = 0;
+  for (size_t i = 4; i < server.tx.size(); i++) {
+    auto &f = server.tx[i];
+    CHECK(f[0] == BL_ADDR && f[1] == FC);
+    arms += f[2] == SUB_ARM;
+  }
+  CHECK(resets() == 1 && arms == 1 && server.tx.back()[2] == SUB_ARM);
+  // the reset started its unerased app instead: found by the probe and kicked as usual
+  at = none;
+  at[3] = fc4(3, FW_TYPE, 0, 0, 0x0001);
+  probe("ci600 0.2.0", none, bl_status(ST_IDLE));
+  CHECK(phase == WAIT_BL && app_addr == 0);
+  for (int i = 0; i < 400 && phase != PROBE_WAIT; i++) {
+    pump();
+    if (awaiting && !cleaned) {
+      auto st = bl_status(ST_IDLE);
+      on_frame(st.data(), st.size());
+    }
+    now_ms += 100;
+  }
+  CHECK(phase == PROBE_WAIT && server.tx.back()[0] == 3);
+  on_frame(at[3].data(), at[3].size());
+  for (int i = 0; i < 5; i++) {  // then address 1 and the bootloader, twice each
+    pump();
+    now_ms += PROBE_TIMEOUT_MS + 1;
+  }
+  CHECK(phase == WAIT_BL && app_addr == 3 && server.tx.back() == std::vector<uint8_t>({3, FC, SUB_ARM, 0}));
+  server.updating = false;
+
+  // with another panel at 3 the one in its bootloader goes first, and the one at 3 never gets the kick
+  at[1] = frame({1, 0x84, 1});
+  for (uint8_t own : {1, 2}) {
+    server.own = own;
+    probe("ci600 0.2.0", at, bl_status(ST_FAILED));
+    CHECK(phase == WAIT_BL && app_addr == 0 &&
+          last_status == "Found a panel waiting in its bootloader at address 1, flashing that one first");
+    CHECK(arm() && std::none_of(server.tx.begin(), server.tx.end(), [](auto &f) { return f[0] == 3 && f[1] == FC; }));
+    server.updating = false;
   }
 
   printf("%s\n", fails ? "FAILED" : "update_test: all passed");

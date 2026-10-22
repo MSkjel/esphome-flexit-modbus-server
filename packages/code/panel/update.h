@@ -1,6 +1,6 @@
 // Flashes the CI600 panel over the bus through its stock bootloader, from stock or our firmware. No SWD or jumper.
 // First it probes the panel like the CU60 does at discovery, and only flashes stock 7.x or ours, and ours only
-// when the file is another version unless forced.
+// when the file is another version unless forced. Also finds one stuck in its bootloader after a failed flash.
 #pragma once
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
@@ -111,8 +111,9 @@ inline bool fresh = false;       // saw the loader starting up, so it just boote
 inline bool bl_seen = false;     // the loader has answered this session
 inline uint8_t polls = 0;        // status polls in the current phase
 inline uint8_t last_sub = 0;     // the sub-command of the request that is out
-inline uint8_t app_addr = 0;     // where the panel answered the probe, and gets the kick into the bootloader
-inline uint8_t probe_addrs[4], probe_n = 0, probe_i = 0, probe_tries = 0;  // the addresses to probe, in order
+inline uint8_t app_addr = 0;     // where the panel answered the probe and gets the kick, 0 = in its bootloader
+// the addresses to probe in order, probe_i == probe_n is the bootloader
+inline uint8_t probe_addrs[4], probe_n = 0, probe_i = 0, probe_tries = 0;
 inline uint8_t probe_addr = 0;     // the address a probe is out to, 0 = a bootloader request is out
 inline bool probe_heard[4];        // which of probe_addrs answered
 inline uint16_t probe_ir[4][4];    // the input registers each answered
@@ -471,10 +472,18 @@ inline bool is_panel(const uint16_t *ir) { return ir[0] == FW_TYPE || (ir[0] == 
 
 // Every address has been asked, the first panel gets flashed
 inline void probed() {
-  int t = -1;  // the first panel, else the first that answered
-  for (int i = 0; i < probe_n; i++)
+  int t = -1;         // the first panel, else the first that answered
+  bool at_1 = false;  // something runs at 1
+  for (int i = 0; i < probe_n; i++) {
     if (probe_heard[i] && (t < 0 || (is_panel(probe_ir[i]) && !is_panel(probe_ir[t]))))
       t = i;
+    at_1 |= probe_heard[i] && probe_addrs[i] == BL_ADDR;
+  }
+  // A panel left in its bootloader by a failed flash answers at 1. It goes first, a kick would put a second one there
+  if (!at_1 && probe_i == probe_n) {
+    enter_phase(PROBE);
+    return;
+  }
   if (t < 0) {
     refuse("No panel answered on the bus");
     return;
@@ -490,12 +499,10 @@ inline void probed() {
     return;
   }
   // Arming the loader at 1 is the same frame as the kick, so whatever runs at 1 would be kicked too
-  for (int i = 0; i < probe_n && addr != BL_ADDR; i++) {
-    if (probe_heard[i] && probe_addrs[i] == BL_ADDR) {
-      refuse("Something else is at address 1, where the bootloader answers. Take it or the panel" + at +
-             " off the bus and try again");
-      return;
-    }
+  if (at_1 && addr != BL_ADDR) {
+    refuse("Something else is at address 1, where the bootloader answers. Take it or the panel" + at +
+           " off the bus and try again");
+    return;
   }
   if (ir[0] == 0) {
     std::string v = std::to_string(ir[3] >> 8) + "." + std::to_string(ir[3] & 0xFF);
@@ -578,8 +585,8 @@ inline void pump() {
 
   if (got == R_STATUS || got == R_ACK)
     bl_seen = true;
-  // a failure ends the update, except in WAIT_BL where it's left over from an earlier session
-  if (got == R_STATUS && bl_state == ST_FAILED && phase != WAIT_BL) {
+  // a failure ends the update, except when it's left over from an earlier session
+  if (got == R_STATUS && bl_state == ST_FAILED && phase != WAIT_BL && phase != PROBE_WAIT) {
     ESP_LOGW(TAG, "Bootloader failed: detail %u at %u/%u bytes", bl_detail, (unsigned) sent, (unsigned) staged_len);
     finish(false, detail_text(bl_detail));
     return;
@@ -588,6 +595,14 @@ inline void pump() {
   // ---- react to what came back ----
   switch (phase) {
     case PROBE_WAIT:  // an answer, or one more try at this address, then the next until all are asked
+      if (got == R_STATUS) {
+        status(std::count(probe_heard, probe_heard + probe_n, true)
+                   ? "Found a panel waiting in its bootloader at address 1, flashing that one first"
+                   : "Panel is in its bootloader, flashing");
+        app_addr = 0;  // a failed flash left it there, so no kick
+        enter_phase(WAIT_BL);
+        break;
+      }
       if (got == R_PROBE)
         probe_heard[probe_i] = true;
       else if (!timed_out)
@@ -622,8 +637,8 @@ inline void pump() {
       } else if (got == R_STATUS) {
         // A loader that was already waiting can hold leftovers from an interrupted session, like a write pointer
         // or a half-read field, and arming doesn't clear them. So reset it unless we saw it boot or reset it
-        // already. It comes back with zeroed RAM, in the bootloader if the app was erased, else in the app, and
-        // ENTER kicks that back into the bootloader.
+        // already. It comes back with zeroed RAM, in the bootloader if the app was erased, else in the app. ENTER
+        // kicks that back into the bootloader, or PROBE finds it first if app_addr isn't known.
         if (!cleaned && (!fresh || bl_state != ST_IDLE)) {
           status("Resetting the bootloader...");
           enter_phase(CLEAN);
@@ -644,7 +659,11 @@ inline void pump() {
           finish(false, "The panel didn't go into its bootloader");
           return;
         }
-        enter_phase(ENTER);
+        if (!app_addr) {  // the reset started its app, which was never erased, so find it
+          probe_i = probe_tries = 0;
+          memset(probe_heard, 0, sizeof probe_heard);
+        }
+        enter_phase(app_addr ? ENTER : PROBE);
       }
       break;
     case ARM_WAIT:  // armed, the loader shows 6 and a poll moves it to 2
@@ -747,7 +766,10 @@ inline void pump() {
   // ---- the next request ----
   switch (phase) {
     case PROBE:
-      send_probe(probe_addrs[probe_i]);
+      if (probe_i < probe_n)
+        send_probe(probe_addrs[probe_i]);
+      else
+        send(BL_ADDR, SUB_STATUS);  // a bootloader left waiting by a failed flash
       enter_phase(PROBE_WAIT);
       break;
     case CLEAN:  // reset the loader, it restarts without a reply, then go in again
@@ -762,7 +784,8 @@ inline void pump() {
       if (now < next_ms)
         break;
       fresh = false;
-      send(app_addr, SUB_ARM);  // the app resets without answering, we poll next
+      if (app_addr)
+        send(app_addr, SUB_ARM);  // the app resets without answering, we poll next
       enter_phase(WAIT_BL);
       awaiting = false;
       next_ms = now + 60;  // poll early, the loader only says "starting" for ~150 ms after it boots
