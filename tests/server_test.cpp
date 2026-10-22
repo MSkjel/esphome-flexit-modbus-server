@@ -67,13 +67,18 @@ struct Esp {
   uart::UARTComponent bus;
   FlexitModbusServer server;
   std::vector<size_t> frames;  // what the frame callback got
+  std::vector<uint8_t> heard;  // and the bytes of it that weren't ours
 
   explicit Esp(uint32_t preference_hash = 0) {
     server.set_uart_parent(&bus);
     server.set_server_address(1);
     server.set_preference_hash(preference_hash);
     server.setup();
-    server.add_on_frame_callback([this](const uint8_t *, size_t len) { frames.push_back(len); });
+    server.add_on_frame_callback([this](const uint8_t *data, size_t len) {
+      frames.push_back(len);
+      if (!server.is_own_frame())
+        heard.insert(heard.end(), data, data + len);
+    });
   }
   // bytes on the bus, then a loop
   void hear(const std::vector<uint8_t> &bytes) {
@@ -121,6 +126,42 @@ int main() {
     esp->hear(std::vector<uint8_t>(reply.begin() + 20, reply.end()) + our_read);
     CHECK((esp->frames == std::vector<size_t>{8, 47, 8, 8}));
     CHECK(esp->bus.tx.size() == 8);
+  }
+
+  // The updater's probe of 3: its 13-byte reply a byte at a time, then silence. It arrives whole.
+  {
+    auto esp = std::make_unique<Esp>();
+    esp->server.set_updating(true);
+    uint8_t probe[8] = {3, 0x04, 0, 0, 0, 4};
+    esp->server.send_frame(probe, 6);
+    esp->server.expect_reply(3, 0x04, 13);
+    for (uint8_t b : frame({3, 0x04, 8, 0x43, 0x49, 0, 0, 0, 5, 1, 2}))
+      esp->hear({b});
+    esp->hear({});
+    CHECK((esp->frames == std::vector<size_t>{8, 13}));  // ours, then the reply
+  }
+
+  // A reply after a junk byte or without its first byte, then silence, then a whole one
+  {
+    auto esp = std::make_unique<Esp>();
+    esp->server.set_updating(true);
+    const auto reply = frame({3, 0x04, 8, 0x43, 0x49, 0, 0, 0, 5, 1, 2});
+    for (const auto &bytes :
+         {std::vector<uint8_t>{0xFF} + reply, std::vector<uint8_t>(reply.begin() + 1, reply.end())}) {
+      esp->heard.clear();
+      esp->server.expect_reply(3, 0x04, 13);
+      esp->hear(bytes);
+      esp->hear({});
+      CHECK(esp->heard.size() < bytes.size());  // could still be a frame coming in
+      esp->hear({});
+      esp->hear({});
+      CHECK(esp->heard == bytes);
+    }
+    esp->frames.clear();
+    esp->heard.clear();
+    esp->server.expect_reply(3, 0x04, 13);
+    esp->hear(reply);
+    CHECK((esp->frames == std::vector<size_t>{13}) && esp->heard == reply);
   }
 
   // The filter counter at 50000 s, then 60000 s, then an update. It comes back at 60000.

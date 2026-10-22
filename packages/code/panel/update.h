@@ -73,6 +73,7 @@ static constexpr uint32_t WORK_TIMEOUT_MS = 90000;  // the loader erases on the 
 static constexpr uint32_t TOTAL_TIMEOUT_MS = 20 * 60000;
 static constexpr uint32_t DOWNLOAD_TIMEOUT_MS = 5 * 60000;
 static constexpr uint32_t STALL_MS = 15000;  // no data from the server for this long, it's gone
+static constexpr int READ_AGAIN = -0x7007;   // -ESP_ERR_HTTP_EAGAIN, http_request's read() timed out with no data
 
 enum Phase {
   IDLE,
@@ -113,7 +114,8 @@ inline uint8_t last_sub = 0;     // the sub-command of the request that is out
 inline uint8_t app_addr = 0;     // where the panel answered the probe, and gets the kick into the bootloader
 inline uint8_t probe_addrs[4], probe_n = 0, probe_i = 0, probe_tries = 0;  // the addresses to probe, in order
 inline uint8_t probe_addr = 0;     // the address a probe is out to, 0 = a bootloader request is out
-inline uint16_t probe_ir[4];       // the input registers it answered
+inline bool probe_heard[4];        // which of probe_addrs answered
+inline uint16_t probe_ir[4][4];    // the input registers each answered
 inline int32_t file_version = -1;  // from the staged stream's name, -1 = none
 inline uint8_t bl_state = 0xFF, bl_detail = 0;
 inline uint8_t rx_tail[32];  // the bytes heard since our request went out, oldest first
@@ -178,6 +180,7 @@ inline void send(uint8_t addr, uint8_t sub, const uint8_t *data = nullptr, size_
 inline void send_probe(uint8_t addr) {
   uint8_t f[8] = {addr, 0x04, 0, 0, 0, 4};
   send_raw(f, 6);
+  id(server).expect_reply(addr, 0x04, 13);  // so the component hands it on whole
   probe_addr = addr;
 }
 
@@ -229,7 +232,7 @@ inline bool tail_is(const uint8_t *frame, size_t full, size_t missing) {
 // Matches a reply to the request that is out. Sets reply, and bl_state/bl_detail, reply_code or probe_ir.
 inline void match_reply() {
   if (probe_addr) {
-    if (probe_reply(rx_tail, rx_tail_len, probe_addr, probe_ir)) {
+    if (probe_reply(rx_tail, rx_tail_len, probe_addr, probe_ir[probe_i])) {
       reply = R_PROBE;
       awaiting = false;
     }
@@ -316,6 +319,7 @@ inline void begin() {
     if (a && a != own && std::find(probe_addrs, probe_addrs + probe_n, a) == probe_addrs + probe_n)
       probe_addrs[probe_n++] = a;
   probe_i = probe_tries = 0;
+  memset(probe_heard, 0, sizeof probe_heard);
   phase = PROBE;
   tries = reset_tries = 0;
   cleaned = fresh = bl_seen = false;
@@ -346,14 +350,14 @@ template<typename Response> void download(Response &r) {
   if (!can_start())
     return;
   const esp_partition_t *part = staging;
-  size_t total = r->content_length;
+  size_t total = r->content_length;  // 0 when the server doesn't say, like a chunked one
   staged_len = 0;
   if (r->status_code != 200) {
     status("Download failed (HTTP " + std::to_string(r->status_code) + ")");
     return;
   }
-  if (!total || total > part->size) {
-    status("Download failed, no file size or the file's too big");
+  if (total > part->size) {
+    status("Download failed, the file's too big");
     return;
   }
   status("Downloading...");
@@ -361,40 +365,51 @@ template<typename Response> void download(Response &r) {
   static uint8_t buf[BLK];
   size_t fill = 0, off = 0;
   uint32_t t0 = millis(), heard = t0;
+  bool end = false;
   last_pct = -1;
-  while (off < total && millis() - t0 < DOWNLOAD_TIMEOUT_MS && millis() - heard < STALL_MS) {
-    int n = r->read(buf + fill, std::min(BLK - fill, total - off - fill));
+  while (!end && millis() - t0 < DOWNLOAD_TIMEOUT_MS) {
+    int n = r->read(buf + fill, total ? std::min(BLK - fill, total - off - fill) : BLK - fill);
     App.feed_wdt();
-    if (n < 0)
-      break;
-    if (n == 0) {  // nothing yet with Arduino, the server closed early with ESP-IDF
-      delay(1);
-      continue;
+    if (n == READ_AGAIN && millis() - heard < STALL_MS)
+      continue;  // a slow server, give it until STALL_MS
+    if (n < 0 || (n == 0 && !r->is_read_complete()))
+      break;  // gone, or closed early
+    if (n > 0) {
+      heard = millis();
+      if (!off && !fill && buf[0] != 0x0a) {  // a firmware stream starts with protobuf field 1
+        status("That's not a panel firmware file");
+        return;
+      }
+      fill += n;
     }
-    heard = millis();
-    fill += n;
-    if (!off && fill == (size_t) n && buf[0] != 0x0a) {  // a firmware stream starts with protobuf field 1
-      status("That's not a panel firmware file");
+    end = n == 0 || off + fill == total;
+    if (fill < BLK && !(end && fill))
+      continue;
+    size_t wlen = (fill + 15) & ~(size_t) 15;  // pad the tail to 16, encrypted flash writes 16-byte blocks
+    if (off + wlen > part->size) {
+      status("Download failed, the file's too big");
       return;
     }
-    if (fill < BLK && off + fill < total)
-      continue;
-    size_t wlen = (fill + 3) & ~3u;  // 4-byte align the tail
     std::fill(buf + fill, buf + wlen, 0xFF);
-    if (off % part->erase_size == 0)
-      esp_partition_erase_range(part, off, part->erase_size);
-    if (esp_partition_write(part, off, buf, wlen) != ESP_OK) {
+    if ((off % part->erase_size == 0 && esp_partition_erase_range(part, off, part->erase_size) != ESP_OK) ||
+        esp_partition_write(part, off, buf, wlen) != ESP_OK) {
       status("Couldn't save the download on the ESP");
       return;
     }
     off += fill;
     fill = 0;
-    progress((int) (100ull * off / total));
+    if (total)
+      progress((int) (100ull * off / total));
   }
-  if (off < total) {
+  if (!end) {
+    std::string of = total ? " of " + std::to_string(total) : "";
     status(millis() - t0 >= DOWNLOAD_TIMEOUT_MS
                ? "The download timed out"
-               : "The download stopped at " + std::to_string(off) + " of " + std::to_string(total) + " bytes");
+               : "The download stopped at " + std::to_string(off + fill) + of + " bytes");
+    return;
+  }
+  if (!off) {
+    status("That's not a panel firmware file");
     return;
   }
   staged_len = off;
@@ -408,7 +423,7 @@ inline void finish(bool ok, const std::string &why = "") {
   id(server).set_updating(false);
   phase = ok ? DONE : FAIL;
   if (ok)
-    status("Done, the panel is restarting");
+    status(why.empty() ? "Done, the panel is restarting" : why);
   else
     status((why.empty() ? "Flash failed" : why) + ". Nothing's broken, just try again");
   progress(ok ? 100 : 0);
@@ -450,12 +465,38 @@ inline void enter_phase(Phase p) {
   next_ms = 0;
 }
 
-// The probe's answer decides. Stock answers 0, 0, 0 and its version, ours FW_TYPE, 0, the patch level and the
-// version, see the firmware's mbslave.c.
+// Stock answers the probe with 0, 0, 0 and its version, ours FW_TYPE, 0, the patch level and the version, see the
+// firmware's mbserver.c. Another ESP with this component answers zeros.
+inline bool is_panel(const uint16_t *ir) { return ir[0] == FW_TYPE || (ir[0] == 0 && ir[3] != 0); }
+
+// Every address has been asked, the first panel gets flashed
 inline void probed() {
-  uint8_t addr = probe_addrs[probe_i];
-  const uint16_t *ir = probe_ir;
+  int t = -1;  // the first panel, else the first that answered
+  for (int i = 0; i < probe_n; i++)
+    if (probe_heard[i] && (t < 0 || (is_panel(probe_ir[i]) && !is_panel(probe_ir[t]))))
+      t = i;
+  if (t < 0) {
+    refuse("No panel answered on the bus");
+    return;
+  }
+  uint8_t addr = probe_addrs[t];
+  const uint16_t *ir = probe_ir[t];
   std::string at = " at address " + std::to_string(addr);
+  if (!is_panel(ir)) {
+    char type[8];
+    snprintf(type, sizeof type, "0x%04X", ir[0]);
+    refuse(ir[0] ? std::string("Unknown panel type ") + type + at
+                 : "No panel answered, only something" + at + " that looks like an ESP");
+    return;
+  }
+  // Arming the loader at 1 is the same frame as the kick, so whatever runs at 1 would be kicked too
+  for (int i = 0; i < probe_n && addr != BL_ADDR; i++) {
+    if (probe_heard[i] && probe_addrs[i] == BL_ADDR) {
+      refuse("Something else is at address 1, where the bootloader answers. Take it or the panel" + at +
+             " off the bus and try again");
+      return;
+    }
+  }
   if (ir[0] == 0) {
     std::string v = std::to_string(ir[3] >> 8) + "." + std::to_string(ir[3] & 0xFF);
     if (ir[3] >> 8 != 7 && !force) {
@@ -463,7 +504,7 @@ inline void probed() {
       return;
     }
     status("Stock panel " + v + at + ", flashing");
-  } else if (ir[0] == FW_TYPE) {
+  } else {
     uint32_t have = (uint32_t) (ir[3] >> 8) << 16 | (ir[3] & 0xFF) << 8 | (ir[2] & 0xFF);
     std::string v = version_text(have);
     if ((int32_t) have == file_version && !force) {
@@ -472,11 +513,6 @@ inline void probed() {
     }
     std::string to = file_version < 0 ? "unknown version" : version_text((uint32_t) file_version);
     status("Panel " + v + " → " + to + at);
-  } else {
-    char type[8];
-    snprintf(type, sizeof type, "0x%04X", ir[0]);
-    refuse(std::string("Unknown panel type ") + type);
-    return;
   }
   app_addr = addr;
   enter_phase(ENTER);
@@ -551,28 +587,25 @@ inline void pump() {
 
   // ---- react to what came back ----
   switch (phase) {
-    case PROBE_WAIT:  // the panel answered, or one more try at this address, then the next
-      if (got == R_PROBE) {
-        probed();
+    case PROBE_WAIT:  // an answer, or one more try at this address, then the next until all are asked
+      if (got == R_PROBE)
+        probe_heard[probe_i] = true;
+      else if (!timed_out)
         break;
-      }
-      if (!timed_out)
-        break;
-      if (++probe_tries < 2) {
+      else if (++probe_tries < 2) {
         enter_phase(PROBE);
         break;
       }
       probe_tries = 0;
-      if (++probe_i < probe_n) {
+      if (++probe_i < probe_n)
         enter_phase(PROBE);
-        break;
-      }
-      refuse("No panel answered on the bus");
-      return;
+      else
+        probed();
+      break;
     case RESET_WAIT:  // done once the loader stops answering or says it's starting, it missed the reset otherwise
       if (got == R_STATUS && bl_state != ST_BOOT) {
-        if (++reset_tries >= 3) {
-          finish(false, "The panel didn't restart");
+        if (++reset_tries >= 3) {  // the firmware's in already
+          finish(true, "The new firmware is in, but the panel didn't restart. Power it off and on");
           return;
         }
         enter_phase(RESET);
@@ -676,13 +709,11 @@ inline void pump() {
           enter_phase(PIECE_TX);
           break;
         }  // never arrived, send it again
-        if (bl_state == ST_IDLE) {
-          finish(false, "The panel dropped out of the update");
-          return;
-        }
-      } else if (timed_out) {
-        // Lost the poll's reply. If the loader was in 6 the poll moved it to 2 and the piece is in. If the piece
-        // never arrived it's in 2 as well. No way to tell, so we stop.
+        finish(false, "The panel dropped out of the update");  // idle, or starting after a restart
+        return;
+      } else if (timed_out || got == R_EXC) {
+        // Lost the poll's reply, or only an exception came. If the loader was in 6 the poll moved it to 2 and the
+        // piece is in. If the piece never arrived it's in 2 as well. No way to tell, so we stop.
         finish(false, "Lost the panel's answer at a bad moment");
         return;
       }

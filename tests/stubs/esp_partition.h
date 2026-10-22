@@ -11,5 +11,5 @@ struct esp_partition_t {
 };
 
 esp_err_t esp_partition_read(const esp_partition_t *p, size_t off, void *dst, size_t len);
-inline esp_err_t esp_partition_erase_range(const esp_partition_t *, size_t, size_t) { return ESP_OK; }
-inline esp_err_t esp_partition_write(const esp_partition_t *, size_t, const void *, size_t) { return ESP_OK; }
+esp_err_t esp_partition_erase_range(const esp_partition_t *p, size_t off, size_t len);
+esp_err_t esp_partition_write(const esp_partition_t *p, size_t off, const void *src, size_t len);

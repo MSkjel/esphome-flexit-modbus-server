@@ -262,7 +262,8 @@ newest release and goes back to the `url` var each time the ESP restarts.
 Before anything is flashed the ESP looks for the panel on the bus the way the unit does at start-up, and the reply
 says what runs there. A stock panel is flashed if it's a 7.x, and our firmware if the file is another version.
 `Panel Firmware Force` overrides that: the same version again, or a stock panel that isn't 7.x. Only 7.x has been
-tested, so with another stock version you're on your own.
+tested, so with another stock version you're on your own. The bootloader always answers at address 1, so to flash
+a panel at 3, take anything else at 1 off the bus first.
 
 A stock panel is at address 1, so the ESP has to be at 2 until the panel is flashed. The new panel comes up at 3,
 so move the ESP to 1 then. Restart the ventilation unit after flashing, it only looks for panels when it starts.

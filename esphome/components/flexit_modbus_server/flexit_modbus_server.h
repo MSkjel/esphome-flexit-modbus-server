@@ -329,6 +329,13 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
    */
   void send_frame(uint8_t *frame, size_t len) { mb_.sendResponse(frame, len, false); }
 
+  /// @brief The next frame from `address` with `function` is a reply of `len` bytes, for a read we sent.
+  void expect_reply(uint8_t address, uint8_t function, size_t len) {
+    reply_addr_ = address;
+    reply_function_ = function;
+    reply_len_ = len;
+  }
+
   /**
    * @brief For panel firmware updates. The updater drives the bus and the panel's bootloader answers at
    *        our address (1), so we stop answering. We still read the bus and call the frame callback.
@@ -453,6 +460,10 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
   uint8_t reply_addr_{0};
   uint8_t reply_function_{0};
   size_t reply_len_{0};
+
+  /// @brief What the splitter left in the library's buffer last time, and when the buffer last grew. See setup().
+  size_t rx_left_{0};
+  uint32_t rx_grew_us_{0};
 
   /// @brief The register the CS60 last read from us and its value then, for its FC65 answer.
   uint16_t read_reg_{UINT16_MAX};

@@ -109,6 +109,8 @@ void FlexitModbusServer::setup() {
   mb_.onRawBuffer = [this](uint8_t *data, size_t length) -> size_t {
     size_t offset = 0;
     size_t passed = 0;  // how far the frame callback has been given
+    if (length != rx_left_)
+      rx_grew_us_ = micros();
 
     while (length - offset >= MIN_FRAME_LENGTH) {
       size_t avail = length - offset;
@@ -178,6 +180,14 @@ void FlexitModbusServer::setup() {
       offset += len;
     }
 
+    // While updating, a reply after junk or missing its head never splits off as a frame. Once the line's been
+    // quiet for t3.5 plus the RX threshold, the rest goes on as is and the updater matches its tail.
+    if (updating_ && offset < length &&
+        micros() - rx_grew_us_ >= 1900 + std::max<uint32_t>(rx_threshold_() - 1, 2) * 87) {
+      offset = length;
+      reply_len_ = 0;
+    }
+
     if (offset > passed) {
       frame_callback_.call(data + passed, offset - passed);
       last_frame_us_ = micros();
@@ -185,6 +195,7 @@ void FlexitModbusServer::setup() {
     if (offset < length)  // something after the status broadcast
       status_last_ = false;
     status_part_ = status_part(data + offset, length - offset);
+    rx_left_ = length - offset;
     return offset;
   };
 

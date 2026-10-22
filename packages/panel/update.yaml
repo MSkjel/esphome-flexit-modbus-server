@@ -13,10 +13,11 @@
 # streams it to the panel's ROM bootloader. The bootloader decrypts it and checks the whole image before marking
 # it valid, as the last thing it writes. A bad download, a wrong image or a frame the unit talked over fails that
 # check, and then the panel has nothing bootable and waits in the bootloader for another try.
-# Before anything is flashed the ESP probes for the panel the way the unit does at start-up: the address it
-# reported over the link if any, then 3, 1 and 2, never the ESP's own. The reply says what runs there. A stock
-# panel is flashed if it's a 7.x, our firmware if the file is another version, and nothing else. "Panel Firmware
-# Force" also flashes the same version again, or a stock panel that isn't 7.x. The bootloader always answers at 1.
+# Before anything is flashed the ESP probes the bus the way the unit does at start-up: the address the panel
+# reported over the link if any, then 3, 1 and 2, never the ESP's own. The first panel that answers gets flashed, a
+# stock one if it's a 7.x, ours if the file is another version, and nothing else. "Panel Firmware Force" also
+# flashes the same version again, or a stock panel that isn't 7.x. The bootloader always answers at 1, so a panel
+# elsewhere is only flashed with nothing else at 1.
 # A flash takes a few minutes, with the panel's screen dark and its three LEDs on.
 # Right after an OTA update of the ESP itself, wait about a minute until it has booted fine. Until then it keeps
 # its previous firmware in the spare slot in case it has to go back.
