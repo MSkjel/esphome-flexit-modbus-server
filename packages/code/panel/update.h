@@ -467,7 +467,7 @@ inline void probed() {
     uint32_t have = (uint32_t) (ir[3] >> 8) << 16 | (ir[3] & 0xFF) << 8 | (ir[2] & 0xFF);
     std::string v = version_text(have);
     if ((int32_t) have == file_version && !force) {
-      refuse("Panel already has " + v);
+      refuse("Panel already has " + v + ". Panel Firmware Force flashes it again");
       return;
     }
     std::string to = file_version < 0 ? "unknown version" : version_text((uint32_t) file_version);

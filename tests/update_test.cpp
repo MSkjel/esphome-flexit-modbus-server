@@ -180,7 +180,7 @@ int main() {
   CHECK(phase == WAIT_BL && last_status == "Panel 0.1.0 → 0.2.0 at address 3");
   at[3] = fc4(3, FW_TYPE, 0, 0, 0x0002);
   probe("ci600 0.2.0", at);
-  CHECK(phase == FAIL && last_status == "Panel already has 0.2.0");
+  CHECK(phase == FAIL && last_status == "Panel already has 0.2.0. Panel Firmware Force flashes it again");
   force = true;
   probe("ci600 0.2.0", at);
   CHECK(phase == WAIT_BL && last_status == "Panel 0.2.0 → 0.2.0 at address 3");
