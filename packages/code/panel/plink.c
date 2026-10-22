@@ -79,8 +79,8 @@ int plink_kind(uint16_t key) {
       return PLINK_BYTES;
   }
   bool def = key >= K_ITEM_DEF && key < K_ITEM_DEF + N_ITEMS, text = key >= K_ITEM_LABEL && key < K_ITEM_UNIT + N_ITEMS,
-       word = key >= K_ITEM_ON && key < K_ITEM_OFF + N_ITEMS;
-  return def || text || word || key == K_ITEM_HELP ? PLINK_BYTES : PLINK_VALUE;
+       word = key >= K_ITEM_ON && key < K_ITEM_OFF + N_ITEMS, val = key >= K_ITEM_TEXT && key < K_ITEM_TEXT + N_ITEMS;
+  return def || text || word || val || key == K_ITEM_HELP ? PLINK_BYTES : PLINK_VALUE;
 }
 
 uint32_t plink_number(const uint8_t *b, int n) {

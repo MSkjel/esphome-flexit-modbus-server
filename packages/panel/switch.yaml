@@ -1,9 +1,12 @@
 # One of your switches on the panel, on the smart home or comfort page.
 #   - path: packages/panel/switch.yaml
 #     vars: {entity: garden_lights, label: Garden lights|Hagelys, icon: bulb}
-# name, label, help, icon, page, view and menu work as in sensor.yaml
+# name, label, help, icon, page, view and menu work as in sensor.yaml, on_text and off_text as in
+# binary_sensor.yaml
 defaults:
   name: ""
+  on_text: ""
+  off_text: ""
   icon: circle
   help: ""
   page: smart_home
@@ -17,6 +20,7 @@ esphome:
             static int i = flexit::panel::Item(std::string("${name}").empty() ? "${entity}" : "${name}", ITEM_TOGGLE)
                                .label("${label}")
                                .help("${help}")
+                               .states("${on_text}", "${off_text}")
                                .icon("${icon}")
                                .page("${page}")
                                .view(${view})

@@ -31,14 +31,17 @@
 #define K_ITEM_UNIT 0x4C0   // + item: text
 #define K_ITEM_ON 0x540     // + item: a toggle's word for on in the panel's LANGUAGE, empty for On
 #define K_ITEM_OFF 0x580    // + item: and for off
+#define K_ITEM_TEXT 0x5C0   // + item: an ITEM_TEXT's value, text in the panel's LANGUAGE
 // Panel -> ESP: n, asking for item n's help text, shown with ?. ESP -> panel: n, then the text, at most
 // PLINK_HELP_MAX bytes.
 #define K_ITEM_HELP 0x500
 #define N_ITEMS 24
 #define ITEM_DEF_LEN 24         // DEF length in bytes
+#define ITEM_TEXT_LEN 16        // the panel's room for an ITEM_TEXT value, with the 0
 #define ITEM_UNKNOWN INT32_MIN  // VALUE when there's none, like from a sensor that's unavailable
 #define PLINK_HELP_MAX 78       // with the item byte within PBULK_MSG_MAX, so it goes in an ordinary window
-enum { ITEM_NONE, ITEM_SENSOR, ITEM_TOGGLE, ITEM_NUMBER, ITEM_BUTTON };  // DEF type
+// DEF type. ITEM_TEXT is read-only and shows its TEXT, the DEF's value fields are unused
+enum { ITEM_NONE, ITEM_SENSOR, ITEM_TOGGLE, ITEM_NUMBER, ITEM_BUTTON, ITEM_TEXT };
 // DEF flags
 #define ITEMF_VIEW 1     // on its page's view. Smart home shows a tile, comfort a gauge (sensor) or chip (toggle)
 #define ITEMF_MENU 2     // a row in its page's menu

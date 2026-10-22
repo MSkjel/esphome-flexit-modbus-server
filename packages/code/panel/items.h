@@ -72,7 +72,7 @@ inline int decimals_of(float step) {
 }
 
 // What the panel still needs of an item
-enum : uint8_t { NEED_DEF = 1, NEED_LABEL = 2, NEED_UNIT = 4, NEED_STATES = 8, NEED_VALUE = 16 };
+enum : uint8_t { NEED_DEF = 1, NEED_LABEL = 2, NEED_UNIT = 4, NEED_STATES = 8, NEED_VALUE = 16, NEED_TEXT = 32 };
 
 class Item {
  public:
@@ -131,15 +131,20 @@ class Item {
   int add();  // index on the panel, -1 once N_ITEMS are taken
 
   int32_t scaled(float v) const { return (int32_t) lroundf(v * powf(10, dec_)); }
-  uint8_t texts() const { return NEED_LABEL | NEED_UNIT | (type_ == ITEM_TOGGLE ? NEED_STATES : 0); }
+  // What goes again in the panel's new language. An ITEM_TEXT's value is a text too.
+  uint8_t texts() const {
+    return NEED_LABEL | NEED_UNIT | (type_ == ITEM_TOGGLE ? NEED_STATES : 0) |
+           (type_ == ITEM_TEXT && known_ ? NEED_TEXT : 0);
+  }
+  uint8_t value() const { return known_ && type_ != ITEM_TEXT ? NEED_VALUE : 0; }
 
-  std::string name_, label_, unit_, help_, icon_ = "circle", on_, off_;
+  std::string name_, label_, unit_, help_, icon_ = "circle", on_, off_, text_;
   uint8_t type_, flags_ = ITEMF_VIEW | ITEMF_MENU;
   int dec_ = 0;
   float min_ = 0, max_ = 1, step_ = 1, level_[4] = {};
   std::function<void(float)> set_;
   int32_t value_ = 0;
-  bool known_ = false;  // has a value to send
+  bool known_ = false;  // has a value or text to send
   uint16_t id_ = 0;
   uint8_t need_ = NEED_DEF;
   bool echo_ = false;  // changed on the panel, send the value back at echo_ms_
@@ -171,7 +176,7 @@ inline int Item::add() {
         taken = true;
       }
   }
-  if (type_ == ITEM_SENSOR)
+  if (type_ == ITEM_SENSOR || type_ == ITEM_TEXT)
     flags_ |= ITEMF_RO;
   // The panel takes the levels as 16 bits in the value's units, 900 ppm with 1 decimal is 9000. Fewer decimals
   // until they fit.
@@ -215,8 +220,8 @@ inline bool send_def(int i) {
   return link::send(K_ITEM_DEF + i, d, sizeof d);
 }
 
-inline bool send_text(uint16_t key, const std::string &both) {
-  std::string t = cut(in_language(both), PLINK_TEXT_MAX);
+inline bool send_text(uint16_t key, const std::string &both, size_t max = PLINK_TEXT_MAX) {
+  std::string t = cut(in_language(both), max);
   return link::send(key, (const uint8_t *) t.data(), (int) t.size());
 }
 
@@ -236,6 +241,7 @@ inline void items_loop() {
                   : part == NEED_LABEL  ? send_text(K_ITEM_LABEL + i, it.label_)
                   : part == NEED_UNIT   ? send_text(K_ITEM_UNIT + i, it.unit_)
                   : part == NEED_STATES ? send_text(K_ITEM_ON + i, it.on_) && send_text(K_ITEM_OFF + i, it.off_)
+                  : part == NEED_TEXT   ? send_text(K_ITEM_TEXT + i, it.text_, ITEM_TEXT_LEN - 1)
                                         : link::send(K_ITEM_VALUE + i, (uint32_t) it.value_);
       if (!sent)
         return;
@@ -247,7 +253,7 @@ inline void items_loop() {
 // After the panel's hello, it needs them all
 inline void items_hello() {
   for (auto &it : items)
-    it.need_ = NEED_DEF | it.texts() | (it.known_ ? NEED_VALUE : 0);
+    it.need_ = NEED_DEF | it.texts() | it.value();
 }
 
 // In the entity's units, NaN when it has none. Only sent if it changed.
@@ -262,6 +268,16 @@ inline void item_value(int i, float v) {
   it.known_ = true;
   it.need_ |= NEED_VALUE;
   it.echo_ = false;  // the new value goes anyway
+}
+
+// An ITEM_TEXT's value, "English|Norsk" like the label. The panel shows a dash for "".
+inline void item_value_text(int i, const std::string &both) {
+  if (i < 0 || i >= (int) items.size() || (items[i].known_ && items[i].text_ == both))
+    return;
+  Item &it = items[i];
+  it.text_ = both;
+  it.known_ = true;
+  it.need_ |= NEED_TEXT;
 }
 
 // met.h uses these to name the weather item after the weather
