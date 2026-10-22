@@ -75,30 +75,57 @@ template<typename Img> void add_image(const std::string &name, Img &&image, cons
   add(name, s);
 }
 
-// A picture from a URL (online_picture.yaml). Downloaded when it's shown and its pixels freed once it's converted.
-// A failed download is tried again 30 s later, then twice as long each time up to 30 min, since each try holds up
-// the main loop until the server answers or http_request times out.
+// A picture from a URL (online_picture.yaml). Downloaded when it's shown, every `every` after that while it's
+// shown, and its pixels are freed once it's converted. A failed download is tried again 30 s later, then twice as
+// long each time up to 30 min, since each try holds up the main loop until the server answers or http_request
+// times out. Before a download the server is asked how big the file is (a request that hangs up after the headers),
+// because online_image keeps a JPEG whole and crashes the ESP on one that doesn't fit its memory.
+struct Online {
+  std::string url;
+  std::function<size_t(const std::string &)> length;  // what the server says the file is, 0 = unknown
+  std::function<void()> fetch;
+  uint32_t every = 0;         // ms between downloads while shown, 0 = only when shown
+  uint32_t fetched = 0;       // when the last one started
+  uint32_t at = 0, wait = 0;  // when to try again after a failure, and the wait after that one
+};
+inline std::map<std::string, std::shared_ptr<Online>> online;
+
+// "never", "30s", "10min", "1h" as in the yaml
+inline uint32_t interval_ms(const char *s) {
+  char *end;
+  unsigned long n = strtoul(s, &end, 10);
+  return n == 0 ? 0 : n * (!strncmp(end, "ms", 2) ? 1 : *end == 'h' ? 3600000 : *end == 'm' ? 60000 : 1000);
+}
+
+inline bool fits(const std::string &name, Online &o);  // below, it needs S
+
 template<typename Img>
-void add_online_image(const std::string &name, Img &&image, const char *encoding, const char *quality) {
+void add_online_image(const std::string &name, Img &&image, const char *url, const char *every, const char *encoding,
+                      const char *quality, std::function<size_t(const std::string &)> length) {
   auto *img = ptr_of(image);
-  struct Retry {
-    uint32_t at = 0, wait = 0;  // when to try again, and the wait after that one
-  };
-  auto retry = std::make_shared<Retry>();
+  auto o = std::make_shared<Online>();
+  o->url = url;
+  o->every = interval_ms(every);
+  o->length = std::move(length);
+  o->fetch = [img]() { img->update(); };
+  online[name] = o;
   Source s;
-  s.size = [img, retry](int &w, int &h) {  // starts the download if there's nothing yet, we get asked again
+  s.size = [img, o, name](int &w, int &h) {  // starts the download if there's nothing yet, we get asked again
     w = img->get_width();
     h = img->get_height();
     if (img->is_decoding())
       return false;
     if (w > 0 && h > 0) {
-      retry->wait = 0;
+      o->wait = 0;
       return true;
     }
-    if (!retry->wait || (int32_t) (millis() - retry->at) >= 0) {
-      retry->wait = retry->wait ? std::min<uint32_t>(2 * retry->wait, 30 * 60000) : 30000;
-      retry->at = millis() + retry->wait;
-      img->update();
+    if (!o->wait || (int32_t) (millis() - o->at) >= 0) {
+      o->wait = o->wait ? std::min<uint32_t>(2 * o->wait, 30 * 60000) : 30000;
+      o->at = millis() + o->wait;
+      if (fits(name, *o)) {
+        o->fetched = millis();
+        o->fetch();
+      }
     }
     return false;
   };
@@ -110,6 +137,16 @@ void add_online_image(const std::string &name, Img &&image, const char *encoding
   s.encoding = encoding_of(encoding);
   s.quality = quality_of(quality);
   add(name, s);
+}
+
+// The URL changed, like ha_picture.yaml's token. The next look at the picture downloads it again right away.
+template<typename Img> void online_url(const std::string &name, Img &&image, const std::string &url) {
+  auto it = online.find(name);
+  if (it == online.end())
+    return;
+  ptr_of(image)->set_url(url);
+  it->second->url = url;
+  it->second->wait = 0;
 }
 
 // A converted picture. pal and rows are only for 16 colours.
@@ -752,9 +789,28 @@ inline void send() {
 inline bool sending() { return S.phase == SEND && S.head; }
 
 // every 20 ms
+// A download only starts if the file fits. The server's size minus what's free, with room for the decoded picture.
+inline bool fits(const std::string &name, Online &o) {
+  size_t n = o.length(o.url), room = RAMAllocator<uint8_t>().get_max_free_block_size();
+  if (n && n + 16384 > room) {
+    ESP_LOGW("panel", "Picture %s: %u KB, the ESP has %u KB free. Ask for a smaller one", name.c_str(),
+             (unsigned) (n / 1024), (unsigned) (room / 1024));
+    if (name == S.want)
+      S.waiting = std::to_string(n / 1024) + " KB is too big for the ESP";
+    return false;
+  }
+  return true;
+}
+
 inline void loop() {
   if (S.to_clear && !anim::sending())
     S.to_clear = !link::send(K_PIC_CLEAR, 0);
+  auto o = online.find(S.want);  // the shown online picture downloads again every `every`
+  if (o != online.end() && o->second->every && S.phase == IDLE && !S.redo &&
+      millis() - o->second->fetched >= o->second->every && fits(S.want, *o->second)) {
+    o->second->fetched = millis();
+    o->second->fetch();
+  }
   if (!ask())
     return;
   uint32_t t0 = micros();

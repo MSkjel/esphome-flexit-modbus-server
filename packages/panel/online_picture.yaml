@@ -6,9 +6,10 @@
 #   - path: packages/panel/online_picture.yaml          # a Frigate camera, scaled by Frigate itself
 #     vars: {name: entrance, url: "http://frigate.local:5000/api/entrance/latest.jpg?h=120"}
 # RAM: online_image keeps a 4 KB download buffer from boot. A JPEG has to fit in it whole, so it grows to the file's
-# size on the first download and stays that big, and the server has to send the size (Content-Length). The picture
-# takes width x height x 2 bytes until it's converted, 38 KB at the default resize of 160x120, which gets blown up
-# to fill the screen. With PSRAM you can use resize: 320x240, 150 KB.
+# size on the first download and stays that big. Before each download the ESP asks the server for the size and
+# skips a file that wouldn't fit, with the reason in "Panel Picture Status"; a server that sends no size is
+# trusted. The picture takes width x height x 2 bytes until it's converted, 38 KB at the default resize of
+# 160x120, which gets blown up to fill the screen. With PSRAM you can use resize: 320x240, 150 KB.
 # format: PNG, JPEG, BMP or AUTO
 # encoding and quality work as in picture.yaml.
 # Home Assistant's own camera URLs need a token we can't send. Use the camera's own address, like Frigate's, or
@@ -22,6 +23,7 @@ defaults:
 
 display: []
 http_request:
+  id: panel_http
 
 image:
   - platform: online_image
@@ -31,7 +33,7 @@ image:
     type: RGB565
     resize: ${resize}
     buffer_size: 4096  # online_image's default is 64 KB
-    update_interval: ${update_interval}
+    update_interval: never  # picture.h downloads it, after checking the file fits
     on_download_finished:
       - lambda: flexit::panel::picture::changed("${name}");
     on_error:
@@ -45,4 +47,13 @@ esphome:
   on_boot:
     - then:
         - lambda: |-
-            flexit::panel::picture::add_online_image("${name}", id(panel_picture_${name}), "${encoding}", "${quality}");
+            flexit::panel::picture::add_online_image(
+                "${name}", id(panel_picture_${name}), "${url}", "${update_interval}", "${encoding}", "${quality}",
+                [](const std::string &url) -> size_t {  // asks for the file and hangs up after the headers
+                  auto c = id(panel_http).get(url);
+                  if (!c)
+                    return 0;
+                  size_t n = c->content_length;
+                  c->end();
+                  return n;
+                });

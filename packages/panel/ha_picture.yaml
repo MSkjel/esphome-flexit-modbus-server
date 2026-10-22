@@ -25,7 +25,8 @@ text_sensor:
     internal: true
     on_value:
       - lambda: |-
-          id(panel_picture_${name}).set_url("${ha_url}/api/${kind}_proxy/${entity_id}?width=${width}&token=" + x);
+          flexit::panel::picture::online_url("${name}", id(panel_picture_${name}),
+                                             "${ha_url}/api/${kind}_proxy/${entity_id}?width=${width}&token=" + x);
 
 packages:
   picture: !include
