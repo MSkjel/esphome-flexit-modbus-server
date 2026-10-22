@@ -38,6 +38,9 @@
 #define N_ITEMS 24
 #define ITEM_DEF_LEN 24         // DEF length in bytes
 #define ITEM_TEXT_LEN 16        // the panel's room for an ITEM_TEXT value, with the 0
+#define ITEM_LABEL 20           // and for a label
+#define ITEM_UNIT 8             // a unit
+#define ITEM_STATE 12           // a toggle's word for on or off
 #define ITEM_UNKNOWN INT32_MIN  // VALUE when there's none, like from a sensor that's unavailable
 #define PLINK_HELP_MAX 78       // with the item byte within PBULK_MSG_MAX, so it goes in an ordinary window
 // DEF type. ITEM_TEXT is read-only and shows its TEXT, the DEF's value fields are unused

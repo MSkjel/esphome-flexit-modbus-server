@@ -19,10 +19,11 @@ esphome:
         - lambda: |-
             auto &t = id(${entity}).traits;
             static int i = flexit::panel::Item(std::string("${name}").empty() ? "${entity}" : "${name}", ITEM_NUMBER)
-                               .label("${label}")
-                               .unit(std::string("${unit}").empty() ? id(${entity}).get_unit_of_measurement_ref().str()
-                                                                    : "${unit}")
-                               .help("${help}")
+                               .label(R"~(${label})~")
+                               .unit(std::string(R"~(${unit})~").empty()
+                                         ? id(${entity}).get_unit_of_measurement_ref().str()
+                                         : R"~(${unit})~")
+                               .help(R"~(${help})~")
                                .icon("${icon}")
                                .decimals(std::string("${decimals}").empty() ? flexit::panel::decimals_of(t.get_step())
                                                                         : atoi("${decimals}"))

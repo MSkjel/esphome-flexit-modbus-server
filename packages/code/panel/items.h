@@ -128,9 +128,17 @@ class Item {
     set_ = std::move(f);
     return *this;
   }
+  Item &echo_ms(uint32_t ms) {  // how long a change on the panel waits for the entity, see item_set()
+    echo_ms_ = ms;
+    return *this;
+  }
   int add();  // index on the panel, -1 once N_ITEMS are taken
 
-  int32_t scaled(float v) const { return (int32_t) lroundf(v * powf(10, dec_)); }
+  // In the panel's units. Never INT32_MIN, that's ITEM_UNKNOWN.
+  int32_t scaled(float v) const {
+    float x = roundf(v * powf(10, dec_));
+    return x >= 2147483648.0f ? INT32_MAX : x <= -2147483648.0f ? -INT32_MAX : (int32_t) x;
+  }
   // What goes again in the panel's new language. An ITEM_TEXT's value is a text too.
   uint8_t texts() const {
     return NEED_LABEL | NEED_UNIT | (type_ == ITEM_TOGGLE ? NEED_STATES : 0) |
@@ -147,8 +155,8 @@ class Item {
   bool known_ = false;  // has a value or text to send
   uint16_t id_ = 0;
   uint8_t need_ = NEED_DEF;
-  bool echo_ = false;  // changed on the panel, send the value back at echo_ms_
-  uint32_t echo_ms_ = 0;
+  bool echo_ = false;  // changed on the panel, send the value back at echo_at_
+  uint32_t echo_at_ = 0, echo_ms_ = 3000;
 
  private:
   Item &flag(uint8_t f, bool on) {
@@ -178,10 +186,32 @@ inline int Item::add() {
   }
   if (type_ == ITEM_SENSOR || type_ == ITEM_TEXT)
     flags_ |= ITEMF_RO;
-  // The panel takes the levels as 16 bits in the value's units, 900 ppm with 1 decimal is 9000. Fewer decimals
-  // until they fit.
+  // Longer texts get cut for the panel, each language's part on its own
+  auto room = [this](const char *what, const std::string &both, size_t max) {
+    for (size_t at = 0; at <= both.size();) {
+      size_t bar = std::min(both.find('|', at), both.size());
+      if (bar - at > max) {
+        ESP_LOGW("panel", "'%s': the panel shows %u bytes of its %s, '%s' is cut", name_.c_str(), (unsigned) max, what,
+                 both.substr(at, bar - at).c_str());
+      }
+      at = bar + 1;
+    }
+  };
+  room("label", label_, ITEM_LABEL - 1);
+  room("unit", unit_, ITEM_UNIT - 1);
+  room("on_text", on_, ITEM_STATE - 1);
+  room("off_text", off_, ITEM_STATE - 1);
+  room("help", help_, PLINK_HELP_MAX);
+  // The panel takes the step as 16 bits and the levels as signed 16 bits, in the value's units: 900 ppm with 1
+  // decimal is 9000. Fewer decimals until they fit.
+  int dec = dec_;
+  while (dec_ > 0 && scaled(step_) > 65535)
+    dec_--;
+  if (dec_ != dec) {
+    ESP_LOGW("panel", "'%s': %d decimals on the panel, so its step fits", name_.c_str(), dec_);
+  }
   if (flags_ & ITEMF_LEVELS) {
-    int dec = dec_;
+    dec = dec_;
     auto fit = [this] {
       for (float l : level_)
         if (std::abs(scaled(l)) > 32767)
@@ -211,7 +241,7 @@ inline bool send_def(int i) {
     for (int k = 0; k < n; k++)
       d[at + k] = (uint8_t) (v >> 8 * k);
   };
-  put(4, (uint32_t) std::max(1, (int) it.scaled(it.step_)), 2);
+  put(4, (uint32_t) std::min<int32_t>(65535, std::max<int32_t>(1, it.scaled(it.step_))), 2);
   put(6, it.id_, 2);
   put(8, (uint32_t) it.scaled(it.min_), 4);
   put(12, (uint32_t) it.scaled(it.max_), 4);
@@ -220,7 +250,7 @@ inline bool send_def(int i) {
   return link::send(K_ITEM_DEF + i, d, sizeof d);
 }
 
-inline bool send_text(uint16_t key, const std::string &both, size_t max = PLINK_TEXT_MAX) {
+inline bool send_text(uint16_t key, const std::string &both, size_t max) {
   std::string t = cut(in_language(both), max);
   return link::send(key, (const uint8_t *) t.data(), (int) t.size());
 }
@@ -230,7 +260,7 @@ inline bool send_text(uint16_t key, const std::string &both, size_t max = PLINK_
 inline void items_loop() {
   for (size_t i = 0; i < items.size(); i++) {
     Item &it = items[i];
-    if (it.echo_ && (int32_t) (millis() - it.echo_ms_) >= 0) {
+    if (it.echo_ && (int32_t) (millis() - it.echo_at_) >= 0) {
       it.echo_ = false;
       if (it.known_)
         it.need_ |= NEED_VALUE;
@@ -238,9 +268,10 @@ inline void items_loop() {
     while (it.need_ && link::waiting() < link::BACKLOG) {
       uint8_t part = it.need_ & -it.need_;  // the lowest, so the definition goes first
       bool sent = part == NEED_DEF      ? send_def((int) i)
-                  : part == NEED_LABEL  ? send_text(K_ITEM_LABEL + i, it.label_)
-                  : part == NEED_UNIT   ? send_text(K_ITEM_UNIT + i, it.unit_)
-                  : part == NEED_STATES ? send_text(K_ITEM_ON + i, it.on_) && send_text(K_ITEM_OFF + i, it.off_)
+                  : part == NEED_LABEL  ? send_text(K_ITEM_LABEL + i, it.label_, ITEM_LABEL - 1)
+                  : part == NEED_UNIT   ? send_text(K_ITEM_UNIT + i, it.unit_, ITEM_UNIT - 1)
+                  : part == NEED_STATES ? send_text(K_ITEM_ON + i, it.on_, ITEM_STATE - 1) &&
+                                              send_text(K_ITEM_OFF + i, it.off_, ITEM_STATE - 1)
                   : part == NEED_TEXT   ? send_text(K_ITEM_TEXT + i, it.text_, ITEM_TEXT_LEN - 1)
                                         : link::send(K_ITEM_VALUE + i, (uint32_t) it.value_);
       if (!sent)
@@ -295,15 +326,15 @@ inline void item_icon(int i, const std::string &name) {
   items[i].need_ |= NEED_DEF;
 }
 
-// Changed on the panel. If the entity hasn't changed in 3 s we send back the value it has, so a refused change
-// shows. An entity that answers later than that would flip the panel back and forth.
+// Changed on the panel. If the entity hasn't changed within its echo_ms we send back the value it has, so a refused
+// change shows. An entity that answers later than that would flip the panel back and forth.
 inline void item_set(int i, uint32_t v) {
   if (i >= (int) items.size() || !items[i].set_)
     return;
   Item &it = items[i];
   it.set_((int32_t) v / powf(10, it.dec_));
   it.echo_ = true;
-  it.echo_ms_ = millis() + 3000;
+  it.echo_at_ = millis() + it.echo_ms_;
 }
 
 // ? pressed on item i

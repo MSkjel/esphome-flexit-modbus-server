@@ -8,7 +8,8 @@
 #     vars: {name: front_door, entity_id: lock.front_door, label: Front door|Inngangsdør, icon: lock,
 #            on_action: lock.lock, off_action: lock.unlock, on_state: locked, on_text: Locked|Låst,
 #            off_text: Unlocked|Ulåst}
-# The switch is on while the entity's state is on_state. name works as in ha_sensor.yaml.
+# The switch is on while the entity's state is on_state. name works as in ha_sensor.yaml. The panel shows a dash
+# until Home Assistant has a state, and a change on the panel goes back if the entity hasn't followed in 15 s.
 defaults:
   on_action: homeassistant.turn_on
   off_action: homeassistant.turn_off
@@ -42,17 +43,29 @@ switch:
           data:
             entity_id: ${entity_id}
 
-packages:
-  item: !include
-    file: switch.yaml
-    vars:
-      entity: ha_${name}
-      name: ${name}
-      label: ${label}
-      help: ${help}
-      icon: ${icon}
-      page: ${page}
-      view: ${view}
-      menu: ${menu}
-      on_text: ${on_text}
-      off_text: ${off_text}
+# Like switch.yaml, but the panel follows the entity's state, not the switch
+esphome:
+  on_boot:
+    - then:
+        - lambda: |-
+            static int i = flexit::panel::Item("${name}", ITEM_TOGGLE)
+                               .label(R"~(${label})~")
+                               .help(R"~(${help})~")
+                               .states(R"~(${on_text})~", R"~(${off_text})~")
+                               .icon("${icon}")
+                               .page("${page}")
+                               .view(${view})
+                               .menu(${menu})
+                               .echo_ms(15000)  // a lock can take a while, and may say "locking" first
+                               .on_set([](float v) {
+                                 if (v)
+                                   id(ha_${name}).turn_on();
+                                 else
+                                   id(ha_${name}).turn_off();
+                               })
+                               .add();
+            flexit::panel::item_value(i, NAN);  // a dash, a panel change goes back to it until HA has a state
+            id(ha_${name}_state).add_on_state_callback([](const std::string &s) {
+              bool unknown = s.empty() || s == "unavailable" || s == "unknown";
+              flexit::panel::item_value(i, unknown ? NAN : s == "${on_state}");
+            });

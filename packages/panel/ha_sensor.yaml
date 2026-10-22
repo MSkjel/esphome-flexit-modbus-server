@@ -4,7 +4,8 @@
 #     vars: {name: hot_water, entity_id: sensor.water_heater_temperature, label: Hot water|Varmtvann, icon: shower,
 #            unit: °C}
 # name is the item's name on the panel link and makes the ESPHome id. attribute takes that attribute of the
-# entity instead of its state. decimals is 1 if empty, as a homeassistant sensor has.
+# entity instead of its state. decimals is 1 if empty, as a homeassistant sensor has. Give it a unit, the ESP
+# doesn't get Home Assistant's.
 defaults:
   attribute: ""
   unit: ""

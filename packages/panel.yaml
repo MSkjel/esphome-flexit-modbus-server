@@ -6,6 +6,12 @@
 # setting. More in packages/panel/. From your own YAML, call the same as C++ in a lambda, like
 # flexit::panel::notify("Filter change due in a week", "filter", "warning").
 
+globals:
+  - id: panel_language  # the panel's language, so its items' texts are right straight after a restart
+    type: int
+    restore_value: true
+    initial_value: "0"
+
 time:
   - platform: homeassistant
     id: flexit_panel_time
@@ -76,7 +82,7 @@ event:
   - platform: template
     id: panel_action
     name: "Panel Action"
-    event_types: [reset_filter, reset_alarms, clear_history, restart, factory_reset]
+    event_types: [reset_filter, reset_alarms, clear_history, factory_reset]
 
 # The panel's settings show what it reports, unknown until it has, and what's set from here. The rest of them are in
 # its own menu and the panel_set action.

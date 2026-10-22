@@ -19,9 +19,9 @@ esphome:
     - then:
         - lambda: |-
             static int i = flexit::panel::Item(std::string("${name}").empty() ? "${entity}" : "${name}", ITEM_TOGGLE)
-                               .label("${label}")
-                               .help("${help}")
-                               .states("${on_text}", "${off_text}")
+                               .label(R"~(${label})~")
+                               .help(R"~(${help})~")
+                               .states(R"~(${on_text})~", R"~(${off_text})~")
                                .icon("${icon}")
                                .page("${page}")
                                .view(${view})

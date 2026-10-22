@@ -23,6 +23,8 @@ the ESP goes to address 1.
 ```yaml
 substitutions:
   flexit_address: "1"
+  flexit_ref: main
+  flexit_refresh: 1d
 
 packages:
   flexit:
@@ -61,7 +63,7 @@ selects, and the brightness and night mode settings. The rest of the panel's set
 Any Home Assistant or ESPHome entity goes on the panel with one include. The panel has no idea what it is in
 advance: the ESP sends the name, the icon, the range and the texts, and the panel draws it. Sensors become gauges
 and numbers, switches become switches, buttons run something, texts show as they are. Changes made on the panel go
-back to the entity.
+back to the entity, and if it hasn't followed within 3 s (15 s for `ha_switch`) the panel shows its state again.
 
 <table>
 <tr>
@@ -98,9 +100,10 @@ A Home Assistant entity goes on with an `ha_` package, which makes the `homeassi
 
 `ha_switch` runs `on_action` and `off_action` (`homeassistant.turn_on` and `turn_off` unless you say otherwise)
 on the entity, and is on while the entity's state is `on_state` (`on`). For that the ESP needs "Allow the device
-to perform Home Assistant actions" ticked in Home Assistant's ESPHome integration. `attribute` on the other three
-takes an attribute of the entity instead of its state. A scene or a script is a template button of your own,
-put on with `button.yaml`:
+to perform Home Assistant actions" ticked in Home Assistant's ESPHome integration. The panel shows a dash until
+Home Assistant has a state for it, or while the entity is unavailable. `attribute` on the other three takes an
+attribute of the entity instead of its state. A scene or a script is a template button of your own, put on with
+`button.yaml`:
 
 ```yaml
 button:
@@ -135,16 +138,18 @@ The vars, with their defaults at the top of each file:
 |---|---|
 | `name`, `entity_id` | `ha_` packages: the item's name and the Home Assistant entity |
 | `entity` | Plain packages: the ESPHome id |
-| `label`, `help` | `English\|Norsk`, the panel shows the part for its language. Help shows on ? |
+| `label`, `help` | `English\|Norsk`, the panel shows the part for its language: up to 19 bytes of label and 78 of help. Help shows on ? |
 | `icon` | An id from the [icons](#icons), in lower case |
 | `page` | `smart_home` (default) or `comfort` |
 | `view`, `menu` | `"false"` leaves it off the page's view or its menu |
 | `name` | Plain packages: the item's name on the link, the entity id if empty. The panel keeps its dashboard tiles by it |
-| `unit`, `decimals` | Sensors and numbers; the entity's own if empty |
+| `unit`, `decimals` | Sensors and numbers; the entity's own if empty. Up to 7 bytes of unit. An `ha_sensor` has no unit unless you give it one |
 | `levels`, `min`, `max` | Sensors: `"bad below, good from, good to, bad above"` colours the value, min and max are the ends of its gauge |
 | `trend` | Sensors: `"true"` keeps the last 24 hours for the sensors view, room for four |
 | `on_text`, `off_text` | Binary sensors and switches: what to say instead of On and Off, at most 11 bytes each |
 | `on_action`, `off_action`, `on_state` | `ha_switch`: the actions and the state that counts as on |
+
+Inside `{}` a text with a comma needs quotes, like `help: "Warm, then cool|Varmt, så kjølig"`.
 
 A text is read-only and shows the first 15 bytes of the entity's state, as a tile on the smart home view, a row in
 the menu or a dashboard tile. Like the label it can be `English|Norsk`. The comfort view shows the first two
@@ -169,13 +174,26 @@ This is all of `panel/fireplace.yaml`:
 packages:
   fireplace_on: !include
     file: switch.yaml
-    vars: {name: fireplace, entity: fireplace_mode_switch, label: Fireplace|Peis, icon: fireplace, page: comfort,
-           help: Blows in more air than it takes out for a while, so the fireplace draws well.|Blåser inn mer
-                 luft enn den tar ut en stund, så peisen trekker godt.}
+    vars:
+      name: fireplace
+      entity: fireplace_mode_switch
+      label: Fireplace|Peis
+      icon: fireplace
+      page: comfort
+      help: >-
+        Blows in more air than it takes out for a while, so the fireplace draws well.|Blåser inn mer luft enn den tar
+        ut en stund, så peisen trekker godt.
   fireplace_minutes: !include
     file: number.yaml
-    vars: {name: fireplace_minutes, entity: fireplace_duration, label: Fireplace time|Peistid, unit: min,
-           icon: timer_sand, page: comfort, view: "false"}
+    vars:
+      name: fireplace_minutes
+      entity: fireplace_duration
+      label: Fireplace time|Peistid
+      unit: min
+      icon: timer_sand
+      page: comfort
+      view: "false"
+      help: How long fireplace mode lasts.|Hvor lenge peismodus varer.
 ```
 
 ## Pictures, animations and the weather
@@ -242,7 +260,7 @@ names, like `script.execute: {id: panel_notify, message: Hi, icon: bell, level: 
 
 | Action | Does |
 |---|---|
-| `panel_notify` (`message`, `icon`, `level`: info, warning, alarm) | A message on the panel, with a bell in the status bar until it's read |
+| `panel_notify` (`message`, `icon`, `level`: info, warning, alarm) | A message that pops up on the panel and stays until it's closed |
 | `panel_show_view` (`view`: dashboard, airflow, trends, sensors, comfort, smart_home) | Wakes the panel and opens that view |
 | `panel_set` (`setting`, `value`) | A panel setting, see the list in `panel.yaml`: theme, brightness, idle_after, screensaver, night hours, key_lock, language and more |
 | `panel_show_picture` (`name`), `panel_clear_picture` | The screensaver picture, same as the `Panel Picture` select |

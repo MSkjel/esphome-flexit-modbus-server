@@ -124,8 +124,12 @@ inline void got_hello(uint32_t v) {
   hello(v & HELLO_ASK);
 }
 
+// The panel's language from before a restart, so the items' texts go out in it straight away
+inline void restore_language() { language = (uint8_t) id(panel_language); }
+
 inline void setup() {
   link::setup();
+  restore_language();
   auto &h = handlers;
   h[K_ACTION] = [](uint32_t v) {  // an action picked in the panel's menu
     if (v > A_NONE && v <= A_REMOTE_LAST) {
@@ -141,7 +145,10 @@ inline void setup() {
   for (int i = 0; i < N_ITEMS; i++)
     h[K_ITEM_VALUE + i] = [i](uint32_t v) { item_set(i, v); };
   h[K_ITEM_HELP] = item_help;
-  h[K_LANGUAGE] = set_language;
+  h[K_LANGUAGE] = [](uint32_t v) {
+    id(panel_language) = (int) v;
+    set_language(v);
+  };
 
   // The panel reports its settings when they change and after a hello.
   h[K_BRIGHTNESS] = [](uint32_t v) { id(panel_brightness).publish_state((float) v); };

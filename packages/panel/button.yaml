@@ -15,8 +15,8 @@ esphome:
     - then:
         - lambda: |-
             flexit::panel::Item(std::string("${name}").empty() ? "${entity}" : "${name}", ITEM_BUTTON)
-                .label("${label}")
-                .help("${help}")
+                .label(R"~(${label})~")
+                .help(R"~(${help})~")
                 .icon("${icon}")
                 .page("${page}")
                 .view(${view})
