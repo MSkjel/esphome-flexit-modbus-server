@@ -23,12 +23,13 @@ defaults:
 http_request:
   useragent: esphome-flexit-modbus-server (github.com/MSkjel/esphome-flexit-modbus-server)
 
-# api.met.no's certificate is from HARICA. ESP-IDF's default root bundle doesn't have it, also with Arduino,
-# so we take the full one. About 70 KB more flash.
+# api.met.no's certificate is from HARICA, which ESPHome's usual root bundle doesn't have, so we take the full one.
+# About 70 KB more flash.
 esp32:
   framework:
+    advanced:
+      use_full_certificate_bundle: true
     sdkconfig_options:
-      CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL: "y"
       # TLS only holds its 20 KB of buffers while a request runs, so the pictures have the RAM in between
       CONFIG_MBEDTLS_DYNAMIC_BUFFER: "y"
 

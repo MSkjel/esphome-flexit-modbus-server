@@ -30,10 +30,9 @@ http_request:
 
 esp32:
   framework:
+    advanced:
+      use_full_certificate_bundle: true  # for https, the full set so GitHub's CA is in it
     sdkconfig_options:
-      # the IDF cert bundle for https, the full set so GitHub's CA is in it. met.yaml sets DEFAULT_FULL too.
-      CONFIG_MBEDTLS_CERTIFICATE_BUNDLE: "y"
-      CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL: "y"
       CONFIG_MBEDTLS_DYNAMIC_BUFFER: "y"  # see met.yaml
 
 text:
