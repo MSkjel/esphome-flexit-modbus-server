@@ -2,6 +2,7 @@
 // each row packed on its own, or as a JPEG at the best quality that fits the panel's 14 KB.
 #pragma once
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -27,6 +28,10 @@ static constexpr uint32_t POOL = PIC_POOL;  // the panel's picture memory
 static constexpr uint32_t SLICE_US = 5000;  // max conversion time per loop, so the main loop keeps running
 static constexpr uint32_t ACK_MS = 10000;   // the panel answers END within a second or so
 static constexpr int SCREEN_W = 320, SCREEN_H = 240;
+// RAM to make a picture: counting colours, then a JPEG (the one being tried, its lines, the best so far).
+// The peak is a JPEG with the 16-colour version still kept.
+static constexpr uint32_t COUNT_RAM = 4096 * 4 + 4096 * 2, JPEG_RAM = POOL + SCREEN_W * 8 * 4 + POOL,
+                          MAKE_RAM = POOL + SCREEN_W + JPEG_RAM;
 
 enum Encoding { AUTO, PALETTE, JPEG };
 
@@ -78,36 +83,67 @@ template<typename Img> void add_image(const std::string &name, Img &&image, cons
 // A picture from a URL (online_picture.yaml). Downloaded when it's shown, every `every` after that while it's
 // shown, and its pixels are freed once it's converted. A failed download is tried again 30 s later, then twice as
 // long each time up to 30 min, since each try holds up the main loop until the server answers or http_request
-// times out. Before a download the server is asked how big the file is (a request that hangs up after the headers),
-// because online_image keeps a JPEG whole and crashes the ESP on one that doesn't fit its memory.
+// times out. Before a download fits() asks the server about the file, hanging up after the headers.
 struct Online {
   std::string url;
-  std::function<size_t(const std::string &)> length;  // what the server says the file is, 0 = unknown
-  std::function<void()> fetch;
+  // the file's HTTP status (0 = no answer), size (0 = unknown) and Content-Type
+  std::function<int(const std::string &url, size_t &size, std::string &type)> head;
+  std::function<bool()> busy;   // a download still runs
+  std::function<bool()> fetch;  // starts the download, true if it did
+  std::string format;           // the yaml's, upper case: JPEG, JPG, PNG, BMP or AUTO
+  uint32_t pixels = 0;          // the decoded picture's bytes at the yaml's resize
+  // What online_image keeps between downloads: its buffer, buffer_size until a JPEG grows it, and its decoder
+  // ('J', 'P' or 'B'). next becomes kept once a download that passed fits() starts.
+  struct Kept {
+    size_t buffer = 4096;
+    char decoder = 0;
+  } kept, next;
   uint32_t every = 0;         // ms between downloads while shown, 0 = only when shown
   uint32_t fetched = 0;       // when the last one started
   uint32_t at = 0, wait = 0;  // when to try again after a failure, and the wait after that one
 };
 inline std::map<std::string, std::shared_ptr<Online>> online;
 
-// "never", "30s", "10min", "1h" as in the yaml
+// "30s", "10min", "1.5h", "1d" as ESPHome writes them. 0 = never, also for anything else.
 inline uint32_t interval_ms(const char *s) {
+  static const struct {
+    const char *unit;
+    double ms;
+  } units[] = {{"ms", 1},        {"milliseconds", 1}, {"s", 1e3},       {"sec", 1e3},  {"seconds", 1e3}, {"min", 6e4},
+               {"minutes", 6e4}, {"h", 3.6e6},        {"hours", 3.6e6}, {"d", 8.64e7}, {"days", 8.64e7}};
   char *end;
-  unsigned long n = strtoul(s, &end, 10);
-  return n == 0 ? 0 : n * (!strncmp(end, "ms", 2) ? 1 : *end == 'h' ? 3600000 : *end == 'm' ? 60000 : 1000);
+  double n = strtod(s, &end);
+  while (*end == ' ')
+    end++;
+  for (const auto &u : units)
+    if (end != s && !strcmp(end, u.unit))
+      return n > 0 ? (uint32_t) std::min(n * u.ms, 4e9) : 0;
+  if (strcmp(s, "never"))
+    ESP_LOGE("panel", "update_interval '%s' isn't a time like 10min, so it's only downloaded when shown", s);
+  return 0;
 }
 
-inline bool fits(const std::string &name, Online &o);  // below, it needs S
+inline bool download(const std::string &name, Online &o);  // below, it needs S
 
 template<typename Img>
-void add_online_image(const std::string &name, Img &&image, const char *url, const char *every, const char *encoding,
-                      const char *quality, std::function<size_t(const std::string &)> length) {
+void add_online_image(const std::string &name, Img &&image, const char *url, const char *every, const char *format,
+                      const char *resize, const char *encoding, const char *quality,
+                      std::function<int(const std::string &, size_t &, std::string &)> head) {
   auto *img = ptr_of(image);
   auto o = std::make_shared<Online>();
   o->url = url;
   o->every = interval_ms(every);
-  o->length = std::move(length);
-  o->fetch = [img]() { img->update(); };
+  for (const char *c = format; *c; c++)
+    o->format += (char) toupper((unsigned char) *c);
+  int rw = 0, rh = 0;
+  if (sscanf(resize, "%dx%d", &rw, &rh) == 2 && rw > 0 && rh > 0)
+    o->pixels = (uint32_t) rw * rh * 2;  // RGB565
+  o->head = std::move(head);
+  o->busy = [img]() { return img->is_decoding(); };
+  o->fetch = [img]() {
+    img->update();
+    return img->is_decoding();
+  };
   online[name] = o;
   Source s;
   s.size = [img, o, name](int &w, int &h) {  // starts the download if there's nothing yet, we get asked again
@@ -119,14 +155,8 @@ void add_online_image(const std::string &name, Img &&image, const char *url, con
       o->wait = 0;
       return true;
     }
-    if (!o->wait || (int32_t) (millis() - o->at) >= 0) {
-      o->wait = o->wait ? std::min<uint32_t>(2 * o->wait, 30 * 60000) : 30000;
-      o->at = millis() + o->wait;
-      if (fits(name, *o)) {
-        o->fetched = millis();
-        o->fetch();
-      }
-    }
+    if (!o->wait || (int32_t) (millis() - o->at) >= 0)
+      download(name, *o);
     return false;
   };
   s.pixel = pixels_of(img);
@@ -201,19 +231,13 @@ inline void status(const std::string &s) {
     id(panel_picture_status).publish_state(s);
 }
 
-// K_PIC_CLEAR also stops an animation on its way, so it waits for that in loop()
-inline void clear() {
-  S.want.clear();
-  S.redo = true;
-  S.to_clear = true;
-  S.shown = Pic();  // so a show() before the next loop sends all of it
-  id(panel_picture).publish_state("None");
-}
-
-// For panel_show_picture and the Panel Picture select. An online picture is downloaded again. "" is none.
-inline void show(const std::string &name) {
-  if (name.empty()) {
-    clear();
+// The Panel Picture select's set_action. An online picture is downloaded again. "None" or "" is none.
+inline void picked(const std::string &name) {
+  if (name.empty() || name == "None") {
+    S.want.clear();
+    S.redo = true;
+    S.to_clear = true;  // K_PIC_CLEAR also stops an animation on its way, so loop() waits for that
+    S.shown = Pic();    // so a show() before the next loop sends all of it
     return;
   }
   if (!sources.count(name)) {
@@ -222,9 +246,18 @@ inline void show(const std::string &name) {
   }
   S.want = name;
   S.redo = true;
-  if (id(panel_picture).has_option(name))
-    id(panel_picture).publish_state(name);
 }
+
+// panel_show_picture. Goes through the select when it has the name, so restore_value keeps it. "" is none.
+inline void show(const std::string &name) {
+  std::string o = name.empty() ? "None" : name;
+  if (id(panel_picture).has_option(o))
+    id(panel_picture).make_call().set_option(o).perform();
+  else
+    picked(o);
+}
+
+inline void clear() { show(""); }
 
 // A picture changed: convert it again if it's the one wanted, and only the rows that differ are sent. If not,
 // free its RAM.
@@ -236,13 +269,13 @@ inline void changed(const std::string &name) {
     it->second.done();
 }
 
-// online_picture.yaml's on_error. A failed download frees the picture, so one being made starts over, and its
-// size() tries again later.
+// online_picture.yaml's on_error. A shown picture stays until the next refresh, else size() tries again later.
 inline void failed(const std::string &name) {
-  if (name != S.want)
+  if (name != S.want || (S.phase == IDLE && !S.redo && !S.shown.data.empty()))
     return;
   S.waiting = "couldn't download it, trying again later";
-  S.redo = true;
+  if (S.phase == IDLE)
+    S.redo = true;
 }
 
 inline uint32_t dist(uint32_t a, uint32_t b) {
@@ -303,6 +336,12 @@ inline void pack(const uint8_t *row, size_t n, std::vector<uint8_t> &data) {
   data.resize(at + plink_pack_row(row, (unsigned) n, data.data() + at));
 }
 
+// Whether the ESP has `bytes` free with some to spare, `block` of it in one piece
+inline bool has_ram(size_t bytes, size_t block) {
+  RAMAllocator<uint8_t> ram;
+  return ram.get_free_heap_size() >= bytes + 8192 && ram.get_max_free_block_size() >= block;
+}
+
 // Drops what was made for the last request
 inline void reset() {
   S.made = Pic();
@@ -315,6 +354,15 @@ inline void reset() {
   S.phase = IDLE;
 }
 
+// Not enough RAM to make it. Tried again when it's picked again or changes.
+inline bool no_ram() {
+  status(S.name + ": the ESP doesn't have the RAM to make it");
+  if (S.src->done)
+    S.src->done();
+  reset();
+  return false;
+}
+
 // Picks up a new request. False if there's nothing to do now.
 inline bool ask() {
   if (!S.redo)
@@ -322,6 +370,8 @@ inline bool ask() {
   S.redo = false;
   if (S.phase == SEND)
     S.shown = Pic();  // some pieces may be in, so the panel's picture is neither the old nor the new one
+  if (S.src && S.name != S.want && S.src->done)
+    S.src->done();  // the one being made isn't wanted now
   reset();
   if (S.want.empty()) {
     S.shown = Pic();
@@ -334,15 +384,16 @@ inline bool ask() {
     return false;
   }
   S.src = &it->second;
+  if (S.name != S.want)
+    S.waiting = "waiting for it";  // the same one keeps its reason
   S.name = S.want;
-  S.waiting = "waiting for it";
   S.tries = 0;
   S.retry_at = millis();
   S.phase = START;
   return true;
 }
 
-inline void jpeg_start();
+inline bool jpeg_start();
 
 // False while it isn't ready, like an online picture still downloading
 inline bool start() {
@@ -361,14 +412,15 @@ inline bool start() {
     S.fh = SCREEN_H;
     S.fw = std::max(1, S.sw * SCREEN_H / S.sh);
   }
+  // Without exceptions a failed allocation restarts the ESP, so each step checks for room first
+  if (S.src->encoding != JPEG && !has_ram(COUNT_RAM, 4096 * 4))
+    return no_ram();
   S.fits = false;
   S.made.w = (uint16_t) S.fw;
   S.made.h = (uint16_t) S.fh;
   status("Making " + S.name);
-  if (S.src->encoding == JPEG) {
-    jpeg_start();
-    return true;
-  }
+  if (S.src->encoding == JPEG)
+    return jpeg_start();
   S.hist.assign(4096, 0);
   S.y = 0;
   S.phase = COUNT;
@@ -470,6 +522,7 @@ inline void count(uint32_t t0) {
   for (int i = 0; i < 4096; i++)
     S.lut[i] = (uint8_t) nearest(bin_rgb(i), S.made.pal);
   drop(S.hist);
+  S.made.data.reserve(POOL + SCREEN_W);  // all it needs, past POOL it's a JPEG anyway
   S.made.rows.push_back(0);
   S.y = 0;
   S.phase = MAP;
@@ -519,11 +572,21 @@ inline void jpeg_try(int q) {
   S.lines.assign((size_t) w * 8, 0);
 }
 
-inline void jpeg_start() {
+// Without the RAM for a JPEG it's the 16-colour version if that fits, else false
+inline bool jpeg_start() {
+  if (!has_ram(JPEG_RAM, POOL)) {
+    if (!S.fits)
+      return no_ram();
+    ESP_LOGW("panel", "Picture %s: no RAM for a JPEG, sending 16 colours", S.name.c_str());
+    S.phase = CHOOSE;
+    return true;
+  }
   S.lo = 0;
   S.hi = S.src->quality ? S.src->quality : 95;
+  S.jpeg.data.reserve(POOL);
   jpeg_try((S.lo + S.hi + 1) / 2);
   S.phase = JPEG_TRY;
+  return true;
 }
 
 inline void jpeg(uint32_t t0) {
@@ -547,7 +610,7 @@ inline void jpeg(uint32_t t0) {
     S.jpeg.h = e.h;
     S.jpeg.quality = q;
     S.jpeg.err = pjpeg_mse(&e);
-    S.jpeg.data = std::vector<uint8_t>(S.buf.begin(), S.buf.begin() + n);
+    S.jpeg.data.assign(S.buf.begin(), S.buf.begin() + n);
   } else {
     S.hi = q - 1;
   }
@@ -601,6 +664,7 @@ inline void now_shown() {
   S.shown = std::move(S.made);
   S.made = Pic();
   S.phase = IDLE;
+  S.tries = 0;
   status("Shown: " + S.name + what(S.shown));
 }
 
@@ -609,7 +673,11 @@ inline bool plan() {
   S.jobs.clear();
   S.head = S.ended = false;
   Pic &made = S.made, &shown = S.shown;
-  if (made.format == PIC_JPEG || shown.format != made.format || shown.w != made.w || shown.h != made.h) {
+  bool same = shown.format == made.format && shown.w == made.w && shown.h == made.h;
+  if (made.format == PIC_JPEG) {
+    if (!same || shown.data != made.data)  // a JPEG goes whole, and not at all if it's the same
+      S.jobs.push_back({true, true, 0, made.h});
+  } else if (!same) {
     S.jobs.push_back({true, true, 0, made.h});
   } else {
     auto differs = [&](int r) {
@@ -693,6 +761,7 @@ inline void restarted() {
     S.phase = PLAN;
   }
   S.shown = Pic();
+  S.tries = 0;
 }
 
 inline void put16(uint8_t *b, unsigned v) {
@@ -788,32 +857,66 @@ inline void send() {
 
 inline bool sending() { return S.phase == SEND && S.head; }
 
-// every 20 ms
-// A download only starts if the file fits. The server's size minus what's free, with room for the decoded picture.
+// Whether the ESP has the RAM to download, decode and make an online picture. online_image keeps a JPEG whole
+// in a buffer it only grows, PNG and BMP stream through it. A new decoder: JPEG 17 KB, PNG 44 KB in one piece.
 inline bool fits(const std::string &name, Online &o) {
-  size_t n = o.length(o.url), room = RAMAllocator<uint8_t>().get_max_free_block_size();
-  if (n && n + 16384 > room) {
-    ESP_LOGW("panel", "Picture %s: %u KB, the ESP has %u KB free. Ask for a smaller one", name.c_str(),
-             (unsigned) (n / 1024), (unsigned) (room / 1024));
-    if (name == S.want)
-      S.waiting = std::to_string(n / 1024) + " KB is too big for the ESP";
-    return false;
+  size_t n = 0;
+  std::string type, why, ram;  // ram: what the ESP has, for the log
+  int code = o.head(o.url, n, type);
+  for (auto &c : type)
+    c = (char) tolower((unsigned char) c);
+  auto is = [&](const char *f, const char *t) {
+    return o.format == f || (o.format == "AUTO" && type.find(t) != std::string::npos);
+  };
+  char kind = is("JPEG", "jpeg") || is("JPG", "jpg") ? 'J' : is("PNG", "png") ? 'P' : 'B';
+  bool jpeg = kind == 'J';
+  size_t dec = kind == o.kept.decoder || kind == 'B' ? 0 : jpeg ? 17 * 1024 : 44 * 1024;  // a new decoder
+  size_t grow = jpeg && n > o.kept.buffer ? n : 0, need = grow + dec + o.pixels + MAKE_RAM;
+  if (code != 200) {
+    why = code > 0 ? "the server says " + std::to_string(code) + ", trying again later"
+                   : "couldn't reach the server, trying again later";
+  } else if (jpeg && !n) {
+    why = "the server doesn't say how big it is, which a JPEG needs";
+  } else if (!has_ram(need, std::max({grow, dec, (size_t) o.pixels}))) {
+    RAMAllocator<uint8_t> a;
+    why = "too big for the ESP, it needs " + std::to_string(need / 1024) + " KB of RAM";
+    ram = ". It has " + std::to_string(a.get_free_heap_size() / 1024) + " KB free, " +
+          std::to_string(a.get_max_free_block_size() / 1024) + " KB in one piece";
   }
+  if (why.empty()) {
+    o.next = {std::max(o.kept.buffer, grow), kind};
+    return true;
+  }
+  ESP_LOGW("panel", "Picture %s: %s%s", name.c_str(), why.c_str(), ram.c_str());
+  if (name == S.want)
+    S.waiting = why;
+  return false;
+}
+
+// Starts a download if it fits, false if not. The wait before size() tries again doubles until one comes.
+inline bool download(const std::string &name, Online &o) {
+  o.fetched = millis();
+  if (o.busy())  // the last one still runs, no need to ask the server
+    return true;
+  o.wait = o.wait ? std::min<uint32_t>(2 * o.wait, 30 * 60000) : 30000;
+  o.at = millis() + o.wait;
+  if (!fits(name, o))
+    return false;
+  if (name == S.want)
+    S.waiting = "waiting for it";
+  if (o.fetch())
+    o.kept = o.next;  // online_image grows its buffer and makes the decoder for it
   return true;
 }
 
+// every 20 ms
 inline void loop() {
   if (S.to_clear && !anim::sending())
     S.to_clear = !link::send(K_PIC_CLEAR, 0);
   auto o = online.find(S.want);  // the shown online picture downloads again every `every`, if it still fits
   if (o != online.end() && o->second->every && S.phase == IDLE && !S.redo &&
-      millis() - o->second->fetched >= o->second->every) {
-    o->second->fetched = millis();
-    if (fits(S.want, *o->second))
-      o->second->fetch();
-    else
-      status(S.want + ": " + S.waiting);
-  }
+      millis() - o->second->fetched >= o->second->every && !download(S.want, *o->second))
+    status(S.want + ": " + S.waiting);
   if (!ask())
     return;
   uint32_t t0 = micros();

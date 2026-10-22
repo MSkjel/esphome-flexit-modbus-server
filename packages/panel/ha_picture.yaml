@@ -7,13 +7,14 @@
 # kind: camera, or image for an image.* entity
 # width: Home Assistant scales a camera picture down to this when the camera can, which keeps the download small.
 #   The ESP keeps a JPEG whole in RAM, so a big one needs PSRAM.
-# resize, encoding and quality work as in online_picture.yaml
+# resize, format, encoding and quality work as in online_picture.yaml
 defaults:
   ha_url: http://homeassistant.local:8123
   kind: camera
   width: "320"
   update_interval: never
   resize: 160x120
+  format: AUTO  # a camera sends JPEG, an image entity whatever it has
   encoding: auto
   quality: auto
 
@@ -34,7 +35,7 @@ packages:
     vars:
       name: ${name}
       url: ${ha_url}/api/${kind}_proxy/${entity_id}
-      format: JPEG
+      format: ${format}
       update_interval: ${update_interval}
       resize: ${resize}
       encoding: ${encoding}

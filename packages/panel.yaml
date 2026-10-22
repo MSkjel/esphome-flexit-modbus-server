@@ -123,6 +123,7 @@ select:
     on_value:
       - lambda: flexit::panel::send_leds();
   # the screensaver picture. packages/panel/picture.yaml adds its name to the options.
+  # panel_show_picture sets it too, so restore_value keeps that as well.
   - platform: template
     id: panel_picture
     name: "Panel Picture"
@@ -131,11 +132,7 @@ select:
     restore_value: true                   # on_boot shows it again after a restart
     options: [None]
     set_action:
-      - lambda: |-
-          if (x == "None")
-            flexit::panel::picture::clear();
-          else
-            flexit::panel::picture::show(std::string(x.c_str(), x.size()));
+      - lambda: flexit::panel::picture::picked(std::string(x.c_str(), x.size()));
   # the screensaver animation. packages/panel/animation.yaml adds its name to the options.
   - platform: template
     id: panel_animation
@@ -145,11 +142,7 @@ select:
     restore_value: true
     options: [None]
     set_action:
-      - lambda: |-
-          if (x == "None")
-            flexit::panel::anim::clear();
-          else
-            flexit::panel::anim::show(std::string(x.c_str(), x.size()));
+      - lambda: flexit::panel::anim::picked(std::string(x.c_str(), x.size()));
 
 number:
   - platform: template

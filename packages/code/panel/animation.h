@@ -295,30 +295,23 @@ inline void restarted() {
     A.phase = SEND;
 }
 
-inline void clear() {
-  A.want.clear();
-  A.name.clear();
-  A.motion = ANIM_STOP;
-  picture::drop(A.data);
-  A.failed = A.head = false;
-  A.phase = IDLE;
-  link::send(K_ANIM_CLEAR, 0);
-  id(panel_animation).publish_state("None");
-  status("None");
-}
-
-// For panel_show_animation and the Panel Animation select. "" is none.
-inline void show(const std::string &name) {
-  if (name.empty()) {
-    clear();
+// The Panel Animation select's set_action. "None" or "" is none.
+inline void picked(const std::string &name) {
+  if (name.empty() || name == "None") {
+    A.want.clear();
+    A.name.clear();
+    A.motion = ANIM_STOP;
+    picture::drop(A.data);
+    A.failed = A.head = false;
+    A.phase = IDLE;
+    link::send(K_ANIM_CLEAR, 0);
+    status("None");
     return;
   }
   if (!sources.count(name)) {
     ESP_LOGW("panel", "No animation called '%s'", name.c_str());
     return;
   }
-  if (id(panel_animation).has_option(name))
-    id(panel_animation).publish_state(name);
   if (name == A.want && !A.failed)
     return;
   A.want = name;
@@ -329,6 +322,17 @@ inline void show(const std::string &name) {
   A.drift = {(int16_t) s.vx, (int16_t) s.vy};
   A.motion = s.vx || s.vy ? ANIM_DRIFT : ANIM_STOP;
 }
+
+// panel_show_animation. Goes through the select when it has the name, so restore_value keeps it. "" is none.
+inline void show(const std::string &name) {
+  std::string o = name.empty() ? "None" : name;
+  if (id(panel_animation).has_option(o))
+    id(panel_animation).make_call().set_option(o).perform();
+  else
+    picked(o);
+}
+
+inline void clear() { show(""); }
 
 // A change of motion goes out now if the panel has the animation, else with it once it's there
 inline void moved() {
