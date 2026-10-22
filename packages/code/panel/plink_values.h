@@ -96,7 +96,7 @@ enum { LED_AUTO, LED_OFF, LED_ON, LED_BLINK };
     X(FAN_MIN_EXT,     0x04C, M.fan_pct[0][1],     20, 100,  VF_CU60 | VF_LINK_RW, 0x007, 1) \
     X(FAN_NORM_EXT,    0x04D, M.fan_pct[1][1],     20, 100,  VF_CU60 | VF_MASTER | VF_LINK_RW, 0x008, 1) \
     X(FAN_MAX_EXT,     0x04E, M.fan_pct[2][1],     20, 100,  VF_CU60 | VF_LINK_RW, 0x009, 1) \
-    X(FILTER_INTERVAL, 0x04F, M.filter_months,      1, 12,   VF_CU60 | VF_LINK_RW, 0x016, 30) \
+    X(FILTER_INTERVAL, 0x04F, M.filter_days,       30, 360,  VF_CU60 | VF_LINK_RW, 0x016, 1) /* days */ \
     X(WEEK_PROGRAM,    0x050, M.week_program,       0, 1,    VF_CU60 | VF_LINK_RW, 0x117, 1)
 // clang-format on
 
