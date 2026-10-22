@@ -1,0 +1,36 @@
+# A Home Assistant binary sensor on the panel with one include. Makes the homeassistant binary sensor
+# (id ha_${name}) and puts it on the panel like binary_sensor.yaml, with the same vars.
+#   - path: packages/panel/ha_binary_sensor.yaml
+#     vars: {name: front_door, entity_id: binary_sensor.front_door, label: Front door|Inngangsdør, icon: door,
+#            on_text: Open|Åpen, off_text: Closed|Lukket}
+# name and attribute work as in ha_sensor.yaml
+defaults:
+  attribute: ""
+  on_text: ""
+  off_text: ""
+  icon: circle
+  help: ""
+  page: smart_home
+  view: "true"
+  menu: "true"
+
+binary_sensor:
+  - platform: homeassistant
+    id: ha_${name}
+    entity_id: ${entity_id}
+    attribute: ${attribute}
+
+packages:
+  item: !include
+    file: binary_sensor.yaml
+    vars:
+      entity: ha_${name}
+      name: ${name}
+      label: ${label}
+      help: ${help}
+      icon: ${icon}
+      page: ${page}
+      view: ${view}
+      menu: ${menu}
+      on_text: ${on_text}
+      off_text: ${off_text}

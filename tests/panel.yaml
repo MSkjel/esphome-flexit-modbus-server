@@ -27,6 +27,24 @@ packages:
   panel_clear_alarms: !include
     file: ../packages/panel/button.yaml
     vars: {entity: clear_alarms, label: Clear alarms, icon: bell, view: "false"}
+  panel_boosted_by: !include
+    file: ../packages/panel/text.yaml
+    vars: {entity: mode_boosted_by, label: Boosted by|Forsert av, icon: fan, view: "false"}
+  panel_ha_hot_water: !include
+    file: ../packages/panel/ha_sensor.yaml
+    vars: {name: hot_water, entity_id: sensor.water_heater_temperature, label: Hot water|Varmtvann, icon: shower,
+           unit: "°C", decimals: "0", levels: "40,50,75,85", min: "20", max: "80"}
+  panel_ha_front_door: !include
+    file: ../packages/panel/ha_binary_sensor.yaml
+    vars: {name: front_door, entity_id: binary_sensor.front_door, label: Front door|Inngangsdør, icon: door,
+           on_text: Open|Åpen, off_text: Closed|Lukket}
+  panel_ha_washer: !include
+    file: ../packages/panel/ha_text.yaml
+    vars: {name: washer, entity_id: sensor.washer_state, label: Washer|Vaskemaskin, icon: washer}
+  panel_ha_door_lock: !include
+    file: ../packages/panel/ha_switch.yaml
+    vars: {name: door_lock, entity_id: lock.front_door, label: Door lock|Dørlås, icon: lock, on_action: lock.lock,
+           off_action: lock.unlock, on_state: locked, on_text: Locked|Låst, off_text: Unlocked|Ulåst}
   panel_picture: !include
     file: ../packages/panel/picture.yaml
     vars: {name: dusk, file: panel_picture.png}

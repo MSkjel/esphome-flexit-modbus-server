@@ -1,0 +1,32 @@
+# A Home Assistant entity's state as a text on the panel with one include. Makes the homeassistant text sensor
+# (id ha_${name}) and puts it on the panel like text.yaml, with the same vars. Any entity will do, the panel shows
+# the first 15 bytes of its state.
+#   - path: packages/panel/ha_text.yaml
+#     vars: {name: washer, entity_id: sensor.washer_state, label: Washer|Vaskemaskin, icon: washer}
+# name and attribute work as in ha_sensor.yaml
+defaults:
+  attribute: ""
+  icon: circle
+  help: ""
+  page: smart_home
+  view: "true"
+  menu: "true"
+
+text_sensor:
+  - platform: homeassistant
+    id: ha_${name}
+    entity_id: ${entity_id}
+    attribute: ${attribute}
+
+packages:
+  item: !include
+    file: text.yaml
+    vars:
+      entity: ha_${name}
+      name: ${name}
+      label: ${label}
+      help: ${help}
+      icon: ${icon}
+      page: ${page}
+      view: ${view}
+      menu: ${menu}

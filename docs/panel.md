@@ -50,20 +50,22 @@ selects, and the brightness and night mode settings. The rest of the panel's set
 | File | What |
 |---|---|
 | `panel.yaml` | The link and the panel's own entities |
-| `panel/sensor.yaml`, `binary_sensor.yaml`, `switch.yaml`, `number.yaml`, `button.yaml` | One of your entities on the panel |
+| `panel/ha_sensor.yaml`, `ha_binary_sensor.yaml`, `ha_text.yaml`, `ha_switch.yaml` | A Home Assistant entity on the panel |
+| `panel/sensor.yaml`, `binary_sensor.yaml`, `text.yaml`, `switch.yaml`, `number.yaml`, `button.yaml` | One of the ESP's own entities on the panel |
 | `panel/fireplace.yaml`, `humidity_boost.yaml`, `co2.yaml`, `summer_cooling.yaml` | That package on the panel's comfort page |
 | `panel/picture.yaml`, `online_picture.yaml`, `animation.yaml`, `met.yaml` | Screensaver pictures |
 | `panel/update.yaml` | Flashes the panel's firmware from Home Assistant |
 
 ## Your own things on the panel
 
-Any ESPHome entity goes on the panel with one include. The panel has no idea what it is in advance: the ESP sends
-the name, the icon, the range and the texts, and the panel draws it. Sensors become gauges and numbers, switches
-become switches, buttons run something. Changes made on the panel go back to the entity.
+Any Home Assistant or ESPHome entity goes on the panel with one include. The panel has no idea what it is in
+advance: the ESP sends the name, the icon, the range and the texts, and the panel draws it. Sensors become gauges
+and numbers, switches become switches, buttons run something, texts show as they are. Changes made on the panel go
+back to the entity.
 
 <table>
 <tr>
-<td align="center"><img src="https://github.com/MSkjel/flexit-ci600-firmware/raw/screens/all/shots/50_smart_view.png" width="280" alt="Smart home view"><br><sub>The smart home view: a sensor, a price, a switch, a number and a button</sub></td>
+<td align="center"><img src="https://github.com/MSkjel/flexit-ci600-firmware/raw/screens/all/shots/50_smart_view.png" width="280" alt="Smart home view"><br><sub>The smart home view: a sensor, a price, a switch, a text and a number</sub></td>
 <td align="center"><img src="https://github.com/MSkjel/flexit-ci600-firmware/raw/screens/all/shots/51_smart_menu.png" width="280" alt="Smart home menu"><br><sub>The same in the menu</sub></td>
 <td align="center"><img src="https://github.com/MSkjel/flexit-ci600-firmware/raw/screens/all/shots/52c_item_edit.png" width="280" alt="Editing a number"><br><sub>Editing a number on the panel</sub></td>
 </tr>
@@ -74,6 +76,42 @@ become switches, buttons run something. Changes made on the panel go back to the
 </tr>
 </table>
 
+A Home Assistant entity goes on with an `ha_` package, which makes the `homeassistant` entity on the ESP for you.
+`name` is the item's name on the link and makes the ESPHome id, `ha_<name>`:
+
+```yaml
+      - path: packages/panel/ha_sensor.yaml
+        vars: {name: hot_water, entity_id: sensor.water_heater_temperature, label: Hot water|Varmtvann, icon: shower,
+               unit: °C, decimals: "0", levels: "40,50,75,85", min: "20", max: "80"}
+      - path: packages/panel/ha_binary_sensor.yaml
+        vars: {name: washer_running, entity_id: binary_sensor.washer_running, label: Washer|Vaskemaskin, icon: washer,
+               on_text: Running|Går, off_text: Done|Ferdig}
+      - path: packages/panel/ha_text.yaml
+        vars: {name: dishwasher, entity_id: sensor.dishwasher_phase, label: Dishwasher|Oppvaskmaskin, icon: washer}
+      - path: packages/panel/ha_switch.yaml
+        vars: {name: garden_lights, entity_id: light.garden, label: Garden lights|Hagelys, icon: bulb}
+      - path: packages/panel/ha_switch.yaml
+        vars: {name: front_door, entity_id: lock.front_door, label: Front door|Inngangsdør, icon: lock,
+               on_action: lock.lock, off_action: lock.unlock, on_state: locked, on_text: Locked|Låst,
+               off_text: Unlocked|Ulåst}
+```
+
+`ha_switch` runs `on_action` and `off_action` (`homeassistant.turn_on` and `turn_off` unless you say otherwise)
+on the entity, and is on while the entity's state is `on_state` (`on`). For that the ESP needs "Allow the device
+to perform Home Assistant actions" ticked in Home Assistant's ESPHome integration. `attribute` on the other three
+takes an attribute of the entity instead of its state. A scene or a script is a template button of your own,
+put on with `button.yaml`:
+
+```yaml
+button:
+  - platform: template
+    id: scene_bed
+    on_press:
+      - homeassistant.action: {action: scene.turn_on, data: {entity_id: scene.bed}}
+```
+
+The ESP's own entities go on with the plain packages, which take the ESPHome id as `entity`:
+
 ```yaml
       - path: packages/panel/sensor.yaml
         vars: {entity: living_room_co2, label: Living room|Stue, icon: co2, unit: ppm,
@@ -81,6 +119,8 @@ become switches, buttons run something. Changes made on the panel go back to the
       - path: packages/panel/binary_sensor.yaml
         vars: {entity: front_door_locked, label: Door locked|Dør låst, icon: lock,
                on_text: Locked|Låst, off_text: Unlocked|Ulåst}
+      - path: packages/panel/text.yaml
+        vars: {entity: mode_boosted_by, label: Boosted by|Forsert av, icon: fan}
       - path: packages/panel/switch.yaml
         vars: {entity: garden_lights, label: Garden lights|Hagelys, icon: bulb}
       - path: packages/panel/number.yaml
@@ -93,51 +133,22 @@ The vars, with their defaults at the top of each file:
 
 | Var | What |
 |---|---|
-| `entity` | The ESPHome id. For a Home Assistant entity, make a `homeassistant` sensor/switch/... with that id first |
+| `name`, `entity_id` | `ha_` packages: the item's name and the Home Assistant entity |
+| `entity` | Plain packages: the ESPHome id |
 | `label`, `help` | `English\|Norsk`, the panel shows the part for its language. Help shows on ? |
 | `icon` | An id from the [icons](#icons), in lower case |
 | `page` | `smart_home` (default) or `comfort` |
 | `view`, `menu` | `"false"` leaves it off the page's view or its menu |
-| `name` | The item's name on the link, the entity id if empty. The panel keeps its dashboard tiles by it |
+| `name` | Plain packages: the item's name on the link, the entity id if empty. The panel keeps its dashboard tiles by it |
 | `unit`, `decimals` | Sensors and numbers; the entity's own if empty |
 | `levels`, `min`, `max` | Sensors: `"bad below, good from, good to, bad above"` colours the value, min and max are the ends of its gauge |
 | `trend` | Sensors: `"true"` keeps the last 24 hours for the sensors view, room for four |
-| `on_text`, `off_text` | Binary sensors: what to say instead of On and Off, at most 11 bytes each |
+| `on_text`, `off_text` | Binary sensors and switches: what to say instead of On and Off, at most 11 bytes each |
+| `on_action`, `off_action`, `on_state` | `ha_switch`: the actions and the state that counts as on |
 
-The comfort view shows the first two sensors as gauges and the switches as chips, so the order in your config is
-the order on the screen.
-
-A Home Assistant entity gets an ESPHome entity of its own first, then goes on the panel like any other:
-
-```yaml
-sensor:
-  - platform: homeassistant
-    id: ha_hot_water
-    entity_id: sensor.water_heater_temperature
-    unit_of_measurement: "°C"
-    accuracy_decimals: 0
-
-binary_sensor:
-  - platform: homeassistant
-    id: ha_washer_running
-    entity_id: binary_sensor.washer_running
-
-button:
-  - platform: template
-    id: ha_scene_bed
-    on_press:
-      - homeassistant.action: {action: scene.turn_on, data: {entity_id: scene.bed}}
-
-packages:
-  flexit:
-    files:
-      - path: packages/panel/sensor.yaml
-        vars: {entity: ha_hot_water, label: Hot water|Varmtvann, icon: shower, levels: "40,50,75,85", min: "20", max: "80"}
-      - path: packages/panel/binary_sensor.yaml
-        vars: {entity: ha_washer_running, label: Washer|Vaskemaskin, icon: washer, on_text: Running|Går, off_text: Done|Ferdig}
-      - path: packages/panel/button.yaml
-        vars: {entity: ha_scene_bed, label: Bed|Leggetid, icon: night}
-```
+A text is read-only and shows the first 15 bytes of the entity's state, as a tile on the smart home view, a row in
+the menu or a dashboard tile. Like the label it can be `English|Norsk`. The comfort view shows the first two
+sensors as gauges and the switches as chips, so the order in your config is the order on the screen.
 
 ## The comfort packages
 
