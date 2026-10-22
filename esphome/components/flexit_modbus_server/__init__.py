@@ -7,6 +7,7 @@ import esphome.config_validation as cv
 import esphome.final_validate as fv
 from esphome.const import CONF_ADDRESS, CONF_ID, CONF_INVERTED, CONF_UART_ID
 from esphome.core import CORE
+from esphome.helpers import fnv1_hash
 
 from esphome import pins
 from esphome.components import uart
@@ -59,7 +60,8 @@ CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(FlexitModbusDeviceComponent),
-            cv.Required(CONF_ADDRESS): cv.positive_int,
+            # The CS60 only polls 1-3, and something answering at 254 sends it to its bootloader
+            cv.Required(CONF_ADDRESS): cv.int_range(min=1, max=3),
             # "none" so the pin can be turned off from a substitution
             cv.Optional(CONF_TX_ENABLE_PIN): cv.Any(
                 cv.one_of("none", lower=True), pins.internal_gpio_output_pin_schema
@@ -81,24 +83,44 @@ CONFIG_SCHEMA = cv.All(
 )
 
 
+# Without restore_from_flash an ESP8266 has 64 flash preference words, given out in setup order with a CRC word
+# per record: ours (checked in flexit_modbus_server.h), then runtime WiFi credentials, then an API key from HA.
+_FLASH_WORDS = 64
+_SETTINGS_WORDS = 47
+_RUNTIME_WORDS = 10
+_WIFI_WORDS = 26
+_API_KEY_WORDS = 9
+
+
 def _final_validate(config):
-    # An ESP8266 keeps flash preferences in 64 words without restore_from_flash. The saved settings and runtime
-    # counters take 57, the 26 for WiFi credentials don't fit after them.
-    if not CORE.is_esp8266 or not (
-        config[CONF_PERSIST_SETTINGS] or config[CONF_PERSIST_RUNTIME_COUNTERS]
-    ):
+    if not CORE.is_esp8266:
         return
     full_config = fv.full_config.get()
     if full_config.get("esp8266", {}).get(CONF_RESTORE_FROM_FLASH):
         return
-    for component in ("captive_portal", "improv_serial"):
-        if component in full_config:
-            _LOGGER.warning(
-                "WiFi credentials saved through %s aren't kept over a reboot: on an ESP8266 the saved "
-                "settings and runtime counters fill the flash space for them. Put them in the config, "
-                "or set persist_settings and persist_runtime_counters to false.",
-                component,
-            )
+    left = _FLASH_WORDS
+    if config[CONF_PERSIST_SETTINGS]:
+        left -= _SETTINGS_WORDS
+    if config[CONF_PERSIST_RUNTIME_COUNTERS]:
+        left -= _RUNTIME_WORDS
+    if left >= _WIFI_WORDS:
+        left -= _WIFI_WORDS
+    else:
+        for component in ("captive_portal", "improv_serial"):
+            if component in full_config:
+                _LOGGER.warning(
+                    "WiFi credentials saved through %s aren't kept over a reboot: on an ESP8266 the saved "
+                    "settings fill the flash space for them. Put them in the config, set persist_settings "
+                    "to false, or turn on restore_from_flash under esp8266.",
+                    component,
+                )
+    encryption = full_config.get("api", {}).get("encryption")
+    if encryption is not None and "key" not in encryption and left < _API_KEY_WORDS:
+        _LOGGER.warning(
+            "An API encryption key sent by Home Assistant can't be saved: on an ESP8266 the saved settings and "
+            "runtime counters fill the flash space for it. Put the key in the config, or set "
+            "persist_runtime_counters to false."
+        )
 
 
 FINAL_VALIDATE_SCHEMA = _final_validate
@@ -111,21 +133,11 @@ async def to_code(config):
     local_lib_exists = False
     component_dir = os.path.dirname(__file__)
 
+    # ESPHome copies the component's directory into the build, so a copy here gets built with it
     if os.path.exists(
         os.path.join(component_dir, "ModbusRTUServer.h")
     ) or os.path.exists(os.path.join(component_dir, "ModbusRTUServer.cpp")):
         local_lib_exists = True
-
-    if not local_lib_exists:
-        possible_paths = [
-            os.path.join(component_dir, "..", "..", "..", "ModbusRTUServer"),
-            os.path.join(component_dir, "..", "..", "ModbusRTUServer"),
-            os.path.join(os.getcwd(), "ModbusRTUServer"),
-        ]
-        for path in possible_paths:
-            if os.path.exists(path):
-                local_lib_exists = True
-                break
 
     if not local_lib_exists:
         # ESPHome leaves out the version for git libraries, so the ref goes on the URL
@@ -144,6 +156,7 @@ async def to_code(config):
     cg.add(server.set_tx_enable_direct(config[CONF_TX_ENABLE_DIRECT]))
     cg.add(server.set_persist_settings(config[CONF_PERSIST_SETTINGS]))
     cg.add(server.set_persist_runtime_counters(config[CONF_PERSIST_RUNTIME_COUNTERS]))
+    cg.add(server.set_preference_hash(fnv1_hash(config[CONF_ID].id)))
 
     pin_config = config.get(CONF_TX_ENABLE_PIN, "none")
     if pin_config != "none":

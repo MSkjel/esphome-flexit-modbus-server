@@ -188,7 +188,7 @@ void FlexitModbusServer::setup() {
     return offset;
   };
 
-  // Our coil set = a value of ours the CS60 hasn't read yet. Its FC6/FC16 writes don't overwrite that (it sends
+  // Our coil set = a value of ours the CS60 hasn't read yet. Its FC6/FC16 writes don't overwrite a setting (it sends
   // every setting when it restarts, over a restore we just queued), its FC65 answer does: that's what it took.
 
   // The CS60 reads each register a panel flagged, then sends the value it took with FC65
@@ -238,7 +238,7 @@ void FlexitModbusServer::setup() {
     write_single(data, length, broadcast);
     if (length >= 6) {
       if (ours)
-        mb_.setHoldingRegister(reg, before);
+        ours = keep_ours_(reg, before);
       on_registers_written_(reg, 1);
       if (!ours)
         bus_written_(reg, before);
@@ -259,7 +259,7 @@ void FlexitModbusServer::setup() {
     if (length >= 6 && quantity <= 123) {
       for (uint16_t i = 0; i < quantity; i++)
         if (ours[i])
-          mb_.setHoldingRegister(start + i, before[i]);
+          ours[i] = keep_ours_(start + i, before[i]);
       on_registers_written_(start, quantity);
       for (uint16_t i = 0; i < quantity; i++)
         if (!ours[i])
@@ -340,11 +340,11 @@ void FlexitModbusServer::restore_settings_() {
   if (!persist_settings_)
     return;
 
-  settings_pref_ = global_preferences->make_preference<SavedSettings>(fnv1_hash("flexit_settings"), true);
+  settings_pref_ = global_preferences->make_preference<SavedSettings>(preference_hash_ ^ SETTINGS_KEY, true);
 
   if (!settings_pref_.load(&saved_)) {
     saved_ = SavedSettings{};
-    ESP_LOGI(TAG, "No saved settings, waiting for the CS60 to send them");
+    ESP_LOGW(TAG, "No saved settings (new install, or an update changed what's saved), restart the CS60 to get them");
     return;
   }
 
@@ -397,6 +397,17 @@ void FlexitModbusServer::set_real_(int i, uint16_t reg, uint16_t value) {
   setting_callback_.call(reg, value);
 }
 
+// The CS60 wrote over a value of ours it hasn't read. A setting keeps ours. A command gives way, as on a stock
+// CI600, so one pressed while the CS60 wasn't polling doesn't run when it restarts. True if ours was kept.
+bool FlexitModbusServer::keep_ours_(uint16_t reg, uint16_t before) {
+  if (slot_(reg) >= 0) {
+    mb_.setHoldingRegister(reg, before);
+    return true;
+  }
+  mb_.setCoil(reg, 0);
+  return false;
+}
+
 // The CS60 wrote a register, so it has that value now
 void FlexitModbusServer::bus_written_(uint16_t reg, uint16_t before) {
   int i = slot_(reg);
@@ -426,6 +437,8 @@ bool FlexitModbusServer::runtime_known_(size_t i) const {
 
 void FlexitModbusServer::on_registers_written_(uint16_t start, uint16_t count) {
   uint32_t end = static_cast<uint32_t>(start) + count;
+  if (start <= REG_HOURS_SINCE_FILTER_RESET && end > REG_HOURS_TOTAL_RUNTIME)
+    high_from_hours_();
   if (end <= RUNTIME_FIRST || start > RUNTIME_LAST)
     return;
 
@@ -450,11 +463,35 @@ void FlexitModbusServer::on_registers_written_(uint16_t start, uint16_t count) {
   }
 }
 
+// Filter and total high words from the status hours, so they're right after the ESP was off, and the filter's is
+// known on a fresh install. Total hours wrap at 65536 h (3600 high words), the total takes the one nearest its own.
+void FlexitModbusServer::high_from_hours_() {
+  for (uint16_t high : {REG_RUNTIME_FILTER_HIGH, REG_RUNTIME_HIGH}) {
+    bool total = high == REG_RUNTIME_HIGH;
+    uint32_t high_bit = 1u << (high - RUNTIME_FIRST);
+    if ((runtime_received_ & high_bit) || !(runtime_received_ & (high_bit << 1)) ||
+        (total && !(runtime_restored_ & (1u << runtime_index_(high)))))
+      continue;
+    int hours = mb_.getHoldingRegister(total ? REG_HOURS_TOTAL_RUNTIME : REG_HOURS_SINCE_FILTER_RESET);
+    int now = mb_.getHoldingRegister(high);
+    // the hours are whole, so take the middle of the hour and round
+    int value = std::max(0, (hours * 3600 + 1800 - mb_.getHoldingRegister(high + 1) + 0x8000) >> 16);
+    if (total)
+      value += (now - value + 1800) / 3600 * 3600;
+    if (value != now) {
+      mb_.setHoldingRegister(high, value);
+      ESP_LOGD(TAG, "Runtime 0x%03X high word %d from the status, was %d", high, value, now);
+    }
+    runtime_received_ |= high_bit;  // as good as the CS60's
+  }
+}
+
 void FlexitModbusServer::restore_runtime_() {
   if (!persist_runtime_counters_)
     return;
 
-  runtime_pref_ = global_preferences->make_preference<SavedRuntime>(fnv1_hash("flexit_runtime"), true);
+  runtime_pref_ =
+      global_preferences->make_preference<SavedRuntime>(preference_hash_ ^ fnv1_hash("flexit_runtime"), true);
 
   if (!runtime_pref_.load(&saved_runtime_)) {
     saved_runtime_ = SavedRuntime{};

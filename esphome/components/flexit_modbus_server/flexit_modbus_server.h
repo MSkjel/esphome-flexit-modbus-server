@@ -387,6 +387,9 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
    */
   void set_persist_runtime_counters(bool val);
 
+  /// @brief Mixed into the flash record keys, so two servers keep theirs apart.
+  void set_preference_hash(uint32_t hash) { preference_hash_ = hash; }
+
 #ifdef USE_FLEXIT_TCP_BRIDGE
   /**
    * @brief Enable/disable TCP bridge mode.
@@ -473,6 +476,8 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
   /// @brief Whether the runtime counters are restored from and saved to flash.
   bool persist_runtime_counters_{true};
 
+  uint32_t preference_hash_{0};
+
   // ----------------------------------------------------------------
   // Settings persistence
   // ----------------------------------------------------------------
@@ -503,6 +508,13 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
       n += range.count;
     return n;
   }();
+  // Hashed from the ranges, so a changed layout starts empty rather than loading into the wrong registers
+  static constexpr uint32_t SETTINGS_KEY = [] {
+    uint32_t hash = 2166136261u;
+    for (const auto &range : SETTINGS_RANGES)
+      hash = (hash * 16777619u) ^ (range.start << 16 | range.count);
+    return hash;
+  }();
   static constexpr uint32_t RUNTIME_CHECK_INTERVAL_MS = 10000;
 
   struct SavedSettings {
@@ -521,6 +533,7 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
   bool held_(int i) const { return saved_.held[i / 32] & (1u << (i % 32)); }
   void set_held_(int i, bool held);
   void set_real_(int i, uint16_t reg, uint16_t value);
+  bool keep_ours_(uint16_t reg, uint16_t before);
   void bus_written_(uint16_t reg, uint16_t before);
   void restore_settings_();
   void save_settings_();
@@ -532,7 +545,8 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
   // only sends a word when it changes, so the high word comes every ~18 h
   // and counters that aren't running don't come at all. We save them to
   // flash, and if the low word wrapped while we were off (new low < saved
-  // low) we bump the high word until the CS60 sends a real one.
+  // low) we bump the high word until the CS60 sends a real one. The filter
+  // and total high words are taken from the status hours.
   static constexpr uint16_t RUNTIME_FIRST = 0x14C;
   static constexpr uint16_t RUNTIME_LAST = 0x15F;
   static constexpr uint16_t RUNTIME_HIGH_REGS[] = {
@@ -547,6 +561,8 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
     uint16_t low[NUM_RUNTIME_COUNTERS];
     uint8_t known;  // bit per counter
   };
+  static_assert((sizeof(SavedSettings) + 3) / 4 == 46 && (sizeof(SavedRuntime) + 3) / 4 == 9,
+                "update the ESP8266 flash words in __init__.py");
 
   ESPPreferenceObject runtime_pref_;
   SavedRuntime saved_runtime_{};
@@ -558,6 +574,7 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
   int runtime_index_(uint16_t high_reg) const;
   bool runtime_known_(size_t i) const;
   void on_registers_written_(uint16_t start, uint16_t count);
+  void high_from_hours_();
   void restore_runtime_();
   /// @brief Saves new counters and high words, and the low words once an hour or if `now`.
   void save_runtime_(bool now);

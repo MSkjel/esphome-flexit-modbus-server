@@ -46,15 +46,32 @@ static std::vector<uint8_t> fc6(uint16_t reg, uint16_t value) {
   return frame({0, 0x06, (uint8_t) (reg >> 8), (uint8_t) reg, (uint8_t) (value >> 8), (uint8_t) value});
 }
 
+static std::vector<uint8_t> operator+(std::vector<uint8_t> a, const std::vector<uint8_t> &b) {
+  a.insert(a.end(), b.begin(), b.end());
+  return a;
+}
+
+// the CS60's status broadcast, with the filter and total hours
+static std::vector<uint8_t> status(uint16_t filter_hours, uint16_t total_hours) {
+  std::vector<uint8_t> f = {0, 0x10, 0x00, 0xBE, 0x00, 0x55, 0xAA};
+  for (int reg = 0xBE; reg < 0xBE + 0x55; reg++) {
+    uint16_t v = reg == REG_HOURS_SINCE_FILTER_RESET ? filter_hours : reg == REG_HOURS_TOTAL_RUNTIME ? total_hours : 0;
+    f.push_back(v >> 8);
+    f.push_back(v);
+  }
+  return frame(f);
+}
+
 // The ESP at address 1, booted with what's in flash
 struct Esp {
   uart::UARTComponent bus;
   FlexitModbusServer server;
   std::vector<size_t> frames;  // what the frame callback got
 
-  Esp() {
+  explicit Esp(uint32_t preference_hash = 0) {
     server.set_uart_parent(&bus);
     server.set_server_address(1);
+    server.set_preference_hash(preference_hash);
     server.setup();
     server.add_on_frame_callback([this](const uint8_t *, size_t len) { frames.push_back(len); });
   }
@@ -65,12 +82,15 @@ struct Esp {
     server.loop();
   }
   float filter_hours() { return server.read_holding_register_hours(REG_RUNTIME_FILTER_HIGH); }
+  float total_hours() { return server.read_holding_register_hours(REG_RUNTIME_HIGH); }
+  // the CS60 sends a counter's words, and we save them
+  void save(uint16_t high, uint32_t seconds) {
+    hear(fc6(high, seconds >> 16) + fc6(high + 1, seconds & 0xFFFF));
+    now_us += 10000000;
+    hear({});
+    global_preferences->sync();
+  }
 };
-
-static std::vector<uint8_t> operator+(std::vector<uint8_t> a, const std::vector<uint8_t> &b) {
-  a.insert(a.end(), b.begin(), b.end());
-  return a;
-}
 
 int main() {
   ESPPreferences flash;
@@ -128,6 +148,60 @@ int main() {
     auto esp = std::make_unique<Esp>();
     esp->hear(frame({0, 0x65, 0x01, 0x16, 0x00, 0x00}) + fc6(REG_RUNTIME_FILTER_LOW, 0));
     CHECK(esp->filter_hours() == 0);
+  }
+
+  // A filter reset while we were off: the low word went back, but the status says 0 h, so no wrap
+  flash.flash.clear();
+  std::make_unique<Esp>()->save(REG_RUNTIME_FILTER_HIGH, 65536 + 40000);
+  {
+    auto esp = std::make_unique<Esp>();
+    esp->hear(fc6(REG_RUNTIME_FILTER_LOW, 100) + status(0, 0));
+    CHECK(esp->filter_hours() == 100 / 3600.0f);
+  }
+
+  // Off for 20 h, the low word wrapped past the saved one
+  std::make_unique<Esp>()->save(REG_RUNTIME_FILTER_HIGH, 10000);
+  {
+    auto esp = std::make_unique<Esp>();
+    esp->hear(fc6(REG_RUNTIME_FILTER_LOW, (10000 + 72000) & 0xFFFF) + status(82000 / 3600, 0));
+    CHECK(esp->filter_hours() == 82000 / 3600.0f);
+  }
+
+  // Off for 3 days at 75693 h, past where the total's status hours wrap
+  const uint32_t total = 4157u * 65536 + 64100, later = total + 3 * 86400;
+  std::make_unique<Esp>()->save(REG_RUNTIME_HIGH, total);
+  {
+    auto esp = std::make_unique<Esp>();
+    esp->hear(fc6(REG_RUNTIME_LOW, later & 0xFFFF) + status(0, later / 3600 % 65536));
+    CHECK(esp->total_hours() == later / 3600.0f);
+  }
+
+  // A fresh install: the filter's from the status, the total may be past 65536 h so it needs its high word
+  flash.flash.clear();
+  {
+    auto esp = std::make_unique<Esp>();
+    esp->hear(fc6(REG_RUNTIME_FILTER_LOW, 5000) + fc6(REG_RUNTIME_LOW, 5000) + status(201608 / 3600, 1));
+    CHECK(esp->filter_hours() == 201608 / 3600.0f);
+    CHECK(std::isnan(esp->total_hours()));
+  }
+
+  // Two servers keep their records apart
+  std::make_unique<Esp>(1)->save(REG_RUNTIME_FILTER_HIGH, 50000);
+  CHECK(std::make_unique<Esp>(1)->filter_hours() == 50000 / 3600.0f);
+  CHECK(std::isnan(std::make_unique<Esp>(2)->filter_hours()));
+
+  // Unread command and setting when the CS60 restarts: the setting stays ours, the command is dropped
+  {
+    auto esp = std::make_unique<Esp>();
+    esp->server.send_cmd(REG_CMD_START_MAX_TIMER, 1);
+    esp->server.send_cmd(REG_CMD_HEATER, 1);
+    std::vector<uint8_t> sync = {0, 0x10, 0x00, 0xF6, 0x00, 0x56, 0xAC};
+    sync.resize(sync.size() + 0xAC);
+    esp->hear(frame(sync) + frame({1, 0x01, 0x00, 0x00, 0x01, 0x4C}));
+    CHECK(esp->server.read_holding_register(REG_CMD_START_MAX_TIMER) == 0);
+    CHECK(esp->server.read_holding_register(REG_CMD_HEATER) == 1);
+    // our coils, 0x13A and 0x13F are bits 2 and 7 of byte 39
+    CHECK(esp->bus.tx.size() == 47 && (esp->bus.tx[3 + 39] & 0x84) == 0x80);
   }
 
   printf("server test: %s\n", fails ? "FAILED" : "ok");
