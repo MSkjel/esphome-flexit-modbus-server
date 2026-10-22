@@ -217,7 +217,7 @@ letters, digits and `_`.
 |---|---|
 | `picture.yaml` | `name`, `file` (PNG or JPEG next to your config). `encoding`: `auto`, `palette` (16 colours) or `jpeg`; a palette picture that doesn't fit the panel's 14 KB goes as a JPEG anyway. `quality`: the JPEG quality, or `auto` for the best that fits |
 | `online_picture.yaml` | `name`, `url`, `update_interval` (`never` = only when shown), `format` (PNG, JPEG, BMP or AUTO), `resize` (160x120 default, blown up to the screen; 320x240 needs PSRAM), plus `encoding` and `quality`. A failed download is retried after 30 s, then twice as long each time. Home Assistant's own camera URLs need a token the ESP can't send; use the camera's own address, like Frigate's `http://frigate.local:5000/api/<cam>/latest.jpg?h=120`, or have HA save a snapshot in `/config/www` |
-| `animation.yaml` | `name`, `file` (a GIF), `resize` (64x64 default), `x`, `y` (top left on the 320x240 screen), `scale` (2 draws each pixel 2x), `frame_ms` (the GIF's own timing isn't used). The panel plays it from 6 KB, so keep it small: about 64x64 with a few frames, or more frames if little changes between them. Too big and it's made at half size and drawn 2x |
+| `animation.yaml` | `name`, `file` (a GIF), `resize` (64x64 default), `x`, `y` (top left on the 320x240 screen), `scale` (2 draws each pixel 2x), `frame_ms` (the GIF's own timing isn't used), `drift_x`, `drift_y` (pixels per second it drifts, wrapping round the screen seamlessly). The panel plays it from 6 KB, so keep it small: about 64x64 with a few frames, or more frames if little changes between them. Too big and it's made at half size and drawn 2x |
 | `met.yaml` | `latitude`, `longitude`, `scene` (hills, coast, mountains, city), `aurora` (auto, off, always), `update_interval` (5 min, the forecast is only fetched again when MET says it expired), `redraw_interval`, `name` (weather). `Panel Weather Scene`, `Panel Weather Aurora` and `Panel Weather Forecast` change it from Home Assistant |
 
 `met.yaml` draws the sky for the time of day and the next hour's weather from [MET Norway](https://api.met.no)
@@ -244,6 +244,7 @@ names, like `script.execute: {id: panel_notify, message: Hi, icon: bell, level: 
 | `panel_set` (`setting`, `value`) | A panel setting, see the list in `panel.yaml`: theme, brightness, idle_after, screensaver, night hours, key_lock, language and more |
 | `panel_show_picture` (`name`), `panel_clear_picture` | The screensaver picture, same as the `Panel Picture` select |
 | `panel_show_animation` (`name`), `panel_clear_animation` | The animation over it |
+| `panel_move_animation` (`x`, `y`, `ms`), `panel_drift_animation` (`vx`, `vy`) | Glide the animation to `x`, `y` over `ms` (0 jumps), or drift it at `vx`, `vy` pixels per second, wrapping round the screen; 0, 0 stops it. Drifting over a JPEG photo costs more redraws than over a palette picture, so keep it slow there |
 
 The panel's LEDs have their own selects (`Panel Alarm LED`, `Panel Filter LED`, `Panel OK LED`): Auto works like
 the stock panel, the rest let Home Assistant decide.

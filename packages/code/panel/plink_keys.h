@@ -78,6 +78,12 @@ enum { PIC_PALETTE, PIC_JPEG };
 // the whole first frame, the last one takes the last frame back to the first.
 #define K_ANIM_BEGIN 0x336
 #define K_ANIM_CLEAR 0x337  // forget the animation
+// ANIM_MOVE, moves the animation: mode, then for ANIM_GLIDE x, y (2 each, signed, the top left to glide to) and
+// ms (2) to get there (0 = jump), for ANIM_DRIFT vx, vy (2 each, signed) in pixels per second, wrapping round the
+// screen. ANIM_STOP alone leaves it where it is. Ignored without an animation. ANIM_BEGIN stops it and puts the
+// new one at its header's x, y.
+#define K_ANIM_MOVE 0x338
+enum { ANIM_STOP, ANIM_GLIDE, ANIM_DRIFT };
 #define ANIM_OPAQUE 16
 #define ANIM_POOL 6144  // panel memory for an animation, one inflated frame of w x h / 2 bytes plus the records
 

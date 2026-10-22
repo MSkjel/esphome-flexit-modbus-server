@@ -76,6 +76,7 @@ int plink_kind(uint16_t key) {
     case K_PIC_PATCH:
     case K_PIC_DATA:
     case K_ANIM_BEGIN:
+    case K_ANIM_MOVE:
       return PLINK_BYTES;
   }
   bool def = key >= K_ITEM_DEF && key < K_ITEM_DEF + N_ITEMS, text = key >= K_ITEM_LABEL && key < K_ITEM_UNIT + N_ITEMS,

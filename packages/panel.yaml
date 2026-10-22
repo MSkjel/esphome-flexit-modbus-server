@@ -248,6 +248,20 @@ api:
     - action: panel_clear_animation
       then:
         - lambda: flexit::panel::anim::clear();
+    # move the animation: glide to x, y over ms (0 jumps), or drift at vx, vy pixels per second round the screen
+    - action: panel_move_animation
+      variables:
+        x: int
+        y: int
+        ms: int
+      then:
+        - lambda: flexit::panel::anim::move(x, y, ms);
+    - action: panel_drift_animation
+      variables:
+        vx: int
+        vy: int
+      then:
+        - lambda: flexit::panel::anim::drift(vx, vy);
     # A panel setting, value in the panel's own units. theme 0-2, brightness 0-100, idle_brightness 0-100,
     # idle_after 0-7 for 15 s to 30 min or never, screensaver 0-5, home_view 0-5, night 0/1, night_from and
     # night_to 0-23, night_brightness 0-100 when in use, night_idle_brightness 0-100 with 0 = dark, key_lock 0/1,
@@ -289,3 +303,11 @@ script:
   - id: panel_clear_animation
     then:
       - lambda: flexit::panel::anim::clear();
+  - id: panel_move_animation
+    parameters: {x: int, y: int, ms: int}
+    then:
+      - lambda: flexit::panel::anim::move(x, y, ms);
+  - id: panel_drift_animation
+    parameters: {vx: int, vy: int}
+    then:
+      - lambda: flexit::panel::anim::drift(vx, vy);

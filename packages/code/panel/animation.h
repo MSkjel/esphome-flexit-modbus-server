@@ -13,24 +13,27 @@
 
 namespace flexit::panel::anim {
 
-// x, y is where it goes on the screen, pixel(frame, x, y) gives 0xAARRGGBB
+// x, y is where it goes on the screen, pixel(frame, x, y) gives 0xAARRGGBB, vx, vy a drift in px/s
 struct Source {
   int w, h, frames, frame_ms, x, y, scale;
   std::function<uint32_t(int, int, int)> pixel;
+  int vx = 0, vy = 0;
 };
 inline std::map<std::string, Source> sources;
 
 inline void add(const std::string &name, Source s) { sources[name] = std::move(s); }
 
 // An animated GIF (animation.yaml)
-template<typename Img> void add_animation(const std::string &name, Img &&image, int frame_ms, int x, int y, int scale) {
+template<typename Img>
+void add_animation(const std::string &name, Img &&image, int frame_ms, int x, int y, int scale, int vx, int vy) {
   auto *img = picture::ptr_of(image);
   add(name, {img->get_width(), img->get_height(), (int) img->get_animation_frame_count(), frame_ms, x, y, scale,
              [img](int f, int px, int py) -> uint32_t {
                img->set_frame(f);
                auto c = img->get_pixel(px, py);
                return (uint32_t) c.w << 24 | (uint32_t) c.r << 16 | (uint32_t) c.g << 8 | c.b;
-             }});
+             },
+             vx, vy});
 }
 
 // count() builds the palette from all frames, make() the records
@@ -48,10 +51,34 @@ inline struct {
   std::vector<uint8_t> data;                // the frame records
   uint32_t pos = 0;                         // bytes of data sent so far
   uint32_t end_ms = 0;                      // see picture::no_answer()
+  uint8_t motion = ANIM_STOP;               // how it moves on the panel, with move or drift below
+  struct {
+    int16_t x, y;
+    uint16_t ms;
+  } move = {};
+  struct {
+    int16_t vx, vy;
+  } drift = {};
   uint8_t lut[4096];
 } A;
 
 inline bool sending() { return A.phase == SEND && A.head; }
+
+// K_ANIM_MOVE for the motion in A, see plink_keys.h
+inline void send_move() {
+  uint8_t m[7] = {A.motion};
+  picture::put16(m + 1, (uint16_t) (A.motion == ANIM_DRIFT ? A.drift.vx : A.move.x));
+  picture::put16(m + 3, (uint16_t) (A.motion == ANIM_DRIFT ? A.drift.vy : A.move.y));
+  picture::put16(m + 5, A.move.ms);
+  link::send(K_ANIM_MOVE, m, A.motion == ANIM_GLIDE ? 7 : A.motion == ANIM_DRIFT ? 5 : 1);
+}
+
+inline std::string shown() {
+  return "Shown: " + A.name +
+         (A.motion == ANIM_DRIFT   ? ", drifting"
+          : A.motion == ANIM_GLIDE ? ", moved to " + std::to_string(A.move.x) + "," + std::to_string(A.move.y)
+                                   : "");
+}
 
 inline void status(const std::string &s) {
   if (id(panel_animation_status).state != s)
@@ -244,7 +271,9 @@ inline void ack(uint32_t a) {
     A.phase = IDLE;
     A.head = false;
     A.name = A.want;
-    status("Shown: " + A.name);
+    if (A.motion != ANIM_STOP)  // the panel put it at the header's x, y and still
+      send_move();
+    status(shown());
   } else if (st == PIC_TOO_BIG && !A.half) {
     A.half = true;
     A.head = false;
@@ -269,6 +298,7 @@ inline void restarted() {
 inline void clear() {
   A.want.clear();
   A.name.clear();
+  A.motion = ANIM_STOP;
   picture::drop(A.data);
   A.failed = A.head = false;
   A.phase = IDLE;
@@ -295,6 +325,32 @@ inline void show(const std::string &name) {
   A.name.clear();
   A.half = A.failed = A.head = false;
   A.phase = IDLE;
+  const Source &s = sources[name];
+  A.drift = {(int16_t) s.vx, (int16_t) s.vy};
+  A.motion = s.vx || s.vy ? ANIM_DRIFT : ANIM_STOP;
+}
+
+// A change of motion goes out now if the panel has the animation, else with it once it's there
+inline void moved() {
+  if (A.phase != IDLE || A.name.empty())
+    return;
+  send_move();
+  status(shown());
+}
+
+// For panel_move_animation: glide to x, y over ms, 0 jumps
+inline void move(int x, int y, int ms) {
+  A.motion = ANIM_GLIDE;
+  A.move = {(int16_t) std::max(-32768, std::min(32767, x)), (int16_t) std::max(-32768, std::min(32767, y)),
+            (uint16_t) std::max(0, std::min(65535, ms))};
+  moved();
+}
+
+// For panel_drift_animation: vx, vy in px/s, wrapping round the screen. 0, 0 stops it where it is.
+inline void drift(int vx, int vy) {
+  A.drift = {(int16_t) std::max(-32768, std::min(32767, vx)), (int16_t) std::max(-32768, std::min(32767, vy))};
+  A.motion = vx || vy ? ANIM_DRIFT : ANIM_STOP;
+  moved();
 }
 
 // every 20 ms
