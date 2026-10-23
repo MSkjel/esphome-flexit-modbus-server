@@ -6,6 +6,7 @@
 #include <cstring>
 #include <functional>
 #include <string>
+#include <string_view>
 #include "items.h"
 #include "met_scene.h"
 #include "picture.h"
@@ -133,8 +134,8 @@ inline void unreachable() {
 }
 
 // api.met.no's answer, 2xx with the start of the forecast or 304 if it hasn't changed. 203 is a product that's
-// deprecated, its data is still good.
-inline void fetched(int status, const std::string &body, const std::string &last_modified, const std::string &expires) {
+// deprecated, its data is still good. body is NUL-terminated past its end.
+inline void fetched(int status, std::string_view body, const std::string &last_modified, const std::string &expires) {
   answered = true;
   bool ok = status >= 200 && status < 300 && !body.empty();
   if (ok || status == 304) {
@@ -168,6 +169,51 @@ inline void fetched(int status, const std::string &body, const std::string &last
     on_status(s);
   send_now();
   redraw();
+}
+
+// The request, with If-Modified-Since once we have a Last-Modified. Only the first BODY_MAX bytes, about the next
+// 12 hours; the coming hour is in the first 3 KB. They go into a buffer we may not get, not a std::string that
+// aborts the ESP when there's no RAM for it.
+static constexpr size_t BODY_MAX = 20 * 1024;
+
+inline void fetch() {
+  std::vector<http_request::Header> headers;
+  if (!modified.empty())
+    headers.push_back({"If-Modified-Since", modified});
+  auto c = id(panel_http).get(url, headers, {"last-modified", "expires"});
+  if (!c) {
+    unreachable();
+    return;
+  }
+  RAMAllocator<char> ram;
+  char *buf = ram.allocate(BODY_MAX + 1);
+  size_t n = 0;
+  if (buf) {
+    uint32_t last = millis();
+    while (n < BODY_MAX) {
+      int r = c->read((uint8_t *) buf + n, std::min<size_t>(BODY_MAX - n, 512));
+      App.feed_wdt();
+      auto res = http_request::http_read_loop_result(r, last, id(panel_http).get_timeout(), c->is_read_complete());
+      if (res == http_request::HttpReadLoopResult::RETRY)
+        continue;
+      if (res != http_request::HttpReadLoopResult::DATA)
+        break;
+      n += (size_t) r;
+    }
+    buf[n] = 0;
+  }
+  int status = c->status_code;
+  std::string last_modified = c->get_response_header("last-modified"), expires = c->get_response_header("expires");
+  c->end();
+  if (!buf) {
+    ESP_LOGW("met", "No RAM for the forecast, %u bytes", (unsigned) BODY_MAX);
+    not_before = (uint32_t) id(flexit_panel_time).now().timestamp + 600;
+    if (on_status)
+      on_status("No RAM for the forecast");
+    return;
+  }
+  fetched(status, std::string_view(buf, n), last_modified, expires);
+  ram.deallocate(buf, BODY_MAX + 1);
 }
 
 inline void setup(double latitude, double longitude, const char *picture, const char *encoding, const char *quality) {

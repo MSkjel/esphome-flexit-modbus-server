@@ -21,6 +21,7 @@ defaults:
   aurora: auto
 
 http_request:
+  id: panel_http
   useragent: esphome-flexit-modbus-server (github.com/MSkjel/esphome-flexit-modbus-server)
 
 # api.met.no's certificate is from HARICA, which ESPHome's usual root bundle doesn't have, so we take the full one.
@@ -87,35 +88,9 @@ script:
   - id: panel_weather_fetch
     mode: single
     then:
-      - if:
-          condition:
-            lambda: return flexit::panel::met::due();
-          then:
-            # If-Modified-Since only once we have a Last-Modified to send. Same request otherwise.
-            - if:
-                condition:
-                  lambda: return flexit::panel::met::modified.empty();
-                then:
-                  # we only read the first 20 KB, about the next 12 hours. The coming hour is in the first 3 KB.
-                  - http_request.get: &panel_weather_get
-                      url: !lambda return std::string(flexit::panel::met::url);
-                      collect_headers: [last-modified, expires]
-                      capture_response: true
-                      max_response_buffer_size: 20kB
-                      on_response:
-                        then:
-                          - lambda: |-
-                              flexit::panel::met::fetched(response->status_code, body,
-                                                          response->get_response_header("last-modified"),
-                                                          response->get_response_header("expires"));
-                      on_error:
-                        then:
-                          - lambda: flexit::panel::met::unreachable();
-                else:
-                  - http_request.get:
-                      <<: *panel_weather_get
-                      request_headers:
-                        If-Modified-Since: !lambda return flexit::panel::met::modified.c_str();
+      - lambda: |-
+          if (flexit::panel::met::due())
+            flexit::panel::met::fetch();
 
 esphome:
   on_boot:

@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <string_view>
 
 namespace flexit::panel::met {
 
@@ -113,7 +114,8 @@ inline int easter_day_of_year(int y) {  // Gregorian Easter Sunday as day of the
 
 // The first hour of a Locationforecast 2.0 response, and the hours after it for the overlay. "complete" has
 // the cloud layers and fog, "compact" doesn't. The first hour ends within the first 3 KB.
-inline bool parse(const std::string &body, Weather &w) {
+// body is NUL-terminated past its end
+inline bool parse(std::string_view body, Weather &w) {
   size_t a = body.find("\"timeseries\":[");
   if (a == std::string::npos)
     return false;
@@ -128,7 +130,7 @@ inline bool parse(const std::string &body, Weather &w) {
   auto num = [&](const char *key, float &out, size_t from) {
     size_t p = at(key, from);
     if (p != std::string::npos)
-      out = strtof(body.c_str() + p, nullptr);
+      out = strtof(body.data() + p, nullptr);
     return p != std::string::npos;
   };
   auto symbol = [&](size_t from, char *out, size_t size) {  // out stays "" without one
@@ -137,12 +139,12 @@ inline bool parse(const std::string &body, Weather &w) {
       return;
     size_t q = body.find('"', s + 1);
     if (q != std::string::npos && q - s - 1 < size)
-      memcpy(out, body.c_str() + s + 1, q - s - 1);
+      memcpy(out, body.data() + s + 1, q - s - 1);
   };
   Weather r;
   size_t t = at("time", a);
   int y, mo, d, h;
-  if (t == std::string::npos || sscanf(body.c_str() + t, "\"%d-%d-%dT%d", &y, &mo, &d, &h) != 4)
+  if (t == std::string::npos || sscanf(body.data() + t, "\"%d-%d-%dT%d", &y, &mo, &d, &h) != 4)
     return false;
   r.time = days_from_civil(y, mo, d) * 86400u + (uint32_t) h * 3600u;
   if (!num("air_temperature", r.temp, a) || !num("cloud_area_fraction", r.cloud, a))
@@ -169,7 +171,7 @@ inline bool parse(const std::string &body, Weather &w) {
     size_t was = end;
     end = f;
     Hour hr = {};
-    if (sscanf(body.c_str() + e, "{\"time\":\"%d-%d-%dT%d", &y, &mo, &d, &h) == 4 &&
+    if (sscanf(body.data() + e, "{\"time\":\"%d-%d-%dT%d", &y, &mo, &d, &h) == 4 &&
         num("air_temperature", hr.temp, e)) {
       hr.time = days_from_civil(y, mo, d) * 86400u + (uint32_t) h * 3600u;
       size_t n1 = at("next_1_hours", e);
