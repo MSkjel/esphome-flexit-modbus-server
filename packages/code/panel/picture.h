@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 #include "panel_link.h"
+#include "pdeflate.h"
 #include "pjpeg.h"
 #include "plink.h"
 
@@ -181,6 +182,7 @@ template<typename Img> void online_url(const std::string &name, Img &&image, con
 
 // A converted picture. pal and rows are only for 16 colours.
 struct Pic {
+  std::string name;
   uint8_t format = PIC_PALETTE;
   uint16_t w = 0, h = 0;
   int quality = 0;  // JPEG only
@@ -193,6 +195,14 @@ struct Pic {
 struct Job {  // one transfer, the whole picture or rows y..y+count-1, with or without the palette
   bool full, pal;
   uint16_t y, count;
+};
+
+struct Zip {  // a 16-colour piece's bytes as pzip pieces against what the panel holds
+  pzip_t z;
+  std::vector<uint16_t> table;  // while sending, if there's the RAM
+  uint8_t buf[64 + PZIP_MAX];
+  unsigned n;    // bytes in buf, not sent yet
+  uint16_t row;  // like_row()'s row
 };
 
 // start(), count() and map() for 16 colours and jpeg() for the JPEG as needed, choose(), plan(), then send()
@@ -223,6 +233,7 @@ inline struct {
   std::vector<uint32_t> hist;                          // pixel count per colour, at 4 bits per channel
   std::vector<Job> jobs;
   std::vector<uint8_t> lut;  // colour at 4 bits per channel -> palette index, while mapping
+  Zip zip;
 } S;
 
 template<typename T> void drop(std::vector<T> &v) { std::vector<T>().swap(v); }  // empty, with its RAM freed
@@ -351,6 +362,7 @@ inline void reset() {
   drop(S.lut);
   drop(S.buf);
   drop(S.lines);
+  drop(S.zip.table);
   S.jobs.clear();
   S.head = S.ended = false;
   S.phase = IDLE;
@@ -648,6 +660,7 @@ inline bool choose() {
   }
   if (!palette)
     S.made = std::move(S.jpeg);
+  S.made.name = S.name;
   S.jpeg = Pic();
   S.made.data.shrink_to_fit();
   S.made.rows.shrink_to_fit();
@@ -673,6 +686,7 @@ inline std::string what(const Pic &p) {
 
 // made is on the panel now
 inline void now_shown() {
+  drop(S.zip.table);
   S.shown = std::move(S.made);
   S.made = Pic();
   S.phase = IDLE;
@@ -685,7 +699,7 @@ inline bool plan() {
   S.jobs.clear();
   S.head = S.ended = false;
   Pic &made = S.made, &shown = S.shown;
-  bool same = shown.format == made.format && shown.w == made.w && shown.h == made.h;
+  bool same = shown.name == made.name && shown.format == made.format && shown.w == made.w && shown.h == made.h;
   if (made.format == PIC_JPEG) {
     if (!same || shown.data != made.data)  // a JPEG goes whole, and not at all if it's the same
       S.jobs.push_back({true, true, 0, made.h});
@@ -697,7 +711,9 @@ inline bool plan() {
       return a != b || memcmp(made.data.data() + made.rows[r], shown.data.data() + shown.rows[r], a) != 0;
     };
     // The panel keeps a piece behind the picture in its memory until it's applied, so it has to fit there.
-    // size is the panel's picture with the earlier pieces applied.
+    // size is the panel's picture with the earlier pieces applied. Unchanged rows up to GAP between changed ones go
+    // along: deflated against the panel's picture they cost a few bytes, another piece a round trip.
+    static constexpr int GAP = 16;
     uint32_t bytes = 0, size = shown.data.size();
     bool fits = true;
     for (int r = 0; r < made.h;) {
@@ -705,15 +721,17 @@ inline bool plan() {
         r++;
         continue;
       }
-      int s = r;
-      while (r < made.h && differs(r) && size + (made.rows[r + 1] - made.rows[s]) <= POOL)
-        r++;
-      fits = r > s;
+      int s = r, end = r;  // end: past the last changed row in this piece
+      for (; r < made.h && r - end < GAP && size + (made.rows[r + 1] - made.rows[s]) <= POOL; r++)
+        if (differs(r))
+          end = r + 1;
+      r = end;
+      fits = end > s;
       if (!fits)
         break;  // not even one row fits, send the whole picture
-      S.jobs.push_back({false, false, (uint16_t) s, (uint16_t) (r - s)});
-      bytes += made.rows[r] - made.rows[s];
-      size += (made.rows[r] - made.rows[s]) - (shown.rows[r] - shown.rows[s]);
+      S.jobs.push_back({false, false, (uint16_t) s, (uint16_t) (end - s)});
+      bytes += made.rows[end] - made.rows[s];
+      size += (made.rows[end] - made.rows[s]) - (shown.rows[end] - shown.rows[s]);
     }
     if (memcmp(made.pal, shown.pal, sizeof made.pal)) {
       if (S.jobs.empty())
@@ -721,12 +739,11 @@ inline bool plan() {
       else
         S.jobs[0].pal = true;
     }
-    if (!fits || bytes > made.data.size() * 3 / 4) {
+    if (!fits) {
       S.jobs.clear();
       S.jobs.push_back({true, true, 0, made.h});
     }
-    ESP_LOGI("panel", "Picture %s: %u pieces, %u bytes changed", S.name.c_str(), (unsigned) S.jobs.size(),
-             (unsigned) bytes);
+    ESP_LOGI("panel", "Picture %s: %u pieces, %u bytes", S.name.c_str(), (unsigned) S.jobs.size(), (unsigned) bytes);
   }
   if (S.jobs.empty()) {
     now_shown();
@@ -736,6 +753,8 @@ inline bool plan() {
   status("Sending " + S.name);
   return true;
 }
+
+inline void applied(const Job &j);
 
 // The panel's K_PIC_ACK = status << 24 | id << 16 | bytes received, from panel.h
 inline void ack(uint32_t a) {
@@ -747,14 +766,18 @@ inline void ack(uint32_t a) {
     if (S.len)
       status("Sending " + S.name + ": " + std::to_string(std::min<uint32_t>(99, n * 100 / S.len)) + " %");
   } else if (st == PIC_DONE) {  // piece applied
+    Job j = S.jobs.front();
     S.jobs.erase(S.jobs.begin());
     S.head = S.ended = false;
     if (S.jobs.empty())
       now_shown();
+    else
+      applied(j);
   } else if (st == PIC_NO_ROOM || st == PIC_NO_PICTURE) {  // piece didn't fit or the panel restarted, send it all
     S.shown = Pic();
     S.phase = PLAN;
   } else if (st != PIC_TOO_BIG && ++S.tries <= 2) {  // retry with the whole picture
+    ESP_LOGW("panel", "Picture %s: the panel refused a piece (%d), sending all of it", S.name.c_str(), st);
     S.shown = Pic();
     S.phase = PLAN;
   } else {
@@ -805,19 +828,67 @@ inline bool no_answer(bool ended, uint32_t &since) {
 }
 
 // After a picture's or animation's header: data[pos..len) as DATA while the link has room, then END with the CRC
-inline void send_data(const uint8_t *data, uint32_t len, uint32_t &pos, bool &ended) {
-  while (link::waiting() < link::BACKLOG && pos < len) {
+// A transfer's DATA as the link has room, then END with the CRC of data. next(b, max) gives up to max more bytes
+// of what goes, fewer only at the end.
+template<typename Next> void send_data(const uint8_t *data, uint32_t len, bool &ended, Next next) {
+  uint32_t t0 = micros();
+  while (!ended && link::waiting() < link::BACKLOG && link::room() >= 80 && micros() - t0 < SLICE_US) {
     uint8_t b[64] = {};  // DATA must be a multiple of 4 bytes, so the last chunk is padded
-    uint32_t n = std::min<uint32_t>(sizeof b, len - pos);
-    memcpy(b, data + pos, n);
-    if (!link::send(K_PIC_DATA, b, (int) (n + 3) & ~3))
-      break;
-    pos += n;
+    unsigned n = next(b, sizeof b);
+    if (n)
+      link::send(K_PIC_DATA, b, (int) (n + 3) & ~3);
+    if (n < sizeof b) {
+      link::send(K_PIC_END, plink_crc32(0, data, len));
+      ended = true;
+    }
   }
-  if (pos >= len && !ended) {
-    link::send(K_PIC_END, plink_crc32(0, data, len));
-    ended = true;
-  }
+}
+
+// For send_data: data as it is, from pos on
+inline auto raw(const uint8_t *data, uint32_t len, uint32_t &pos) {
+  return [data, len, &pos](uint8_t *b, unsigned max) {
+    unsigned k = std::min<uint32_t>(max, len - pos);
+    memcpy(b, data + pos, k);
+    pos += k;
+    return k;
+  };
+}
+
+// For send_data: S.zip's pieces
+inline unsigned pieces(uint8_t *b, unsigned max) {
+  Zip &z = S.zip;
+  for (unsigned k; z.n < max && (k = pzip(&z.z, z.buf + z.n));)
+    z.n += k;
+  unsigned k = std::min(z.n, max);
+  memcpy(b, z.buf, k);
+  memmove(z.buf, z.buf + k, z.n - k);
+  z.n -= k;
+  return k;
+}
+
+// pzip's like() for a patch: the same place in the row it replaces on the panel
+inline int32_t like_row(void *, uint32_t i) {
+  const Pic &m = S.made, &p = S.shown;
+  while (S.zip.row + 1u < m.h && m.rows[S.zip.row + 1] <= S.start + i)
+    S.zip.row++;
+  uint32_t at = p.rows[S.zip.row] + (S.start + i - m.rows[S.zip.row]);
+  return at < p.rows[S.zip.row + 1] ? (int32_t) at : -1;
+}
+
+// The panel spliced the patch into its picture, so shown does too and the next one matches what it has
+inline void applied(const Job &j) {
+  Pic &p = S.shown;
+  const Pic &m = S.made;
+  uint32_t a = p.rows[j.y], b = p.rows[j.y + j.count];
+  int32_t delta = (int32_t) (m.rows[j.y + j.count] - m.rows[j.y]) - (int32_t) (b - a);
+  p.data.erase(p.data.begin() + a, p.data.begin() + b);
+  p.data.insert(p.data.begin() + a, m.data.begin() + m.rows[j.y], m.data.begin() + m.rows[j.y + j.count]);
+  for (unsigned r = j.y + 1u; r <= j.y + j.count; r++)
+    p.rows[r] = (uint16_t) (a + m.rows[r] - m.rows[j.y]);
+  for (unsigned r = j.y + j.count + 1u; r <= p.h; r++)
+    p.rows[r] = (uint16_t) (p.rows[r] + delta);
+  if (j.pal)
+    memcpy(p.pal, m.pal, sizeof p.pal);
 }
 
 // The next piece's header, then its data as the link has room. Done when the panel acks it.
@@ -863,8 +934,26 @@ inline void send() {
       link::send(K_PIC_PATCH, h, j.pal ? 57 : 9);
     }
     S.head = true;
+    if (!jpeg) {  // a whole one only matches itself, a patch the panel's picture too
+      if (S.zip.table.empty() && has_ram(PZIP_TABLE * 2, PZIP_TABLE * 2))
+        S.zip.table.resize(PZIP_TABLE);
+      S.zip.z = {j.full ? nullptr : S.shown.data.data(),
+                 j.full ? 0 : (uint32_t) S.shown.data.size(),
+                 made.data.data() + S.start,
+                 S.len,
+                 0,
+                 S.zip.table.empty() ? nullptr : S.zip.table.data(),
+                 0,
+                 j.full ? nullptr : like_row,
+                 nullptr};
+      S.zip.n = 0;
+      S.zip.row = j.y;
+    }
   }
-  send_data(made.data.data() + S.start, S.len, S.pos, S.ended);
+  if (made.format == PIC_JPEG)
+    send_data(made.data.data(), S.len, S.ended, raw(made.data.data(), S.len, S.pos));
+  else
+    send_data(made.data.data() + S.start, S.len, S.ended, pieces);
 }
 
 inline bool sending() { return S.phase == SEND && S.head; }

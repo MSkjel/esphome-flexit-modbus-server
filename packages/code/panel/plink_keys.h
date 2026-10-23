@@ -58,7 +58,8 @@ enum { NOTE_INFO, NOTE_WARNING, NOTE_ALARM };
 
 // ---- Pictures (the screensaver background), in one of two formats:
 //   PIC_PALETTE  16 colours, each row PackBits-compressed on its own (plink_pack_row) so changed rows can be sent
-//                alone with PATCH. For drawings like the weather picture.
+//                alone with PATCH. For drawings like the weather picture. DATA carries them as pdeflate.h's pzip
+//                pieces, deflated against what the panel has.
 //   PIC_JPEG     baseline JPEG from pjpeg.h. Y at 2x1, a restart marker after every MCU row, width a multiple of
 //                16, height of 8. For photos, always sent whole.
 // A transfer is BEGIN or PATCH, then DATA up to len bytes, then END. The panel answers with PIC_ACKs and centers
@@ -69,8 +70,8 @@ enum { PIC_PALETTE, PIC_JPEG };
 // PATCH, rows y..y+count-1 of the current 16-colour picture: id, y (2), count (2), len (4), then a new palette or
 // none. With no rows only the palette changes.
 #define K_PIC_PATCH 0x331
-#define K_PIC_DATA 0x332   // compressed bytes, a multiple of 4 for pbulk. Bytes past len are ignored
-#define K_PIC_END 0x333    // plink_crc32 of the compressed bytes
+#define K_PIC_DATA 0x332   // the picture's bytes, a multiple of 4 for pbulk. Bytes past the end are ignored
+#define K_PIC_END 0x333    // plink_crc32 of the len bytes
 #define K_PIC_ACK 0x334    // panel -> ESP: status (PIC_*) << 24 | id << 16 | bytes received
 #define K_PIC_CLEAR 0x335  // forget the picture
 

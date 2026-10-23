@@ -386,7 +386,7 @@ inline void send() {
     W.ended = false;
     W.pos = 0;
   }
-  picture::send_data(a.data.data(), a.data.size(), W.pos, W.ended);
+  picture::send_data(a.data.data(), a.data.size(), W.ended, picture::raw(a.data.data(), a.data.size(), W.pos));
 }
 
 // The panel has it: its copies go on

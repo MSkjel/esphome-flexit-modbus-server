@@ -30,7 +30,7 @@ typedef struct {
   bool short_;  // the data ended early
   uint8_t *out;
   unsigned width, stride;
-  uint32_t len, done;  // bytes to make, bytes made
+  uint32_t len, done, hist;  // bytes to make, bytes made, bytes before out that matches may reach
 } inf_t;
 
 typedef struct {
@@ -115,11 +115,12 @@ static bool codes(inf_t *s, const huff_t *lit, const huff_t *dist) {
     if (s->short_ || d < 0 || d >= 30)
       return false;
     uint32_t back = DBASE[d] + getbits(s, DEXT[d]);
-    if (s->short_ || back > s->done || n > s->len - s->done)
+    if (s->short_ || back > s->done + s->hist || n > s->len - s->done)
       return false;
     if (s->out)
       for (uint32_t i = s->done; i < s->done + n; i++)
-        s->out[at(i, s->width, s->stride)] = s->out[at(i - back, s->width, s->stride)];
+        s->out[at(i, s->width, s->stride)] =
+            i >= back ? s->out[at(i - back, s->width, s->stride)] : s->out[(int32_t) i - (int32_t) back];
     s->done += n;
   }
 }
@@ -199,12 +200,13 @@ static bool dynamic(inf_t *s, huff_t *lit, huff_t *dist, uint8_t *lens) {
   return codes(s, lit, dist);
 }
 
-uint32_t pinflate(const uint8_t *in, uint32_t n, uint8_t *out, unsigned width, unsigned stride, uint32_t len) {
+uint32_t pinflate(const uint8_t *in, uint32_t n, uint8_t *out, unsigned width, unsigned stride, uint32_t len,
+                  uint32_t hist) {
   int16_t lsym[288], dsym[30];
   uint8_t lens[288 + 32];
   huff_t lit = {.symbol = lsym}, dist = {.symbol = dsym};
-  inf_t s = {.in = in, .n = n, .out = out, .width = width, .stride = stride, .len = len};
-  if (!width)
+  inf_t s = {.in = in, .n = n, .out = out, .width = width, .stride = stride, .len = len, .hist = hist};
+  if (!width || (hist && width != stride))
     return 0;
   for (bool last = false; !last;) {
     last = getbits(&s, 1);
@@ -539,4 +541,114 @@ done:
   free(src);
   free(tok);
   return result;
+}
+
+// ---------------------------------------------------------------- pieces
+#define PZIP_OUT 4096  // most a piece makes, so neither end takes long over one
+
+static uint8_t fix_len[288];  // the fixed codes, made on first use
+static uint16_t fix_lit[288], fix_dist[30];
+
+static uint8_t pz_at(const pzip_t *z, uint32_t v) { return v < z->nh ? z->hist[v] : z->data[v - z->nh]; }
+
+static unsigned pz_hash(const pzip_t *z, uint32_t v) {
+  return ((uint32_t) pz_at(z, v) << 16 | (uint32_t) pz_at(z, v + 1) << 8 | pz_at(z, v + 2)) * 2654435761u >> 21;
+}
+
+// Makes the match for the byte at v from the one at s longer than *best, up to max bytes
+static void pz_try(const pzip_t *z, uint32_t v, uint32_t s, unsigned max, unsigned *best, uint32_t *dist) {
+  if (*best >= max || s >= v || v - s > 32768 || pz_at(z, s + *best) != pz_at(z, v + *best))
+    return;
+  unsigned k = 0;
+  while (k < max && pz_at(z, s + k) == pz_at(z, v + k))
+    k++;
+  if (k > *best) {
+    *best = k;
+    *dist = v - s;
+  }
+}
+
+unsigned pzip(pzip_t *z, uint8_t *out) {
+  if (z->done >= z->n)
+    return 0;
+  if (z->table && !z->done && !z->ins)
+    memset(z->table, 0, PZIP_TABLE * sizeof *z->table);
+  if (!fix_len[0]) {
+    uint8_t d[30];
+    memset(fix_len, 8, 144);
+    memset(fix_len + 144, 9, 112);
+    memset(fix_len + 256, 7, 24);
+    memset(fix_len + 280, 8, 8);
+    memset(d, 5, sizeof d);
+    canonical(fix_len, 288, fix_lit);
+    canonical(d, 30, fix_dist);
+  }
+  wr_t w = {.out = out + PZIP_HEAD, .cap = PZIP_MAX - PZIP_HEAD};
+  uint32_t bits = 3 + 7, room = 8 * w.cap, i = z->done;  // the block head and the end code
+  // hist goes into the table over the first pieces, top first, so no piece takes long. Without taking a place from
+  // the data, which is nearer.
+  for (uint32_t stop = z->ins + PZIP_TABLE; z->table && z->ins < z->nh && z->ins < stop; z->ins++) {
+    uint16_t *t = &z->table[pz_hash(z, z->ins)];
+    if (!*t && z->ins + 2 < z->nh + z->n)
+      *t = (uint16_t) (z->ins + 1);
+  }
+  put(&w, 1, 1);
+  put(&w, 1, 2);
+  while (i < z->n && i - z->done < PZIP_OUT) {  // greedy: the longest match if it costs less than its literals
+    uint32_t v = z->nh + i, dist = 0, lit = z->data[i] < 144 ? 8 : 9, cost = lit;
+    unsigned max = z->n - i < 258 ? z->n - i : 258, len = 0;
+    if (max >= 3) {  // the last place with the same 3 bytes, and where like() says
+      len = 2;
+      uint16_t t = z->table ? z->table[pz_hash(z, v)] : 0;
+      if (t)
+        pz_try(z, v, t - 1u, max, &len, &dist);
+      int32_t s = z->like ? z->like(z->ctx, i) : -1;
+      if (s >= 0 && (uint32_t) s < z->nh)
+        pz_try(z, v, (uint32_t) s, max, &len, &dist);
+    }
+    int l = len >= 3 ? lcode(len) : 0, d = len >= 3 ? dcode(dist) : 0;
+    if (len >= 3) {
+      uint32_t as_lit = 0, mbits = fix_len[257 + l] + LEXT[l] + 5u + DEXT[d];
+      for (unsigned k = 0; k < len; k++)
+        as_lit += z->data[i + k] < 144 ? 8 : 9;
+      if (mbits < as_lit)
+        cost = mbits;
+      else
+        len = 0;
+    }
+    if (bits + cost > room)
+      break;
+    bits += cost;
+    for (uint32_t k = 0, step = len >= 3 ? len : 1; z->table && k < step && v + k + 2 < z->nh + z->n; k++)
+      if (k < 8 || k + 3 >= step)  // a long match's ends, its middle adds little
+        z->table[pz_hash(z, v + k)] = (uint16_t) (v + k + 1);
+    if (len >= 3) {
+      put(&w, fix_lit[257 + l], fix_len[257 + l]);
+      put(&w, len - LBASE[l], LEXT[l]);
+      put(&w, fix_dist[d], 5);
+      put(&w, dist - DBASE[d], DEXT[d]);
+      i += len;
+    } else {
+      put(&w, fix_lit[z->data[i]], lit);
+      i++;
+    }
+  }
+  put(&w, fix_lit[256], 7);
+  put(&w, 0, (8 - w.nbits) & 7);
+  uint32_t made = i - z->done, left = z->n - z->done, raw = w.cap - 5 < left ? w.cap - 5 : left;
+  if (raw > made) {  // stored carries more
+    w = (wr_t) {.out = out + PZIP_HEAD, .cap = PZIP_MAX - PZIP_HEAD};
+    made = raw;
+    put(&w, 1, 1);
+    put(&w, 0, 7);
+    put(&w, made, 16);
+    put(&w, ~made & 0xFFFF, 16);
+    for (uint32_t k = 0; k < made; k++)
+      put(&w, z->data[z->done + k], 8);
+  }
+  out[0] = (uint8_t) w.len;
+  out[1] = (uint8_t) made;
+  out[2] = (uint8_t) (made >> 8);
+  z->done += made;
+  return PZIP_HEAD + w.len;
 }
