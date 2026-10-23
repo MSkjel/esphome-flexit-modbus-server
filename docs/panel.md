@@ -269,18 +269,51 @@ names, like `script.execute: {id: panel_notify, message: Hi, icon: bell, level: 
 | `panel_show_picture` (`name`), `panel_clear_picture` | The screensaver picture, same as the `Panel Picture` select |
 | `panel_show_animation` (`name`), `panel_clear_animation` (`name`, or none for all) | An animation over it, where its yaml puts it, the same as its `Panel Animation <name>` switch. Any combination of them, within the panel's 6 KB |
 | `panel_place_animation` (`name`, `copy`, `x`, `y`, `own`, `start`), `panel_remove_animation` (`name`, `copy`) | The same animation in more places. Copy 0 is the one `panel_show_animation` shows, copy 1 and up are extra. They play in step and cost nothing extra, unless `own: true` gives the copy a frame of its own, which takes another w x h / 2 bytes of the 6 KB and starts `start` frames in |
-| `panel_move_animation` (`name`, `copy`, `x`, `y`, `ms`), `panel_drift_animation` (`name`, `copy`, `vx`, `vy`) | Glide a copy to `x`, `y` over `ms` (0 jumps, 65535 at most), or drift it at `vx`, `vy` pixels per second, wrapping round the screen; 0, 0 stops it. Drifting over a JPEG photo costs more redraws than over a palette picture, so keep it slow there |
-| `panel_turn_animation` (`name`, `copy`, `angle`, `ms`), `panel_spin_animation` (`name`, `copy`, `speed`), `panel_flip_animation` (`name`, `copy`, `horizontal`, `vertical`) | Turn a copy round its middle to `angle` degrees clockwise, the short way round over `ms` (0 at once), or spin it at `speed` degrees per second, negative the other way; 0 stops it where it is. Flip mirrors it left to right, upside down or both. All of it goes along with a glide or drift, and placing a copy again starts it unturned. Quarter turns and flips stay sharp, other angles are drawn pixel for pixel and look rougher |
+| `panel_move_animation` (`name`, `copy`, `x`, `y`, `ms`), `panel_drift_animation` (`name`, `copy`, `vx`, `vy`) | Glide a copy to `x`, `y` over `ms` (0 jumps, 65535 at most), or drift it at `vx`, `vy` pixels per second, round the screen or as its area says; 0, 0 stops it. Drifting over a JPEG photo costs more redraws than over a palette picture, so keep it slow there |
+| `panel_turn_animation` (`name`, `copy`, `angle`, `ms`), `panel_spin_animation` (`name`, `copy`, `speed`), `panel_flip_animation` (`name`, `copy`, `horizontal`, `vertical`) | Turn a copy round its middle to `angle` degrees clockwise, the short way round over `ms` (0 at once), or spin it at `speed` degrees per second, negative the other way; 0 stops it where it is. Flip mirrors it left to right, upside down or both. Quarter turns and flips stay sharp, other angles look rougher |
 | `panel_area_animation` (`name`, `copy`, `left`, `top`, `right`, `bottom`, `edge_x`, `edge_y`) | Where a copy's drift or wander keeps. Each edge is `screen` (round the whole screen, the default), `cross` (out at one edge of the area, in at the other) or `bounce` |
-| `panel_wander_animation` (`name`, `copy`, `speed_min`, `speed_max`, `heading`, `spread`, `leg_min`, `leg_max`, `rest_min`, `rest_max`) | Legs of `speed_min` to `speed_max` pixels per second toward `heading` give or take `spread` degrees (0 right, 90 down, 180 left, 270 up; `spread` 180 is any way), each `leg_min` to `leg_max` ms (0 0 is one leg), with rests of `rest_min` to `rest_max` ms between (0 0 none). It keeps to its area, and a bounce turns the heading round |
-| `panel_face_animation` (`name`, `copy`, `facing`, `mirror`, `tilt`, `rate`, `level`) | Turns a copy toward where it goes. `facing` is the way its frames face, `mirror` flips it to face the other way, `tilt` the most it turns (0 to 180), `rate` degrees per second (0 at once), `level` back upright when it stops. A turn, spin or flip ends it |
+| `panel_wander_animation` (`name`, `copy`, `speed_min`, `speed_max`, `heading`, `spread`, `leg_min`, `leg_max`, `rest_min`, `rest_max`) | Legs of `speed_min` to `speed_max` pixels per second toward `heading` give or take `spread` degrees (`spread` 180 is any way), each `leg_min` to `leg_max` ms (0 0 is one leg), with rests of `rest_min` to `rest_max` ms between (0 0 none). It keeps to its area, and a bounce turns the heading round |
+| `panel_face_animation` (`name`, `copy`, `facing`, `mirror`, `tilt`, `rate`, `level`) | Turns a copy toward where it goes. `facing` is the way its frames face, `mirror` flips it to face the other way, `tilt` the most it turns (0 to 180), `rate` degrees per second (0 at once), `level` back upright when it stops. A turn or spin ends it |
 | `panel_size_animation` (`name`, `copy`, `size`, `ms`) | A copy at `size` percent (10 to 400) over `ms` (0 at once) |
 | `panel_fade_animation` (`name`, `copy`, `opacity`, `ms`) | A copy at `opacity` percent over `ms` (0 at once) |
 | `panel_rounds_animation` (`name`, `copy`, `rounds`) | A copy plays to the end of `rounds` rounds, then fades out and goes. 0 plays on. With `own: true` and `start: 0` it plays from the first frame and holds the last |
 
+For the animation actions:
+
+- The screen is 320 x 240, 0,0 top left, y down. `x`, `y` is the top left of a copy's frame at full size. Sizes and
+  turns go round its middle.
+- `angle`: degrees clockwise from the frames as drawn, -90 is 270. `speed`, `rate`: degrees per second, negative
+  anticlockwise.
+- `heading`, `facing`: 0 right, 90 down, 180 left, 270 up.
+- Times in ms, 0 at once. Speeds in pixels per second.
+- An area's `right` and `bottom` are just past it, 0, 0, 320, 240 is the whole screen.
+- `copy` 0 to 7, copy 0 is the yaml's. The panel shows 8 copies at most.
+- A placed copy starts still, upright, full size, on the whole screen. Move, drift and wander replace each other, so
+  do turn, spin and face.
+
 Examples, for an ESP called `flexit`:
 
 ```yaml
+# a sun, turning and growing
+- action: esphome.flexit_panel_spin_animation
+  data: {name: sun, copy: 0, speed: 10}
+- action: esphome.flexit_panel_size_animation
+  data: {name: sun, copy: 0, size: 120, ms: 2000}
+# a boat drawn facing right, gliding left
+- action: esphome.flexit_panel_flip_animation
+  data: {name: boat, copy: 0, horizontal: true, vertical: false}
+- action: esphome.flexit_panel_move_animation
+  data: {name: boat, copy: 0, x: 10, y: 180, ms: 20000}
+# a ghost, half see-through, leaning back
+- action: esphome.flexit_panel_fade_animation
+  data: {name: ghost, copy: 0, opacity: 50, ms: 1000}
+- action: esphome.flexit_panel_turn_animation
+  data: {name: ghost, copy: 0, angle: -15, ms: 500}
+# a second ghost out of step, later removed
+- action: esphome.flexit_panel_place_animation
+  data: {name: ghost, copy: 1, x: 40, y: 60, own: true, start: 3}
+- action: esphome.flexit_panel_remove_animation
+  data: {name: ghost, copy: 1}
 # a bird crossing the sky to the right
 - action: esphome.flexit_panel_area_animation
   data: {name: bird, copy: 0, left: 0, top: 10, right: 320, bottom: 90, edge_x: cross, edge_y: bounce}
@@ -305,6 +338,12 @@ Examples, for an ESP called `flexit`:
   data: {name: star, copy: 1, x: 200, y: 30, own: true, start: 0}
 - action: esphome.flexit_panel_rounds_animation
   data: {name: star, copy: 1, rounds: 1}
+# a rocket drawn pointing up, pointing where it goes
+- action: esphome.flexit_panel_wander_animation
+  data: {name: rocket, copy: 0, speed_min: 20, speed_max: 40, heading: 0, spread: 180, leg_min: 1000, leg_max: 3000,
+         rest_min: 0, rest_max: 0}
+- action: esphome.flexit_panel_face_animation
+  data: {name: rocket, copy: 0, facing: 270, mirror: false, tilt: 180, rate: 90, level: false}
 ```
 
 The panel's LEDs have their own selects (`Panel Alarm LED`, `Panel Filter LED`, `Panel OK LED`): Auto works like
