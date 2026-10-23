@@ -15,9 +15,9 @@ jobs:
   format:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -33,7 +33,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: The packages that change the CS60 for a while, across reboots
         run: |
@@ -47,7 +47,7 @@ jobs:
             tests/update_test.cpp packages/code/panel/pbus.c -o update_test
           ./update_test
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: MSkjel/ESP-ModbusRTUServer
           path: modbus-library
@@ -67,9 +67,9 @@ jobs:
       matrix:
         config: [esp32, esp32-c3, esp8266]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -79,7 +79,7 @@ jobs:
           pip install esphome
           echo "version=$(esphome version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/cache@v4  # PlatformIO for ESP8266, ESPHome's ESP-IDF toolchain for ESP32
+      - uses: actions/cache@v6  # PlatformIO for ESP8266, ESPHome's ESP-IDF toolchain for ESP32
         with:
           path: |
             ~/.platformio
