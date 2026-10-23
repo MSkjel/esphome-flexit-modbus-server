@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <initializer_list>
 #include <string>
@@ -19,6 +20,11 @@ inline void delay(uint32_t) {}
 struct {
   void feed_wdt() {}
 } App;
+static bool no_ram;
+template<typename T> struct RAMAllocator {
+  T *allocate(size_t n) { return no_ram ? nullptr : (T *) malloc(n * sizeof(T)); }
+  void deallocate(T *p, size_t) { free(p); }
+};
 }  // namespace esphome
 using namespace esphome;
 
@@ -188,6 +194,11 @@ int main() {
   get(h);
   CHECK(last_status == "The download stopped at 3000 of 5000 bytes");
   h.stop = SIZE_MAX;
+  // no RAM for the buffer
+  no_ram = true;
+  get(h);
+  CHECK(phase == IDLE && staged.empty() && last_status == "Download failed, the ESP is out of RAM");
+  no_ram = false;
   // chunked, no size
   h.content_length = 0;
   get(h);

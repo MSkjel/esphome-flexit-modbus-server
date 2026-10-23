@@ -345,11 +345,11 @@ inline bool can_start() {
   return (staging = spare_slot()) != nullptr;
 }
 
-// update.yaml's http_request.get passes its response here. Writes the .fxup to the spare app slot a block at a
-// time, which holds up the main loop until it's done, then starts the flash.
-template<typename Response> void download(Response &r) {
-  if (!can_start())
-    return;
+static constexpr size_t BLK = 4096;  // one erase block at a time, esp_partition_write needs it erased first
+
+// Writes the .fxup to the spare app slot a block at a time, which holds up the main loop until it's done, then
+// starts the flash
+template<typename Response> void stage(Response &r, uint8_t *buf) {
   const esp_partition_t *part = staging;
   size_t total = r->content_length;  // 0 when the server doesn't say, like a chunked one
   staged_len = 0;
@@ -362,8 +362,6 @@ template<typename Response> void download(Response &r) {
     return;
   }
   status("Downloading...");
-  static constexpr size_t BLK = 4096;  // one erase block at a time, esp_partition_write needs it erased first
-  static uint8_t buf[BLK];
   size_t fill = 0, off = 0;
   uint32_t t0 = millis(), heard = t0;
   bool end = false;
@@ -416,6 +414,21 @@ template<typename Response> void download(Response &r) {
   staged_len = off;
   ESP_LOGI(TAG, "Staged %u bytes", (unsigned) staged_len);
   begin();
+}
+
+// update.yaml's http_request.get passes its response here
+template<typename Response> void download(Response &r) {
+  if (!can_start())
+    return;
+  RAMAllocator<uint8_t> ram;
+  uint8_t *buf = ram.allocate(BLK);
+  if (!buf) {
+    staged_len = 0;
+    status("Download failed, the ESP is out of RAM");
+    return;
+  }
+  stage(r, buf);
+  ram.deallocate(buf, BLK);
 }
 
 inline void finish(bool ok, const std::string &why = "") {

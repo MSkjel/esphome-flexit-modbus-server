@@ -1,12 +1,11 @@
-// met_scene.h as a panel picture. met.yaml passes the forecast to fetched() and calls redraw() every few minutes
-// so the sun and moon move. Only changed rows are sent to the panel.
+// met_scene.h as a panel picture. met.yaml calls fetch() for the forecast and redraw() every few minutes so the sun
+// and moon move. Only changed rows are sent to the panel.
 #pragma once
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <functional>
 #include <string>
-#include <string_view>
 #include "items.h"
 #include "met_scene.h"
 #include "picture.h"
@@ -47,7 +46,6 @@ inline double lat, lon;
 inline std::string name;
 inline bool with_forecast;  // the Panel Weather Forecast switch
 inline Options options;     // set from met.yaml
-inline Scene scene;
 
 inline Ground ground_of(const char *name) {
   return !strcmp(name, "coast")       ? G_COAST
@@ -58,40 +56,86 @@ inline Ground ground_of(const char *name) {
 inline Aurora aurora_of(const char *name) {
   return !strcmp(name, "off") ? A_OFF : !strcmp(name, "always") ? A_ALWAYS : A_AUTO;
 }
-inline bool drawn;
-inline int row_y[2] = {-1, -1}, row_next;  // two cached rows, since at half size picture.h reads two at a time
-inline uint32_t rows[2][W];
 // Panel Weather in met.yaml. Not published here directly, since this header is built without met.yaml too.
 inline std::function<void(const std::string &)> on_status;
 
-// Rebuilds the scene for now, and sends it again if it's the panel's picture
-inline void redraw() {
+// The scene, only while picture.h makes the picture. Its sprites and overlay are blocks of their own.
+struct Canvas {
+  Scene scene;
+  uint32_t rows[2][W];  // two cached rows, since at half size picture.h reads two at a time
+  int row_y[2], row_next;
+};
+inline Canvas *canvas;
+inline bool built;  // canvas has the scene for now
+
+inline void free_canvas() {
+  if (canvas) {
+    RAMAllocator<Sprite>().deallocate(canvas->scene.sprite, SPRITES);
+    RAMAllocator<uint8_t>().deallocate(canvas->scene.ov[0], OV_H * W / 4);
+    RAMAllocator<Canvas>().deallocate(canvas, 1);
+  }
+  canvas = nullptr;
+  built = false;
+}
+
+inline bool new_canvas() {
+  Canvas *c = RAMAllocator<Canvas>().allocate(1);
+  Sprite *sprite = RAMAllocator<Sprite>().allocate(SPRITES);
+  uint8_t *ov = RAMAllocator<uint8_t>().allocate(OV_H * W / 4);
+  if (!c || !sprite || !ov) {
+    RAMAllocator<Canvas>().deallocate(c, 1);
+    RAMAllocator<Sprite>().deallocate(sprite, SPRITES);
+    RAMAllocator<uint8_t>().deallocate(ov, OV_H * W / 4);
+    return false;
+  }
+  c->scene.sprite = sprite;
+  c->scene.ov = (uint8_t (*)[W / 4]) ov;
+  canvas = c;
+  return true;
+}
+
+// Builds the scene for now if it isn't. False without the time or the RAM, picture.h asks again a second later.
+inline bool draw() {
+  if (built)
+    return true;
   ESPTime t = id(flexit_panel_time).now();
   if (!t.is_valid())
-    return;
+    return false;
+  if (!canvas && !new_canvas()) {
+    picture::S.waiting = "no RAM to draw it";
+    return false;
+  }
 #pragma GCC diagnostic push
 // null without the fireplace package, but with it GCC warns the check is always true
 #pragma GCC diagnostic ignored "-Waddress"
   options.fireplace = flexit_fireplace_active ? flexit_fireplace_active() : false;
 #pragma GCC diagnostic pop
-  build(scene, weather, lat, lon, (uint32_t) t.timestamp, with_forecast, ESPTime::timezone_offset(), options);
-  drawn = true;
-  row_y[0] = row_y[1] = -1;
+  build(canvas->scene, weather, lat, lon, (uint32_t) t.timestamp, with_forecast, ESPTime::timezone_offset(), options);
+  canvas->row_y[0] = canvas->row_y[1] = -1;
+  canvas->row_next = 0;
+  built = true;
+  return true;
+}
+
+// The time, the weather or a setting changed. Drawn again if it's the panel's picture.
+inline void redraw() {
+  built = false;
   picture::changed(name);
 }
 
 // The picture's pixel as 0xRRGGBB
 inline uint32_t pixel(int x, int y) {
-  if (x < 0 || y < 0 || y >= H)
+  if (!canvas || x < 0 || y < 0 || y >= H)
     return 0;
-  int k = row_y[0] == y ? 0 : row_y[1] == y ? 1 : -1;
+  Canvas &c = *canvas;
+  int k = c.row_y[0] == y ? 0 : c.row_y[1] == y ? 1 : -1;
   if (k < 0) {
-    k = row_next;
-    row_next ^= 1;
-    row(scene, y, rows[k]);
-    row_y[k] = y;
+    k = c.row_next;
+    c.row_next ^= 1;
+    row(c.scene, y, c.rows[k]);
+    c.row_y[k] = y;
   }
-  return rows[k][x < W ? x : W - 1];
+  return c.rows[k][x < W ? x : W - 1];
 }
 
 // An HTTP date like "Mon, 19 Oct 2026 11:34:38 GMT" as Unix time, 0 if it isn't one
@@ -133,11 +177,11 @@ inline void unreachable() {
     on_status("Couldn't reach MET Norway");
 }
 
-// api.met.no's answer, 2xx with the start of the forecast or 304 if it hasn't changed. 203 is a product that's
-// deprecated, its data is still good. body is NUL-terminated past its end.
-inline void fetched(int status, std::string_view body, const std::string &last_modified, const std::string &expires) {
+// api.met.no's answer, 2xx with the forecast read from it into w, or 304 if it hasn't changed. 203 is a product
+// that's deprecated, its data is still good.
+inline void fetched(int status, const Weather &w, const std::string &last_modified, const std::string &expires) {
   answered = true;
-  bool ok = status >= 200 && status < 300 && !body.empty();
+  bool ok = status >= 200 && status < 300 && w.ok;
   if (ok || status == 304) {
     backoff_s = 0;
     uint32_t now = (uint32_t) id(flexit_panel_time).now().timestamp, e = http_date(expires);
@@ -152,9 +196,8 @@ inline void fetched(int status, std::string_view body, const std::string &last_m
   if (status == 203) {
     ESP_LOGW("met", "MET Norway says this product is deprecated");
   }
-  Weather w;
-  if (!ok || !parse(body, w)) {
-    ESP_LOGW("met", "No forecast from MET Norway (HTTP %d, %u bytes)", status, (unsigned) body.size());
+  if (!ok) {
+    ESP_LOGW("met", "No forecast from MET Norway (HTTP %d)", status);
     if (on_status)
       on_status("No forecast (HTTP " + std::to_string(status) + ")");
     return;
@@ -171,49 +214,45 @@ inline void fetched(int status, std::string_view body, const std::string &last_m
   redraw();
 }
 
-// The request, with If-Modified-Since once we have a Last-Modified. Only the first BODY_MAX bytes, about the next
-// 12 hours; the coming hour is in the first 3 KB. They go into a buffer we may not get, not a std::string that
-// aborts the ESP when there's no RAM for it.
-static constexpr size_t BODY_MAX = 20 * 1024;
-
+// The request, with If-Modified-Since once we have a Last-Modified. Read an hour at a time until there are
+// HOURS of them, into a buffer we may not get rather than a std::string that aborts the ESP without the RAM.
 inline void fetch() {
-  std::vector<http_request::Header> headers;
-  if (!modified.empty())
-    headers.push_back({"If-Modified-Since", modified});
-  auto c = id(panel_http).get(url, headers, {"last-modified", "expires"});
-  if (!c) {
-    unreachable();
-    return;
-  }
   RAMAllocator<char> ram;
-  char *buf = ram.allocate(BODY_MAX + 1);
-  size_t n = 0;
-  if (buf) {
-    uint32_t last = millis();
-    while (n < BODY_MAX) {
-      int r = c->read((uint8_t *) buf + n, std::min<size_t>(BODY_MAX - n, 512));
-      App.feed_wdt();
-      auto res = http_request::http_read_loop_result(r, last, id(panel_http).get_timeout(), c->is_read_complete());
-      if (res == http_request::HttpReadLoopResult::RETRY)
-        continue;
-      if (res != http_request::HttpReadLoopResult::DATA)
-        break;
-      n += (size_t) r;
-    }
-    buf[n] = 0;
-  }
-  int status = c->status_code;
-  std::string last_modified = c->get_response_header("last-modified"), expires = c->get_response_header("expires");
-  c->end();
+  char *buf = ram.allocate(Reader::SIZE + 1);
   if (!buf) {
-    ESP_LOGW("met", "No RAM for the forecast, %u bytes", (unsigned) BODY_MAX);
+    ESP_LOGW("met", "No RAM for the forecast, %u bytes", (unsigned) Reader::SIZE);
     not_before = (uint32_t) id(flexit_panel_time).now().timestamp + 600;
     if (on_status)
       on_status("No RAM for the forecast");
     return;
   }
-  fetched(status, std::string_view(buf, n), last_modified, expires);
-  ram.deallocate(buf, BODY_MAX + 1);
+  std::vector<http_request::Header> headers;
+  if (!modified.empty())
+    headers.push_back({"If-Modified-Since", modified});
+  auto c = id(panel_http).get(url, headers, {"last-modified", "expires"});
+  if (!c) {
+    ram.deallocate(buf, Reader::SIZE + 1);
+    unreachable();
+    return;
+  }
+  Reader rd(buf);
+  uint32_t last = millis();
+  for (;;) {
+    size_t room;
+    char *p = rd.space(room);
+    int r = c->read((uint8_t *) p, std::min<size_t>(room, 512));
+    App.feed_wdt();
+    auto res = http_request::http_read_loop_result(r, last, id(panel_http).get_timeout(), c->is_read_complete());
+    if (res == http_request::HttpReadLoopResult::RETRY)
+      continue;
+    if (res != http_request::HttpReadLoopResult::DATA || !rd.got((size_t) r))
+      break;
+  }
+  ram.deallocate(buf, Reader::SIZE + 1);
+  int status = c->status_code;
+  std::string last_modified = c->get_response_header("last-modified"), expires = c->get_response_header("expires");
+  c->end();
+  fetched(status, rd.w, last_modified, expires);
 }
 
 inline void setup(double latitude, double longitude, const char *picture, const char *encoding, const char *quality) {
@@ -232,14 +271,13 @@ inline void setup(double latitude, double longitude, const char *picture, const 
                  .range(-50, 50)
                  .add();
   picture::Source s;
-  s.size = [](int &w, int &h) {  // false until the time is known
-    if (!drawn)
-      redraw();
+  s.size = [](int &w, int &h) {
     w = W;
     h = H;
-    return drawn;
+    return draw();
   };
   s.pixel = pixel;
+  s.done = free_canvas;
   s.encoding = picture::encoding_of(encoding);
   s.quality = picture::quality_of(quality);
   picture::add(name, s);

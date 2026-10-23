@@ -112,83 +112,106 @@ inline int easter_day_of_year(int y) {  // Gregorian Easter Sunday as day of the
   return (int) (days_from_civil(y, month, day) - days_from_civil(y, 1, 1)) + 1;
 }
 
-// The first hour of a Locationforecast 2.0 response, and the hours after it for the overlay. "complete" has
-// the cloud layers and fog, "compact" doesn't. The first hour ends within the first 3 KB.
-// body is NUL-terminated past its end
-inline bool parse(std::string_view body, Weather &w) {
-  size_t a = body.find("\"timeseries\":[");
-  if (a == std::string::npos)
-    return false;
-  size_t end = body.find("{\"time\"", body.find("{\"time\"", a) + 1);  // the second hour
-  if (end == std::string::npos)
-    end = body.size();
-  auto at = [&](const char *key, size_t from) -> size_t {
-    std::string k = std::string("\"") + key + "\":";
-    size_t p = body.find(k, from);
-    return p == std::string::npos || p >= end ? std::string::npos : p + k.size();
-  };
-  auto num = [&](const char *key, float &out, size_t from) {
-    size_t p = at(key, from);
-    if (p != std::string::npos)
-      out = strtof(body.data() + p, nullptr);
-    return p != std::string::npos;
-  };
-  auto symbol = [&](size_t from, char *out, size_t size) {  // out stays "" without one
-    size_t s = at("symbol_code", from);
-    if (s == std::string::npos || body[s] != '"')
-      return;
-    size_t q = body.find('"', s + 1);
-    if (q != std::string::npos && q - s - 1 < size)
-      memcpy(out, body.data() + s + 1, q - s - 1);
-  };
-  Weather r;
-  size_t t = at("time", a);
-  int y, mo, d, h;
-  if (t == std::string::npos || sscanf(body.data() + t, "\"%d-%d-%dT%d", &y, &mo, &d, &h) != 4)
-    return false;
-  r.time = days_from_civil(y, mo, d) * 86400u + (uint32_t) h * 3600u;
-  if (!num("air_temperature", r.temp, a) || !num("cloud_area_fraction", r.cloud, a))
-    return false;
-  num("cloud_area_fraction_low", r.cloud_low, a);
-  num("cloud_area_fraction_medium", r.cloud_mid, a);
-  num("cloud_area_fraction_high", r.cloud_high, a);
-  num("fog_area_fraction", r.fog, a);
-  num("wind_speed", r.wind, a);
-  num("wind_from_direction", r.wind_from, a);
-  size_t next = at("next_1_hours", a);
-  if (next == std::string::npos)
-    next = at("next_6_hours", a);
-  if (next != std::string::npos) {
-    num("precipitation_amount", r.rain, next);
-    num("probability_of_thunder", r.thunder, next);
-    symbol(next, r.symbol, sizeof r.symbol);
+// Reads a Locationforecast 2.0 answer as it comes in, an hour at a time, so it needs only a small buffer. The
+// first hour is the weather now, it and the ones after it are for the overlay. "complete" has the cloud layers
+// and fog, "compact" doesn't.
+struct Reader {
+  static constexpr size_t SIZE = 4096;  // an hour is about 1.2 KB
+  char *buf;                            // SIZE + 1 bytes
+  size_t n = 0;
+  bool series = false;  // past "timeseries":[
+  Weather w;            // w.ok once it has the first hour
+
+  explicit Reader(char *b) : buf(b) { buf[0] = 0; }
+  // Where the next bytes go, and how many fit
+  char *space(size_t &room) {
+    room = SIZE - n;
+    return buf + n;
   }
-  // the hours after it, as many as are complete in what we read
-  for (size_t e = body.find("{\"time\"", a); e != std::string::npos && r.hours < HOURS;) {
-    size_t f = body.find("{\"time\"", e + 1);
-    if (f == std::string::npos)
-      break;  // the last one may be cut off
-    size_t was = end;
-    end = f;
-    Hour hr = {};
-    if (sscanf(body.data() + e, "{\"time\":\"%d-%d-%dT%d", &y, &mo, &d, &h) == 4 &&
-        num("air_temperature", hr.temp, e)) {
-      hr.time = days_from_civil(y, mo, d) * 86400u + (uint32_t) h * 3600u;
-      size_t n1 = at("next_1_hours", e);
-      if (n1 != std::string::npos) {
-        char sym[40] = "";
-        symbol(n1, sym, sizeof sym);
-        hr.icon = icon_of(sym);
-        r.hour[r.hours++] = hr;
+  // n bytes came in at space(). False once it has HOURS hours, or what came can't be read.
+  bool got(size_t k) {
+    n += k;
+    buf[n] = 0;
+    if (!series) {
+      const char *p = strstr(buf, "\"timeseries\":[");
+      if (!p) {
+        drop(n - std::min<size_t>(n, 15));  // the key may be cut in two
+        return true;
       }
+      series = true;
+      drop((size_t) (p - buf));
     }
-    end = was;
-    e = f;
+    for (;;) {  // each hour once the next one starts, so the last one, maybe cut off, is never read
+      const char *e = strstr(buf, "{\"time\"");
+      const char *f = e ? strstr(e + 1, "{\"time\"") : nullptr;
+      if (!f)
+        return n < SIZE;
+      if (!hour(std::string_view(e, (size_t) (f - e))))
+        return false;
+      drop((size_t) (f - buf));
+    }
   }
-  r.ok = true;
-  w = r;
-  return true;
-}
+
+ private:
+  void drop(size_t k) {
+    memmove(buf, buf + k, n - k + 1);
+    n -= k;
+  }
+  // One hour, from its {"time" to the next one. False when no more are needed.
+  bool hour(std::string_view e) {
+    auto at = [&](const char *key, size_t from = 0) -> size_t {
+      char k[40];
+      snprintf(k, sizeof k, "\"%s\":", key);
+      size_t p = e.find(k, from);
+      return p == std::string_view::npos ? p : p + strlen(k);
+    };
+    auto num = [&](const char *key, float &out, size_t from = 0) {
+      size_t p = at(key, from);
+      if (p != std::string_view::npos)
+        out = strtof(e.data() + p, nullptr);
+      return p != std::string_view::npos;
+    };
+    auto symbol = [&](size_t from, char *out, size_t size) {  // out stays "" without one
+      size_t s = at("symbol_code", from);
+      if (s == std::string_view::npos || e[s] != '"')
+        return;
+      size_t q = e.find('"', s + 1);
+      if (q != std::string_view::npos && q - s - 1 < size)
+        memcpy(out, e.data() + s + 1, q - s - 1);
+    };
+    int y, mo, d, h;
+    float temp;
+    if (sscanf(e.data(), "{\"time\":\"%d-%d-%dT%d", &y, &mo, &d, &h) != 4 || !num("air_temperature", temp))
+      return w.ok;  // a later hour is skipped, without the first there's no forecast
+    uint32_t time = days_from_civil(y, mo, d) * 86400u + (uint32_t) h * 3600u;
+    size_t n1 = at("next_1_hours");
+    if (!w.ok) {
+      if (!num("cloud_area_fraction", w.cloud))
+        return false;
+      w.time = time;
+      w.temp = temp;
+      num("cloud_area_fraction_low", w.cloud_low);
+      num("cloud_area_fraction_medium", w.cloud_mid);
+      num("cloud_area_fraction_high", w.cloud_high);
+      num("fog_area_fraction", w.fog);
+      num("wind_speed", w.wind);
+      num("wind_from_direction", w.wind_from);
+      size_t next = n1 != std::string_view::npos ? n1 : at("next_6_hours");
+      if (next != std::string_view::npos) {
+        num("precipitation_amount", w.rain, next);
+        num("probability_of_thunder", w.thunder, next);
+        symbol(next, w.symbol, sizeof w.symbol);
+      }
+      w.ok = true;
+    }
+    if (n1 != std::string_view::npos) {
+      char sym[40] = "";
+      symbol(n1, sym, sizeof sym);
+      w.hour[w.hours++] = {time, temp, icon_of(sym)};
+    }
+    return w.hours < HOURS;
+  }
+};
 
 // ---------------------------------------------------------------- positions of the sun, moon and stars
 
@@ -390,10 +413,11 @@ struct Scene {
   uint32_t white_c;                     // for small things and the cabin's trim, borrowed from a lit cloud or the sun
   int16_t pole_x, pole_top, pole_base;  // flagpole, by the cabin or in the city's park
   int16_t home_x;                       // where the holidays happen, the cabin or the pole
+  // The two biggest parts are the caller's, kept apart so the scene needs no big block
   int nsprites;
-  Sprite sprite[SPRITES];
-  bool overlay;             // the forecast drawn over the picture
-  uint8_t ov[OV_H][W / 4];  // 2 bits per pixel. 0 shows the picture, 1 outline, 2 text
+  Sprite *sprite;        // SPRITES of them
+  bool overlay;          // the forecast drawn over the picture
+  uint8_t (*ov)[W / 4];  // OV_H rows, 2 bits per pixel. 0 shows the picture, 1 outline, 2 text
   uint32_t text_c, outline_c;
 };
 
@@ -1319,6 +1343,7 @@ inline void holidays(Scene &s, const Now &n, Rng &rng) {
 // The forecast over the picture, in white with an outline
 inline void overlay(Scene &s, const Now &n, int utc_offset) {
   s.overlay = true;
+  memset(s.ov, 0, OV_H * sizeof *s.ov);
   s.text_c = q(255, 255, 255);
   // outline in the darkest colour already in the picture, if it's dark enough
   uint32_t cand[] = {s.sky[0], s.hill_c[0], s.hill_c[1], s.hill_c[2], s.cloud_shade[2]};
@@ -1336,7 +1361,11 @@ inline void overlay(Scene &s, const Now &n, int utc_offset) {
 // seconds.
 inline void build(Scene &s, const Weather &w, double lat, double lon, uint32_t t, bool with_forecast, int utc_offset,
                   const Options &o) {
+  Sprite *sprite = s.sprite;
+  uint8_t (*ov)[W / 4] = s.ov;
   memset(&s, 0, sizeof s);
+  s.sprite = sprite;
+  s.ov = ov;
   s.ground = o.ground;
   s.shine_x = -1;
   Now n(w, o, lat, lon, t, utc_offset);

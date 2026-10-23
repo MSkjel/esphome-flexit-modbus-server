@@ -28,9 +28,9 @@ static constexpr uint32_t POOL = PIC_POOL;  // the panel's picture memory
 static constexpr uint32_t SLICE_US = 5000;  // max conversion time per loop, so the main loop keeps running
 static constexpr uint32_t ACK_MS = 10000;   // the panel answers END within a second or so
 static constexpr int SCREEN_W = 320, SCREEN_H = 240;
-// RAM to make a picture: counting colours, then a JPEG (the one being tried, its lines, the best so far).
-// The peak is a JPEG with the 16-colour version still kept.
-static constexpr uint32_t COUNT_RAM = 4096 * 4 + 4096 * 2, JPEG_RAM = POOL + SCREEN_W * 8 * 4 + POOL,
+// RAM to make a picture: counting colours (the counts, the bins, the colour table), then a JPEG (the one being
+// tried, its lines, the best so far). The peak is a JPEG with the 16-colour version still kept.
+static constexpr uint32_t COUNT_RAM = 4096 * 4 + 4096 * 2 + 4096, JPEG_RAM = POOL + SCREEN_W * 8 * 4 + POOL,
                           MAKE_RAM = POOL + SCREEN_W + JPEG_RAM;
 
 enum Encoding { AUTO, PALETTE, JPEG };
@@ -221,7 +221,7 @@ inline struct {
   uint32_t end_ms = 0;                                 // see no_answer()
   std::vector<uint32_t> hist;                          // pixel count per colour, at 4 bits per channel
   std::vector<Job> jobs;
-  uint8_t lut[4096];  // colour at 4 bits per channel -> palette index
+  std::vector<uint8_t> lut;  // colour at 4 bits per channel -> palette index, while mapping
 } S;
 
 template<typename T> void drop(std::vector<T> &v) { std::vector<T>().swap(v); }  // empty, with its RAM freed
@@ -347,6 +347,7 @@ inline void reset() {
   S.made = Pic();
   S.jpeg = Pic();
   drop(S.hist);
+  drop(S.lut);
   drop(S.buf);
   drop(S.lines);
   S.jobs.clear();
@@ -422,6 +423,7 @@ inline bool start() {
   if (S.src->encoding == JPEG)
     return jpeg_start();
   S.hist.assign(4096, 0);
+  S.lut.resize(4096);
   S.y = 0;
   S.phase = COUNT;
   return true;
@@ -545,6 +547,7 @@ inline void map(uint32_t t0) {
     S.made.rows.push_back((uint16_t) S.made.data.size());
     if (S.made.data.size() > POOL) {  // doesn't fit, a JPEG then
       drop(S.made.data);
+      drop(S.lut);
       S.fits = false;
       if (S.src->encoding == PALETTE) {
         ESP_LOGW("panel", "Picture %s: too detailed for 16 colours in %u bytes, sending a JPEG", S.name.c_str(),
@@ -556,6 +559,7 @@ inline void map(uint32_t t0) {
   }
   if (S.y < S.made.h)
     return;
+  drop(S.lut);
   S.made.err /= (double) S.made.w * S.made.h;
   S.fits = true;
   if (S.src->encoding == PALETTE || S.colours <= 16)

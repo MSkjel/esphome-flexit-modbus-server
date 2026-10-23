@@ -95,7 +95,7 @@ inline struct {
   std::vector<uint8_t> frame, prev, first;  // 2 pixels per byte
   uint32_t pos = 0;                         // bytes of data sent so far
   uint32_t end_ms = 0;                      // see picture::no_answer()
-  uint8_t lut[4096];
+  std::vector<uint8_t> lut;                 // colour at 4 bits per channel -> palette index
 } W;
 
 inline bool sending() { return W.phase == SEND && W.head; }
@@ -179,6 +179,7 @@ inline uint32_t px(int f, int x, int y) {
 // Frees what count() and make() work in
 inline void drop_work() {
   picture::drop(W.hist);
+  picture::drop(W.lut);
   picture::drop(W.frame);
   picture::drop(W.prev);
   picture::drop(W.first);
@@ -262,7 +263,10 @@ inline bool start() {
   a.h = a.half ? (s.h + 1) / 2 : s.h;
   if (a.frame() > room)
     return fail(too_big(a.frame()));
+  if (!picture::has_ram(picture::COUNT_RAM, 4096 * 4))
+    return fail("the ESP doesn't have the RAM to make it");
   W.hist.assign(4096, 0);
+  W.lut.resize(4096);
   W.any_transp = false;
   W.f = 0;
   W.phase = COUNT;
