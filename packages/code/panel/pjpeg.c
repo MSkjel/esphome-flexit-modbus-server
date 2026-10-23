@@ -1,25 +1,14 @@
 // see pjpeg.h
 #include "pjpeg.h"
-#include <stddef.h>
 
-// The DCT's basis: C[u][x] = c(u) / 2 * cos((2x + 1)u pi / 16), c(0) = 1/sqrt(2), else 1. It's orthonormal, so the
-// squared error of the quantized coefficients is the squared error of the pixels.
-static const float C[8][8] = {
-    {0.353553391f, 0.353553391f, 0.353553391f, 0.353553391f, 0.353553391f, 0.353553391f, 0.353553391f, 0.353553391f},
-    {0.490392640f, 0.415734806f, 0.277785117f, 0.097545161f, -0.097545161f, -0.277785117f, -0.415734806f,
-     -0.490392640f},
-    {0.461939766f, 0.191341716f, -0.191341716f, -0.461939766f, -0.461939766f, -0.191341716f, 0.191341716f,
-     0.461939766f},
-    {0.415734806f, -0.097545161f, -0.490392640f, -0.277785117f, 0.277785117f, 0.490392640f, 0.097545161f,
-     -0.415734806f},
-    {0.353553391f, -0.353553391f, -0.353553391f, 0.353553391f, 0.353553391f, -0.353553391f, -0.353553391f,
-     0.353553391f},
-    {0.277785117f, -0.490392640f, 0.097545161f, 0.415734806f, -0.415734806f, -0.097545161f, 0.490392640f,
-     -0.277785117f},
-    {0.191341716f, -0.461939766f, 0.461939766f, -0.191341716f, -0.191341716f, 0.461939766f, -0.461939766f,
-     0.191341716f},
-    {0.097545161f, -0.277785117f, 0.415734806f, -0.490392640f, 0.490392640f, -0.415734806f, 0.277785117f,
-     -0.097545161f},
+// The DCT's basis times 8192: C[u][x] = c(u) / 2 * cos((2x + 1)u pi / 16), c(0) = 1/sqrt(2), else 1. It's
+// orthonormal, so the squared error of the quantized coefficients is the squared error of the pixels. Integer maths
+// throughout, the ESP32-C3 has no FPU.
+static const int16_t C[8][8] = {
+    {2896, 2896, 2896, 2896, 2896, 2896, 2896, 2896},     {4017, 3406, 2276, 799, -799, -2276, -3406, -4017},
+    {3784, 1567, -1567, -3784, -3784, -1567, 1567, 3784}, {3406, -799, -4017, -2276, 2276, 4017, 799, -3406},
+    {2896, -2896, -2896, 2896, 2896, -2896, -2896, 2896}, {2276, -4017, 799, 3406, -3406, -799, 4017, -2276},
+    {1567, -3784, 3784, -1567, -1567, 3784, -3784, 1567}, {799, -2276, 3406, -4017, 4017, -3406, 2276, -799},
 };
 
 // natural index of each zigzag position
@@ -128,31 +117,31 @@ static int bit_length(int v) {
 
 static void put_value(pjpeg_t *j, int v, int n) { put(j, (unsigned) (v < 0 ? v - 1 : v), n); }
 
-// One 8x8 block of level-shifted samples. comp is 0 Y, 1 Cb, 2 Cr. weight is how many pixels a sample stands for.
-static void block(pjpeg_t *j, const float *in, int comp, float weight) {
-  float t[64], f[64];
+// One 8x8 block of level-shifted samples in 16ths. comp is 0 Y, 1 Cb, 2 Cr. weight is how many pixels a sample
+// stands for.
+static void block(pjpeg_t *j, const int32_t *in, int comp, int weight) {
+  int32_t t[64], f[64];
   for (int y = 0; y < 8; y++)
     for (int u = 0; u < 8; u++) {
-      float s = 0;
+      int32_t s = 0;
       for (int x = 0; x < 8; x++)
         s += in[y * 8 + x] * C[u][x];
-      t[y * 8 + u] = s;
+      t[y * 8 + u] = (s + (1 << 9)) >> 10;  // in 128ths
     }
   for (int v = 0; v < 8; v++)
     for (int u = 0; u < 8; u++) {
-      float s = 0;
+      int32_t s = 0;
       for (int y = 0; y < 8; y++)
-        s += C[v][y] * t[y * 8 + u];
-      f[v * 8 + u] = s;
+        s += C[v][y] * t[y * 8 + u];         // under 2^31: 2.83 * 8192 * 46341 at most
+      f[v * 8 + u] = (s + (1 << 15)) >> 16;  // in 16ths
     }
   const uint8_t *q = j->q[comp ? 1 : 0];
   int z[64];
   for (int k = 0; k < 64; k++) {
-    int n = ZIGZAG[k];
-    float v = f[n] / q[n];
-    z[k] = (int) (v < 0 ? v - 0.5f : v + 0.5f);
-    float e = f[n] - (float) z[k] * q[n];
-    j->err += (double) (weight * e * e);
+    int n = ZIGZAG[k], d = q[n] * 16, v = f[n];
+    z[k] = v < 0 ? -((d / 2 - v) / d) : (v + d / 2) / d;  // rounded half away from zero
+    int e = v - z[k] * d;
+    j->err += (uint32_t) (weight * e * e);
   }
   int dc = comp ? DC_C : DC_Y, ac = comp ? AC_C : AC_Y;
   int diff = z[0] - j->dc[comp], n = bit_length(diff);
@@ -229,37 +218,40 @@ void pjpeg_begin(pjpeg_t *j, int w, int h, int quality, uint8_t *out, uint32_t c
     byte(j, SCAN[i]);
 }
 
-static float sq(float v) { return v * v; }
-
-bool pjpeg_row(pjpeg_t *j, pjpeg_pixel_t px, void *ctx) {
+bool pjpeg_mcu(pjpeg_t *j, pjpeg_pixel_t px, void *ctx) {
   if (j->full || j->row * 8u >= j->h)
     return false;
-  int y0 = j->row * 8;
-  for (int x0 = 0; x0 < j->w; x0 += 16) {
-    float lum[2][64], cb[64], cr[64];
-    for (int y = 0; y < 8; y++)
-      for (int x = 0; x < 16; x += 2) {
-        float c[2][3];  // Y, Cb, Cr of the two pixels that share a chroma sample
-        for (int k = 0; k < 2; k++) {
-          uint32_t p = px(ctx, x0 + x + k, y0 + y);
-          float r = (float) (p >> 16 & 255), g = (float) (p >> 8 & 255), b = (float) (p & 255);
-          c[k][0] = 0.299f * r + 0.587f * g + 0.114f * b;
-          c[k][1] = -0.168736f * r - 0.331264f * g + 0.5f * b + 128;
-          c[k][2] = 0.5f * r - 0.418688f * g - 0.081312f * b + 128;
-          lum[(x + k) / 8][y * 8 + (x + k) % 8] = c[k][0] - 128;
-        }
-        float mb = (c[0][1] + c[1][1]) / 2, mr = (c[0][2] + c[1][2]) / 2;
-        cb[y * 8 + x / 2] = mb - 128;
-        cr[y * 8 + x / 2] = mr - 128;
-        j->err += (double) (sq(c[0][1] - mb) + sq(c[1][1] - mb) + sq(c[0][2] - mr) + sq(c[1][2] - mr));
+  int x0 = j->col, y0 = j->row * 8;
+  int32_t lum[2][64], cb[64], cr[64];  // level-shifted, in 16ths
+  for (int y = 0; y < 8; y++)
+    for (int x = 0; x < 16; x += 2) {
+      int32_t c[2][3];  // level-shifted Y, Cb, Cr in 65536ths, of the two pixels that share a chroma sample
+      for (int k = 0; k < 2; k++) {
+        uint32_t p = px(ctx, x0 + x + k, y0 + y);
+        int32_t r = (int32_t) (p >> 16 & 255), g = (int32_t) (p >> 8 & 255), b = (int32_t) (p & 255);
+        c[k][0] = 19595 * r + 38470 * g + 7471 * b - (128 << 16);
+        c[k][1] = -11058 * r - 21710 * g + 32768 * b;
+        c[k][2] = 32768 * r - 27439 * g - 5329 * b;
+        lum[(x + k) / 8][y * 8 + (x + k) % 8] = (c[k][0] + 2048) >> 12;
       }
-    block(j, lum[0], 0, 1);
-    block(j, lum[1], 0, 1);
-    block(j, cb, 1, 2);
-    block(j, cr, 2, 2);
-    if (j->full)
-      return false;
-  }
+      int32_t mb = (c[0][1] + c[1][1] + 4096) >> 13, mr = (c[0][2] + c[1][2] + 4096) >> 13;
+      cb[y * 8 + x / 2] = mb;
+      cr[y * 8 + x / 2] = mr;
+      for (int k = 0; k < 2; k++) {  // what sharing the chroma sample costs
+        int32_t eb = ((c[k][1] + 2048) >> 12) - mb, er = ((c[k][2] + 2048) >> 12) - mr;
+        j->err += (uint32_t) (eb * eb + er * er);
+      }
+    }
+  block(j, lum[0], 0, 1);
+  block(j, lum[1], 0, 1);
+  block(j, cb, 1, 2);
+  block(j, cr, 2, 2);
+  if (j->full)
+    return false;
+  j->col += 16;
+  if (j->col < j->w)
+    return true;
+  j->col = 0;
   j->row++;
   if (j->row * 8u < j->h) {  // RSTn after MCU row n, the next row starts fresh
     flush(j);
@@ -276,4 +268,4 @@ uint32_t pjpeg_end(pjpeg_t *j) {
   return j->full ? 0 : j->len;
 }
 
-double pjpeg_mse(const pjpeg_t *j) { return j->w && j->h ? j->err / ((double) j->w * j->h) : 0; }
+double pjpeg_mse(const pjpeg_t *j) { return j->w && j->h ? (double) j->err / 256 / ((double) j->w * j->h) : 0; }

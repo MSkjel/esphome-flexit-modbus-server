@@ -11,7 +11,7 @@ extern "C" {
 typedef uint32_t (*pjpeg_pixel_t)(void *ctx, int x, int y);  // 0xRRGGBB
 
 typedef struct {
-  uint16_t w, h, row;  // size, next MCU row to encode
+  uint16_t w, h, row, col;  // size, next MCU row to encode and x of its next MCU
   uint8_t *out;
   uint32_t cap, len;  // out's size, bytes so far
   bool full;          // out ran out of room
@@ -19,13 +19,14 @@ typedef struct {
   int nbits;
   int dc[3];         // last block's DC for Y, Cb, Cr
   uint8_t q[2][64];  // quantizers for luma and chroma, in natural order
-  double err;        // squared error so far, Y + Cb + Cr per pixel
+  uint64_t err;      // squared error so far, Y + Cb + Cr per pixel, in 256ths
 } pjpeg_t;
 
 // Writes the headers. quality 1..100
 void pjpeg_begin(pjpeg_t *j, int w, int h, int quality, uint8_t *out, uint32_t cap);
-// Encodes the next 8 lines. A row per call lets the ESP spread the work over its loop. False when done or full.
-bool pjpeg_row(pjpeg_t *j, pjpeg_pixel_t px, void *ctx);
+// Encodes the next 16x8 pixels, and after the last of a row its restart marker. An MCU per call lets the ESP spread
+// the work over its loop. False when done or full.
+bool pjpeg_mcu(pjpeg_t *j, pjpeg_pixel_t px, void *ctx);
 // Finishes the JPEG. Returns its length, 0 if it didn't fit
 uint32_t pjpeg_end(pjpeg_t *j);
 // Mean squared error per pixel, Y + Cb + Cr. The ESP compares it with the 16-colour version to pick the better one.

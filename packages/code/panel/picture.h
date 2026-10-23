@@ -214,6 +214,7 @@ inline struct {
   pjpeg_t enc;         // the JPEG being tried
   std::vector<uint8_t> buf;
   std::vector<uint32_t> lines;  // the 8 source lines the encoder is on
+  int line = 0;                 // how many of them are filled
   bool head = false, ended = false;
   bool to_clear = false;                               // K_PIC_CLEAR still to send
   uint8_t id = 0;                                      // transfer id of the piece being sent, to match the acks
@@ -568,12 +569,13 @@ inline void map(uint32_t t0) {
     jpeg_start();
 }
 
-// The JPEG. Tries qualities until it has the best that fits, a few rows a loop.
+// The JPEG. Tries qualities until it has the best that fits.
 inline void jpeg_try(int q) {
   int w = (S.fw + 15) & ~15, h = (S.fh + 7) & ~7;
   S.buf.resize(POOL);
   pjpeg_begin(&S.enc, w, h, q, S.buf.data(), POOL);
   S.lines.assign((size_t) w * 8, 0);
+  S.line = 0;
 }
 
 // Without the RAM for a JPEG it's the 16-colour version if that fits, else false
@@ -593,15 +595,21 @@ inline bool jpeg_start() {
   return true;
 }
 
+// A source line or an MCU at a time, so the loop gets back to the bus within about SLICE_US
 inline void jpeg(uint32_t t0) {
   pjpeg_t &e = S.enc;
   bool more = true;
   while (more && micros() - t0 < SLICE_US) {
-    int y0 = e.row * 8;  // the source lines for this row of MCUs, black past the picture's edge
-    for (int y = 0; y < 8; y++)
+    if (S.line < 8) {  // the next source line for this row of MCUs, black past the picture's edge
+      int y = e.row * 8 + S.line;
       for (int x = 0; x < e.w; x++)
-        S.lines[(size_t) y * e.w + x] = x < S.fw && y0 + y < S.fh ? px(x, y0 + y) : 0;
-    more = pjpeg_row(&e, [](void *, int x, int y) { return S.lines[(size_t) (y % 8) * S.enc.w + x]; }, nullptr);
+        S.lines[(size_t) S.line * e.w + x] = x < S.fw && y < S.fh ? px(x, y) : 0;
+      S.line++;
+      continue;
+    }
+    more = pjpeg_mcu(&e, [](void *, int x, int y) { return S.lines[(size_t) (y % 8) * S.enc.w + x]; }, nullptr);
+    if (!e.col)
+      S.line = 0;  // on to the next row
   }
   if (more)
     return;
