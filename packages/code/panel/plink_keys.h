@@ -76,20 +76,28 @@ enum { PIC_PALETTE, PIC_JPEG };
 
 #define PIC_POOL 14336  // panel memory for a picture, plus room behind it for a patch while it comes in
 
-// ANIM_BEGIN, an animation drawn over the screensaver picture: id, w (2, even), h (2), scale (1 or 2), x (2),
-// y (2) for where it goes on screen, transparent colour index (ANIM_OPAQUE = none), len (4), palette (16 x RGB).
-// Then DATA up to len bytes and END, as for a picture. The data is one plink_anim_record per frame. The first is
-// the whole first frame, the last one takes the last frame back to the first.
+// ANIM_BEGIN, an animation for the screensaver: id, slot (0..ANIM_SLOTS - 1), w (2, even), h (2), scale (1 or 2),
+// transparent colour index (ANIM_OPAQUE = none), len (4), palette (16 x RGB). Then DATA up to len bytes and END, as
+// for a picture. The data is one plink_anim_record per frame. The first is the whole first frame, the last one takes
+// the last frame back to the first. It replaces the slot's animation and its places. The panel keeps every slot's
+// frame and records in ANIM_POOL, and answers PIC_TOO_BIG when they don't fit next to the others.
 #define K_ANIM_BEGIN 0x336
-#define K_ANIM_CLEAR 0x337  // forget the animation
-// ANIM_MOVE, moves the animation: mode, then for ANIM_GLIDE x, y (2 each, signed, the top left to glide to) and
+#define K_ANIM_CLEAR 0x337  // a slot, ANIM_PLACE_BIT | a place, or ANIM_ALL
+// ANIM_PLACE, where an animation shows: place (0..ANIM_PLACES - 1), slot, x (2), y (2), own, start. Replaces that
+// place. Every place of a slot shows its frames in step, unless own = 1 gives it a frame of its own (w x h / 2
+// bytes more of ANIM_POOL) that starts start frames in. Ignored without the animation or the room.
+#define K_ANIM_PLACE 0x339
+// ANIM_MOVE, moves a place: place, mode, then for ANIM_GLIDE x, y (2 each, signed, the top left to glide to) and
 // ms (2) to get there (0 = jump), for ANIM_DRIFT vx, vy (2 each, signed) in pixels per second, wrapping round the
-// screen. ANIM_STOP alone leaves it where it is. Ignored without an animation. ANIM_BEGIN stops it and puts the
-// new one at its header's x, y.
+// screen. ANIM_STOP alone leaves it where it is. Ignored without the place.
 #define K_ANIM_MOVE 0x338
 enum { ANIM_STOP, ANIM_GLIDE, ANIM_DRIFT };
 #define ANIM_OPAQUE 16
-#define ANIM_POOL 6144  // panel memory for an animation, one inflated frame of w x h / 2 bytes plus the records
+#define ANIM_SLOTS 4
+#define ANIM_PLACES 8
+#define ANIM_PLACE_BIT 0x80
+#define ANIM_ALL 0xFF
+#define ANIM_POOL 6144  // panel memory for the animations, each one inflated frame of w x h / 2 bytes plus records
 
 // PIC_ACK status
 enum {

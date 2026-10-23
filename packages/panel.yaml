@@ -143,7 +143,8 @@ select:
     options: [None]
     set_action:
       - lambda: flexit::panel::picture::picked(std::string(x.c_str(), x.size()));
-  # the screensaver animation. packages/panel/animation.yaml adds its name to the options.
+  # one screensaver animation, picking another replaces it. packages/panel/animation.yaml adds its name to the
+  # options, the panel_show_animation action shows more alongside.
   - platform: template
     id: panel_animation
     name: "Panel Animation"
@@ -242,29 +243,54 @@ api:
     - action: panel_clear_picture
       then:
         - lambda: flexit::panel::picture::clear();
-    # an animation from packages/panel/animation.yaml, over the picture
+    # an animation from packages/panel/animation.yaml, over the picture, where its yaml puts it. The panel holds 4
+    # at a time in 6 KB and shows them in up to 8 places. panel_clear_animation with no name clears them all.
     - action: panel_show_animation
       variables:
         name: string
       then:
         - lambda: flexit::panel::anim::show(name);
     - action: panel_clear_animation
+      variables:
+        name: string
       then:
-        - lambda: flexit::panel::anim::clear();
-    # move the animation: glide to x, y over ms (0 jumps, 65535 at most), or drift at vx, vy px/s round the screen
+        - lambda: flexit::panel::anim::clear(name);
+    # copy 0 is the one panel_show_animation shows. Another copy at x, y plays in step with it, unless own = true
+    # gives it a frame of its own (w x h / 2 bytes more of the 6 KB) that starts `start` frames in.
+    - action: panel_place_animation
+      variables:
+        name: string
+        copy: int
+        x: int
+        y: int
+        own: bool
+        start: int
+      then:
+        - lambda: flexit::panel::anim::place(name, copy, x, y, own, start);
+    - action: panel_remove_animation
+      variables:
+        name: string
+        copy: int
+      then:
+        - lambda: flexit::panel::anim::remove(name, copy);
+    # move a copy: glide to x, y over ms (0 jumps, 65535 at most), or drift at vx, vy px/s round the screen
     - action: panel_move_animation
       variables:
+        name: string
+        copy: int
         x: int
         y: int
         ms: int
       then:
-        - lambda: flexit::panel::anim::move(x, y, ms);
+        - lambda: flexit::panel::anim::move(name, copy, x, y, ms);
     - action: panel_drift_animation
       variables:
+        name: string
+        copy: int
         vx: int
         vy: int
       then:
-        - lambda: flexit::panel::anim::drift(vx, vy);
+        - lambda: flexit::panel::anim::drift(name, copy, vx, vy);
     # A panel setting, value in the panel's own units. theme 0-2, brightness 0-100, idle_brightness 0-100,
     # idle_after 0-7 for 15 s to 30 min or never, screensaver 0-5, home_view 0-5, night 0/1, night_from and
     # night_to 0-23, night_brightness 0-100 when in use, night_idle_brightness 0-100 with 0 = dark, key_lock 0/1,
@@ -304,13 +330,22 @@ script:
     then:
       - lambda: flexit::panel::anim::show(name);
   - id: panel_clear_animation
+    parameters: {name: string}
     then:
-      - lambda: flexit::panel::anim::clear();
+      - lambda: flexit::panel::anim::clear(name);
+  - id: panel_place_animation
+    parameters: {name: string, copy: int, x: int, y: int, own: bool, start: int}
+    then:
+      - lambda: flexit::panel::anim::place(name, copy, x, y, own, start);
+  - id: panel_remove_animation
+    parameters: {name: string, copy: int}
+    then:
+      - lambda: flexit::panel::anim::remove(name, copy);
   - id: panel_move_animation
-    parameters: {x: int, y: int, ms: int}
+    parameters: {name: string, copy: int, x: int, y: int, ms: int}
     then:
-      - lambda: flexit::panel::anim::move(x, y, ms);
+      - lambda: flexit::panel::anim::move(name, copy, x, y, ms);
   - id: panel_drift_animation
-    parameters: {vx: int, vy: int}
+    parameters: {name: string, copy: int, vx: int, vy: int}
     then:
-      - lambda: flexit::panel::anim::drift(vx, vy);
+      - lambda: flexit::panel::anim::drift(name, copy, vx, vy);

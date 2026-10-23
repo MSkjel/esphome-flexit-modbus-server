@@ -1,7 +1,7 @@
-# An animated GIF from next to your config, played over the screensaver picture. The panel plays it from 6 KB,
-# so keep it small. About 64x64 with a few frames, or more frames if little changes between them. If it's too
-# big at scale 1 it's made at half size and drawn 2x. Show it with the "Panel Animation" select or the
-# panel_show_animation action.
+# An animated GIF from next to your config, played over the screensaver picture. The panel plays all its
+# animations from 6 KB, so keep them small. About 64x64 with a few frames, or more frames if little changes between
+# them. If it's too big at scale 1 it's made at half size and drawn 2x. Show it with the "Panel Animation" select
+# or the panel_show_animation action, and in more places with panel_place_animation.
 #   - path: packages/panel/animation.yaml
 #     vars: {name: flame, file: animations/flame.gif, resize: 48x48, x: 256, y: 16}
 # name: letters, digits and _ only
