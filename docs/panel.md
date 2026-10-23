@@ -48,8 +48,9 @@ packages:
 
 `panel.yaml` gives Home Assistant `Panel Connected`, `Panel Temperature` (the panel's own sensor),
 `Panel Firmware`, `Panel Action` (filter reset and the like, picked on the panel), the screensaver and LED
-selects, and the brightness and night mode settings. The rest of the panel's settings are in its own menu and the
-`panel_set` action below.
+selects, and the brightness and night mode settings. `Panel Link Windows Too Short`, `Panel Link Unanswered` and
+`Panel Link Lost` count link trouble since the ESP started. The rest of the panel's settings are in its own
+menu and the `panel_set` action below.
 
 | File | What |
 |---|---|

@@ -1,0 +1,15 @@
+# The ESP's free RAM, largest free block and loop time
+debug:
+  update_interval: 60s
+
+sensor:
+  - platform: debug
+    free:
+      name: "ESP Free RAM"
+      entity_category: diagnostic
+    block:
+      name: "ESP Largest Free Block"
+      entity_category: diagnostic
+    loop_time:
+      name: "ESP Loop Time"
+      entity_category: diagnostic

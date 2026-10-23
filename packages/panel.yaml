@@ -60,6 +60,28 @@ sensor:
     unit_of_measurement: "°C"
     accuracy_decimals: 1
     update_interval: never
+  # link trouble since the ESP started
+  - platform: template
+    name: "Panel Link Windows Too Short"
+    entity_category: diagnostic
+    state_class: total_increasing
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: return flexit::panel::link::tx.short_windows;
+  - platform: template
+    name: "Panel Link Unanswered"
+    entity_category: diagnostic
+    state_class: total_increasing
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: return flexit::panel::link::tx.missed;
+  - platform: template
+    name: "Panel Link Lost"
+    entity_category: diagnostic
+    state_class: total_increasing
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: return flexit::panel::link::tx.resyncs;
 
 text_sensor:
   - platform: template

@@ -104,6 +104,7 @@ This project implements a Modbus server for Flexit ventilation systems using ESP
          # - packages/summer_cooling.yaml  # needs controls
          # - packages/computed.yaml
          # - packages/advanced.yaml
+         # - packages/health.yaml
    ```
 
 3. **Pick the packages you want** from the table below, then flash. Moving an ESP32 from `type: arduino`:
@@ -131,6 +132,7 @@ pieces the packages share, you don't add those yourself.
 | [`summer_cooling.yaml`](packages/summer_cooling.yaml) | Summer cooling (MAX when it is warm inside and cooler outside) | Needs `controls.yaml` |
 | [`computed.yaml`](packages/computed.yaml) | Heat recovery efficiency, heater power/energy, filter days remaining, combined alarm | Read only |
 | [`advanced.yaml`](packages/advanced.yaml) | Installer settings from the CI600 menus (see below) | All disabled by default |
+| [`health.yaml`](packages/health.yaml) | The ESP's free RAM, largest free block and loop time | Diagnostic |
 | [`panel.yaml`](packages/panel.yaml) | A CI600 running the [replacement firmware](#ci600-panel-replacement-firmware): its settings in Home Assistant, notifications, pictures, your values on its screen | ESP32 only, ESP at address 1. Extras in [`packages/panel/`](packages/panel) |
 
 All settings are read back from the CS60, so changes made on a CI600 panel show up in Home Assistant as well
