@@ -926,11 +926,22 @@ inline void loop() {
   if (S.to_clear && !anim::sending())
     S.to_clear = !link::send(K_PIC_CLEAR, 0);
   auto o = online.find(S.want);  // the shown online picture downloads again every `every`, if it still fits
-  if (o != online.end() && o->second->every && S.phase == IDLE && !S.redo &&
+  if (link::connected && o != online.end() && o->second->every && S.phase == IDLE && !S.redo &&
       millis() - o->second->fetched >= o->second->every && !download(S.want, *o->second))
     status(S.want + ": " + S.waiting);
   if (!ask())
     return;
+  if (!link::connected) {  // nothing is made or downloaded without the panel
+    if (S.phase >= COUNT && S.phase <= JPEG_TRY) {
+      if (S.src->done)
+        S.src->done();
+      reset();
+      S.redo = true;
+    }
+    if (S.phase == START)
+      status(S.name + ": waiting for the panel");
+    return;
+  }
   uint32_t t0 = micros();
   if (S.phase == START && !start())
     return;

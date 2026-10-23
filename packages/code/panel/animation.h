@@ -647,6 +647,8 @@ inline void drift(const std::string &name, int i, int vx, int vy) {
 // every 20 ms
 inline void loop() {
   if (W.phase == IDLE) {
+    if (!link::connected)
+      return;
     for (auto &a : anims)
       if (!a.name.empty() && a.state == WANT) {
         W.a = &a;
