@@ -91,7 +91,9 @@ inline struct {
   int phase = IDLE, f = 0, tries = 0;
   bool head = false, ended = false, any_transp = false;
   uint8_t id = 0;
-  std::vector<uint32_t> hist;
+  std::vector<uint32_t> hist, hash;         // hash: each frame's pixels, to find a GIF that repeats itself
+  int frames = 0;                           // to make, a repeating GIF's first round only
+  size_t last = 0;                          // the last record in data, 0 = only the first frame's
   std::vector<uint8_t> frame, prev, first;  // 2 pixels per byte
   uint32_t pos = 0;                         // bytes of data sent so far
   uint32_t end_ms = 0;                      // see picture::no_answer()
@@ -179,6 +181,7 @@ inline uint32_t px(int f, int x, int y) {
 // Frees what count() and make() work in
 inline void drop_work() {
   picture::drop(W.hist);
+  picture::drop(W.hash);
   picture::drop(W.lut);
   picture::drop(W.frame);
   picture::drop(W.prev);
@@ -267,6 +270,7 @@ inline bool start() {
     return fail("the ESP doesn't have the RAM to make it");
   W.hist.assign(4096, 0);
   W.lut.resize(4096);
+  W.hash.clear();
   W.any_transp = false;
   W.f = 0;
   W.phase = COUNT;
@@ -277,16 +281,25 @@ inline bool start() {
 // Counts one frame's colours. After the last frame, builds the palette.
 inline void count() {
   Anim &a = *W.a;
+  uint32_t h = 2166136261u;
   for (int y = 0; y < a.h; y++)
     for (int x = 0; x < a.w; x++) {
       uint32_t c = px(W.f, x, y);
+      h = (h ^ c) * 16777619u;
       if (c >> 24 < 128)
         W.any_transp = true;
       else
         W.hist[picture::bin(c)]++;
     }
+  W.hash.push_back(h);
   if (++W.f < a.src->frames)
     return;
+  int n = a.src->frames;
+  W.frames = n;
+  for (int p = 1; p < n && W.frames == n; p++)
+    if (n % p == 0 && std::equal(W.hash.begin() + p, W.hash.end(), W.hash.begin()))
+      W.frames = p;
+  picture::drop(W.hash);
   std::vector<uint16_t> bins;
   memset(a.pal, 0, sizeof a.pal);
   int colours = picture::median_cut(W.hist, W.any_transp ? 15 : 16, a.pal, bins);
@@ -296,18 +309,25 @@ inline void count() {
   picture::drop(W.hist);
   a.data.clear();
   W.f = 0;
+  W.last = 0;
   W.phase = MAKE;
 }
 
-// Appends the record that turns `from` into `to`, or the whole frame if from is null. False if there was no
-// memory to compress it.
+// Appends the record that turns `from` into `to`, or the whole frame if from is null. A frame like the one before
+// adds its time to that one's record instead, unless it's the first frame's, which only plays once. False if there
+// was no memory to compress it.
 inline bool record(const std::vector<uint8_t> *from, const std::vector<uint8_t> &to) {
   Anim &a = *W.a;
+  uint8_t delay = (uint8_t) (a.src->frame_ms / 10);
+  if (from && W.last && *from == to && a.data[W.last] + delay <= 255) {
+    a.data[W.last] = (uint8_t) (a.data[W.last] + delay);
+    return true;
+  }
   size_t at = a.data.size();
   a.data.resize(at + 5 + PDEFLATE_BOUND(a.frame()));
-  uint8_t delay = (uint8_t) (a.src->frame_ms / 10);
   unsigned n = plink_anim_record(from ? from->data() : nullptr, to.data(), a.w, a.h, delay, a.data.data() + at);
   a.data.resize(at + n);
+  W.last = at;
   return n != 0;
 }
 
@@ -326,7 +346,7 @@ inline void make() {
   if (!W.f)
     W.first = W.frame;
   W.prev.swap(W.frame);
-  bool last = ++W.f >= a.src->frames;
+  bool last = ++W.f >= W.frames;
   if (ok && last && W.f > 1)
     ok = record(&W.prev, W.first);
   size_t need = a.frame() + a.data.size(), room = ANIM_POOL - std::min<size_t>(ANIM_POOL, used_by_others(&a));
@@ -338,7 +358,7 @@ inline void make() {
     if (can_halve()) {
       if (ok) {
         ESP_LOGI("panel", "Animation %s: over %u bytes after %d of %d frames, making it at half size", a.name.c_str(),
-                 (unsigned) room, W.f, a.src->frames);
+                 (unsigned) room, W.f, W.frames);
       } else {
         ESP_LOGI("panel", "Animation %s: no memory to compress it, making it at half size", a.name.c_str());
       }
@@ -350,8 +370,8 @@ inline void make() {
     return;
   }
   a.data.shrink_to_fit();
-  ESP_LOGI("panel", "Animation %s: %dx%d%s, %d frames, %u bytes", a.name.c_str(), a.w, a.h, a.half ? " drawn 2x" : "",
-           a.src->frames, (unsigned) need);
+  ESP_LOGI("panel", "Animation %s: %dx%d%s, %d frames%s, %u bytes", a.name.c_str(), a.w, a.h, a.half ? " drawn 2x" : "",
+           W.frames, W.frames < a.src->frames ? " (the rest repeat them)" : "", (unsigned) need);
   W.head = false;
   W.tries = 0;
   W.phase = SEND;
