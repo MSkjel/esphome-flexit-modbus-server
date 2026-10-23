@@ -19,6 +19,9 @@ inline uint32_t heard_ms;                              // millis() of the panel'
 inline bool connected;                                 // the panel answers and has our link version, kept by panel.h
 inline std::vector<std::pair<uint16_t, uint32_t>> in;  // from the panel, for panel.h's loop
 inline uint32_t log_ms, gap_frames;
+inline uint32_t sent_us;  // micros() when our last frame was out
+// An answer starts within PBUS_TURN_US of our frame. Nothing on the way well after that, so none is coming.
+static constexpr uint32_t NO_ANSWER_US = PBUS_TURN_US + 1000;
 
 // The panel refuses the link, or frames in the gaps after polls, while the CS60 doesn't keep to its timing. We ask
 // again a minute after it started, and it lets us back in once the CS60 has kept to it for a while. Each is logged
@@ -65,6 +68,7 @@ inline void send_window(uint32_t left_us, bool in_gap) {
   gap_frames += in_gap;
   uint32_t t0 = micros();
   id(server).send_frame(f, n - 2);  // send_frame appends the CRC itself, over the one pbulk wrote
+  sent_us = micros();
   // Leave more room from now on if this took longer than start-up, the frame and 300 us to release the bus
   pbulk_esp_took(&tx, (int32_t) (micros() - t0) - n * PBUS_BYTE_US - (int32_t) PBUS_ESP_START_US - 300);
 }
@@ -78,12 +82,16 @@ inline void window() {
     tx.refused = tx.no_gaps = false;
   }
   delayMicroseconds(pbus_wait_us(id(server).status_min_age_us()));  // the panel is still handling the status frame
-  send_window(pbus_status_left(id(server).status_age_us()), false);
+  send_window(pbus_status_left(id(server).status_age_us(), tx.end_us), false);
 }
 
 // Read callback, for the gap after each CS60 poll
 inline void gap() {
-  if (id(server).updating() || !pbulk_esp_gap_left(&tx, &gaps, micros()))
+  if (id(server).updating())
+    return;
+  if (tx.sent && micros() - sent_us > NO_ANSWER_US && id(server).rx_empty())
+    pbulk_esp_no_answer(&tx);  // frees the gaps for the next frame
+  if (!pbulk_esp_gap_left(&tx, &gaps, micros()))
     return;
   delayMicroseconds(pbus_wait_us(id(server).quiet_min_us()));  // stay PBUS_START_MIN_US clear of the last frame
   uint32_t left = pbulk_esp_gap_left(&tx, &gaps, micros());
@@ -161,10 +169,10 @@ inline void log_stats() {
   log_ms = millis();
   ESP_LOGD("panel",
            "Link: %u frames, %u polls, %u answered, %u unanswered, %u windows too short, %u from the panel, %u lost; "
-           "%u gaps after polls, %u frames in them%s",
+           "%u gaps after polls, %u frames in them%s; status window %u.%u ms",
            (unsigned) tx.frames, (unsigned) tx.polls, (unsigned) tx.answered, (unsigned) tx.missed,
            (unsigned) tx.short_windows, (unsigned) tx.got, (unsigned) tx.resyncs, (unsigned) gaps.gaps,
-           (unsigned) gap_frames, gaps.off || tx.no_gaps ? " (off)" : "");
+           (unsigned) gap_frames, gaps.off || tx.no_gaps ? " (off)" : "", tx.end_us / 1000u, tx.end_us / 100u % 10u);
 }
 
 }  // namespace flexit::panel::link

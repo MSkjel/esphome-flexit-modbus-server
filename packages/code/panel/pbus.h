@@ -2,8 +2,8 @@
 //
 // The status broadcast is FC16 to address 0, registers 0xBE..0x112, 179 bytes. After it the CU60 stays quiet for
 // 20 ms from its start plus at least one 10 ms step, so 13.5 ms or more after it ends. The link uses that every
-// cycle, and the gaps after the CU60's polls when it has more to send. Everything has to be off the bus
-// PBUS_END_US after the end of the status frame, or by the end of the gap.
+// cycle, and the gaps after the CU60's polls when it has more to send. Everything has to be off the bus by the
+// deadline after the end of the status frame, or by the end of the gap.
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
@@ -16,8 +16,13 @@ extern "C" {
 #define PBUS_BYTE_US 87      // one byte at 115200 8N1
 #define PBUS_STATUS_LEN 179
 // Link deadline, counted from the end of the status frame. The CU60 is quiet for 13.5 ms after it, 14.0-14.5 ms
-// measured.
+// measured. The panel moves it out to PBUS_END_MAX_US, PBUS_END_MARGIN_US short of the shortest quiet time it
+// measured over PBUS_END_SURE status broadcasts, and tells the ESP in its answers in steps of PBUS_END_STEP_US.
 #define PBUS_END_US 12000
+#define PBUS_END_MAX_US 13000
+#define PBUS_END_MARGIN_US 1000
+#define PBUS_END_SURE 100
+#define PBUS_END_STEP_US 100
 // The panel refuses the link if the CU60 sends sooner than PBUS_CU60_MIN_US after a status frame. It lets it back
 // in after PBUS_REARM good status broadcasts in a row, about 2 minutes, doubling each time it refuses again.
 #define PBUS_CU60_MIN_US 13000
@@ -45,8 +50,8 @@ uint32_t pbus_since_status(uint32_t dt_us, int k, int rx_threshold, uint32_t isr
 
 // ESP side. How long to wait before starting a frame when the bus has been quiet for quiet_us
 uint32_t pbus_wait_us(uint32_t quiet_us);
-// Time left for a frame started now, when the status frame ended at most age_us ago
-uint32_t pbus_status_left(uint32_t age_us);
+// Time left for a frame started now, when the status frame ended at most age_us ago and the deadline is end_us
+uint32_t pbus_status_left(uint32_t age_us, uint32_t end_us);
 
 // ---- Gaps after the CU60's polls. Both ends track them the same way.
 // The CU60 polls each panel's coils on its own 10 ms steps. The request goes out on one step, the reply is read on
@@ -83,6 +88,8 @@ typedef struct {
   uint8_t offs;                     // times gaps were disabled
   uint32_t clean;                   // gaps the CU60 kept to since
   uint32_t gaps;
+  uint32_t end_lo_us;  // earliest the last frame can have ended, once end_known
+  bool end_known;
 } pbus_gaps_t;
 
 // Feed it every frame on the bus in order, ours too, and any bytes that aren't a frame, n < 4 is fine. The frame
@@ -105,6 +112,8 @@ typedef struct {
   uint32_t clean;          // status broadcasts since with a long enough quiet time after
   // Shortest quiet time after a status broadcast since start or since the link was let back in. UINT32_MAX = none
   uint32_t quiet_min_us;
+  uint16_t quiet_n;  // status broadcasts behind quiet_min_us, up to PBUS_END_SURE
+  uint32_t end_us;   // the deadline after a status broadcast, see PBUS_END_US
 } pbus_panel_t;
 
 void pbus_panel_init(pbus_panel_t *w);

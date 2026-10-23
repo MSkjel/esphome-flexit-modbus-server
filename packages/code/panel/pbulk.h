@@ -9,7 +9,9 @@
 // 2 bytes, low byte first. num and pnum number the first message in the frame, enext and pnext are the number the
 // receiver wants next. The sender resends from there in frames of whatever size fits, and the receiver skips what
 // it already has. A new session doesn't restart the numbers.
-// want is the bytes the panel has waiting that didn't fit in this answer, so the ESP leaves room for them.
+// want is the bytes the panel has waiting that didn't fit in this answer, so the ESP leaves room for them. status
+// has a PB_* in its low 2 bits and above them the panel's deadline after a status broadcast, as PBUS_END_STEP_US
+// past PBUS_END_US.
 // Each end picks a random session when it starts. If the other end wants a message we never sent, it's talking to
 // an earlier session with the same number, so we pick a new one.
 // The payload is a list of messages, each a 2-byte key (low byte first), a length byte and that many value bytes.
@@ -82,10 +84,11 @@ typedef struct {
 
 void pbulk_panel_init(pbulk_panel_t *p, uint16_t session);  // session: a random number
 // A frame to PBULK_ADDR, addr is our bus address. left_us is the time until everything has to be off the bus, 0
-// outside the windows. say is PB_OK, PB_REFUSED or PB_NO_GAPS, reported in the answer. Returns the answer's
-// length, 0 for no answer, like when it wouldn't be off the bus in time or it's for another panel.
+// outside the windows. say is PB_OK, PB_REFUSED or PB_NO_GAPS and end_us our deadline after a status broadcast,
+// both reported in the answer. Returns the answer's length, 0 for no answer, like when it wouldn't be off the
+// bus in time or it's for another panel.
 int pbulk_panel_frame(pbulk_panel_t *p, uint8_t addr, const uint8_t *f, int n, uint32_t left_us, uint8_t say,
-                      uint8_t *answer);
+                      uint32_t end_us, uint8_t *answer);
 int pbulk_panel_take(pbulk_panel_t *p, uint8_t *out);  // next batch of ESP messages, out is PBULK_MAX bytes. 0 = none
 // Queues a payload from plink_pack. False until the previous one has all got through.
 bool pbulk_panel_put(pbulk_panel_t *p, const uint8_t *payload, int n);
@@ -108,6 +111,7 @@ typedef struct {
   bool heard;             // heard from the panel yet. If not, any psess is new
   uint8_t want;           // bytes the panel has waiting
   bool refused, no_gaps;  // the panel said PB_REFUSED / PB_NO_GAPS
+  uint16_t end_us;        // the panel's deadline after a status broadcast, PBUS_END_US after a frame it didn't answer
   uint8_t ahead;          // answers in a row starting after pnext, see resyncs
   uint32_t frames, polls, answered, missed, busy, short_windows, got;
   uint32_t resyncs;   // times the panel skipped past the ones we wanted, those are lost
@@ -130,6 +134,8 @@ bool pbulk_esp_queued(const pbulk_esp_t *t, uint16_t key);  // one with this key
 int pbulk_esp_window(pbulk_esp_t *t, uint32_t left_us, uint8_t *out);
 // Time left in a gap after a CU60 poll for a frame starting now, 0 = don't send.
 uint32_t pbulk_esp_gap_left(const pbulk_esp_t *t, pbus_gaps_t *g, uint32_t now_us);
+// The last frame got no answer. A window finds that out itself, this frees the gaps for frames sooner.
+void pbulk_esp_no_answer(pbulk_esp_t *t);
 // The last frame took over_us longer to start than allowed. Raises the margin to at least that.
 void pbulk_esp_took(pbulk_esp_t *t, int32_t over_us);
 // An F7 67 frame seen on the bus. Drops what the panel has of ours and passes its new messages to f.

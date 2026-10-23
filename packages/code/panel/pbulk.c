@@ -128,7 +128,7 @@ static int out_bytes_from(const pbulk_panel_t *p, int from) {  // offset of mess
 }
 
 int pbulk_panel_frame(pbulk_panel_t *p, uint8_t addr, const uint8_t *f, int n, uint32_t left_us, uint8_t say,
-                      uint8_t *a) {
+                      uint32_t end_us, uint8_t *a) {
   bool ok = pbulk_frame_len(f, n) == n && pbus_crc_ok(f, n);
   if (ok && (f[1] != PBULK_FC_SEND || f[PBULK_PANEL] != addr))
     return 0;  // another panel's link: the ESP's frames to it, or its answers
@@ -207,7 +207,8 @@ int pbulk_panel_frame(pbulk_panel_t *p, uint8_t addr, const uint8_t *f, int n, u
   a[PBULK_N] = (uint8_t) b;
   put16(a + PBULK_A_ESESS, esess);
   put16(a + PBULK_A_ENEXT, p->enext);
-  a[PBULK_A_STATUS] = st;
+  uint32_t ext = end_us > PBUS_END_US ? (end_us - PBUS_END_US) / PBUS_END_STEP_US : 0;
+  a[PBULK_A_STATUS] = (uint8_t) (st | (ext < 63 ? ext : 63) << 2);
   put16(a + PBULK_A_PSESS, p->psess);
   // Number of our first message in it. With none waiting, the number our next one gets, in case the ESP just
   // started.
@@ -255,6 +256,7 @@ void pbulk_esp_init(pbulk_esp_t *t, uint16_t session, uint8_t panel) {
   t->last = -1;
   t->session = session ? session : 1;
   t->panel = panel;
+  t->end_us = PBUS_END_US;
 }
 
 unsigned pbulk_esp_room(const pbulk_esp_t *t) { return t->qn < ESP_ROOM ? ESP_ROOM - t->qn : 0; }
@@ -393,13 +395,18 @@ static void drop(pbulk_esp_t *t, uint16_t next) {
   t->last = t->last >= at ? (int16_t) (t->last - at) : -1;
 }
 
+void pbulk_esp_no_answer(pbulk_esp_t *t) {
+  if (!t->sent)
+    return;
+  t->sent = false;
+  t->missed++;
+  t->end_us = PBUS_END_US;
+  if (t->margin_us < 2000)
+    t->margin_us += PBULK_MARGIN_US;
+}
+
 int pbulk_esp_window(pbulk_esp_t *t, uint32_t left_us, uint8_t *out) {
-  if (t->sent) {  // the last frame got no answer
-    t->sent = false;
-    t->missed++;
-    if (t->margin_us < 2000)
-      t->margin_us += PBULK_MARGIN_US;
-  }
+  pbulk_esp_no_answer(t);
   if (t->refused)
     return 0;
   // What fits in left_us minus the margin and turnaround. That's our frame and the panel's answer, at least both
@@ -466,7 +473,9 @@ void pbulk_esp_answer(pbulk_esp_t *t, const uint8_t *a, int n,
   t->answered++;
   if (t->margin_us >= 50)
     t->margin_us -= 50;
-  uint8_t st = a[PBULK_A_STATUS];
+  uint8_t st = a[PBULK_A_STATUS] & 3;
+  uint32_t end = PBUS_END_US + (uint32_t) (a[PBULK_A_STATUS] >> 2) * PBUS_END_STEP_US;
+  t->end_us = (uint16_t) (end < PBUS_END_MAX_US ? end : PBUS_END_MAX_US);
   if (st == PB_REFUSED || st == PB_NO_GAPS) {
     if (st == PB_REFUSED)
       t->refused = true;

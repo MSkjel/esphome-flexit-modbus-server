@@ -77,8 +77,8 @@ uint32_t pbus_since_status(uint32_t dt_us, int k, int rx_threshold, uint32_t isr
 
 uint32_t pbus_wait_us(uint32_t quiet_us) { return quiet_us < PBUS_START_MIN_US ? PBUS_START_MIN_US - quiet_us : 0; }
 
-uint32_t pbus_status_left(uint32_t age_us) {
-  return age_us < PBUS_END_US - PBUS_ESP_START_US ? PBUS_END_US - PBUS_ESP_START_US - age_us : 0;
+uint32_t pbus_status_left(uint32_t age_us, uint32_t end_us) {
+  return age_us < end_us - PBUS_ESP_START_US ? end_us - PBUS_ESP_START_US - age_us : 0;
 }
 
 // One more check of the CU60's timing. bad sets *off, and base good checks in a row clear it. That count doubles
@@ -99,6 +99,16 @@ static void judge(bool *off, uint8_t *times, uint32_t *clean, bool bad, uint32_t
 void pbus_panel_init(pbus_panel_t *w) {
   memset(w, 0, sizeof *w);
   w->quiet_min_us = 0xFFFFFFFF;
+  w->end_us = PBUS_END_US;
+}
+
+// The deadline after a status broadcast, further out once enough of them had a longer quiet time after
+static uint32_t end_for(const pbus_panel_t *w) {
+  if (w->quiet_n < PBUS_END_SURE || w->quiet_min_us < PBUS_END_US + PBUS_END_MARGIN_US)
+    return PBUS_END_US;
+  uint32_t e = w->quiet_min_us - PBUS_END_MARGIN_US;
+  e = e < PBUS_END_MAX_US ? e : PBUS_END_MAX_US;
+  return e - e % PBUS_END_STEP_US;
 }
 
 // the last burst was a status broadcast, less than a second ago
@@ -111,8 +121,13 @@ void pbus_panel_burst(pbus_panel_t *w, const uint8_t *b, int n, uint32_t start_u
     if (us + 2000 >= (now_ms - w->status_ms) * 1000) {
       bool was = w->refused;
       judge(&w->refused, &w->refusals, &w->clean, us < PBUS_CU60_MIN_US, PBUS_REARM);
-      if (us < w->quiet_min_us || (was && !w->refused))
+      if (was && !w->refused)  // let back in, measure again
+        w->quiet_n = 0;
+      if (us < w->quiet_min_us || !w->quiet_n)
         w->quiet_min_us = us;
+      if (w->quiet_n < PBUS_END_SURE)
+        w->quiet_n++;
+      w->end_us = end_for(w);
     }
   }
   // did the burst end with a status broadcast?
@@ -127,8 +142,8 @@ void pbus_panel_burst(pbus_panel_t *w, const uint8_t *b, int n, uint32_t start_u
 
 uint32_t pbus_panel_window(pbus_panel_t *w, uint32_t idle_us, uint32_t now_ms, uint8_t *say) {
   *say = w->refused ? PBUS_REFUSED : PBUS_OK;
-  if (recent(w, now_ms) && idle_us - w->status_end_us < PBUS_END_US)  // in the quiet time after a status broadcast
-    return PBUS_END_US - (idle_us - w->status_end_us);
+  if (recent(w, now_ms) && idle_us - w->status_end_us < w->end_us)  // in the quiet time after a status broadcast
+    return w->end_us - (idle_us - w->status_end_us);
   uint32_t left = pbus_gaps_left(&w->gaps, idle_us);  // or in a gap after a poll
   if (left && w->gaps.off && *say == PBUS_OK)
     *say = PBUS_NO_GAPS;
@@ -138,6 +153,11 @@ uint32_t pbus_panel_window(pbus_panel_t *w, uint32_t idle_us, uint32_t now_ms, u
 // ---------------------------------------------------------------- gaps after the CU60's polls
 
 void pbus_gaps_frame(pbus_gaps_t *g, const uint8_t *f, int n, uint32_t start_lo_us, uint32_t start_hi_us) {
+  // One frame at a time on the bus, so it started after the last one ended. Tighter than a late read can tell.
+  if (g->end_known && (int32_t) (g->end_lo_us - start_lo_us) > 0 && (int32_t) (g->end_lo_us - start_hi_us) <= 0)
+    start_lo_us = g->end_lo_us;
+  g->end_lo_us = start_lo_us + (uint32_t) n * 86806u / 1000u;
+  g->end_known = true;
   if (n >= 1 && f[0] == PBUS_LINK_ADDR)
     return;                                // a link frame
   bool ok = pbus_crc_ok(f, n);             // one whole frame with its CRC at the end

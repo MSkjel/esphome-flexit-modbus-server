@@ -301,6 +301,9 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
   /// @brief Min time since the last frame we read ended.
   uint32_t quiet_min_us() { return micros() - last_frame_us_; }
 
+  /// @brief Nothing waiting, no bytes in the UART and no part of a frame read.
+  bool rx_empty() { return !rx_left_ && !available(); }
+
   /**
    * @brief Called right after the CS60's status broadcast if nothing came after it and we didn't just
    *        answer the CS60. The panel link uses this quiet gap.
