@@ -240,7 +240,7 @@ letters, digits and `_`.
 | `picture.yaml` | `name`, `file` (PNG or JPEG next to your config). `encoding`: `auto`, `palette` (16 colours) or `jpeg`; a palette picture that doesn't fit the panel's 14 KB goes as a JPEG anyway. `quality`: the JPEG quality, or `auto` for the best that fits |
 | `online_picture.yaml` | `name`, `url`, `update_interval` (like `10min`, `1.5h` or `1d`, `never` = only when shown), `format` (PNG, JPEG, BMP or AUTO), `resize` (160x120 default, blown up to the screen; 320x240 needs PSRAM), plus `encoding` and `quality`. A failed download is retried after 30 s, then twice as long each time. Before each download the ESP asks the server about the file and skips one it doesn't have the RAM for, with the reason in `Panel Picture Status`. A JPEG has to fit in RAM whole, so the server has to send its size; PNG and BMP are read a bit at a time. For a Home Assistant camera use `ha_picture.yaml` |
 | `ha_picture.yaml` | `name`, `entity_id` (a `camera.` or `image.` entity, with `kind: image` for the latter), `ha_url` (`http://homeassistant.local:8123`), `width` (320, HA scales the camera picture down to it when the camera can), plus `update_interval`, `resize`, `format`, `encoding` and `quality` as above. HA only hands out camera pictures with a token that changes now and then; the ESP follows the entity's `access_token` attribute, so nothing to set up. If the camera won't scale, the full picture is often too big for an ESP without PSRAM and is skipped; a Frigate camera's own `latest.jpg?h=120` through `online_picture.yaml` is the way round that |
-| `animation.yaml` | `name`, `file` (a GIF), `resize` (64x64 default), `x`, `y` (top left on the 320x240 screen), `scale` (1, or 2 to draw each pixel 2x), `frame_ms` (40 to 2550, the GIF's own timing isn't used), `drift_x`, `drift_y` (pixels per second it drifts, wrapping round the screen seamlessly). The panel plays all its animations from 6 KB, up to 4 at a time in up to 8 places, so keep them small: about 64x64 with a few frames, or more frames if little changes between them. Too big at scale 1 and it's made at half size and drawn 2x. `Panel Animation Status` says what's shown and what didn't fit |
+| `animation.yaml` | `name`, `file` (a GIF), `resize` (64x64 default), `x`, `y` (top left on the 320x240 screen), `scale` (1, or 2 to draw each pixel 2x), `frame_ms` (40 to 2550, the GIF's own timing isn't used), `drift_x`, `drift_y` (pixels per second it drifts, wrapping round the screen seamlessly), `fade_ms` (300, how long copies fade in and out). The panel plays all its animations from 6 KB, up to 4 at a time in up to 8 places, so keep them small: about 64x64 with a few frames, or more frames if little changes between them. Too big at scale 1 and it's made at half size and drawn 2x. `Panel Animation Status` says what's shown and what didn't fit |
 | `met.yaml` | `latitude`, `longitude`, `scene` (hills, coast, mountains, city), `aurora` (auto, off, always), `update_interval` (5 min, the forecast is only fetched again when MET says it expired), `redraw_interval`, `name` (weather). `Panel Weather Scene`, `Panel Weather Aurora` and `Panel Weather Forecast` change it from Home Assistant |
 
 `met.yaml` draws the sky for the time of day and the next hour's weather from [MET Norway](https://api.met.no)
@@ -269,6 +269,42 @@ names, like `script.execute: {id: panel_notify, message: Hi, icon: bell, level: 
 | `panel_show_animation` (`name`), `panel_clear_animation` (`name`, or none for all) | An animation over it, where its yaml puts it, the same as its `Panel Animation <name>` switch. Any combination of them, within the panel's 6 KB |
 | `panel_place_animation` (`name`, `copy`, `x`, `y`, `own`, `start`), `panel_remove_animation` (`name`, `copy`) | The same animation in more places. Copy 0 is the one `panel_show_animation` shows, copy 1 and up are extra. They play in step and cost nothing extra, unless `own: true` gives the copy a frame of its own, which takes another w x h / 2 bytes of the 6 KB and starts `start` frames in |
 | `panel_move_animation` (`name`, `copy`, `x`, `y`, `ms`), `panel_drift_animation` (`name`, `copy`, `vx`, `vy`) | Glide a copy to `x`, `y` over `ms` (0 jumps, 65535 at most), or drift it at `vx`, `vy` pixels per second, wrapping round the screen; 0, 0 stops it. Drifting over a JPEG photo costs more redraws than over a palette picture, so keep it slow there |
+| `panel_turn_animation` (`name`, `copy`, `angle`, `ms`), `panel_spin_animation` (`name`, `copy`, `speed`), `panel_flip_animation` (`name`, `copy`, `horizontal`, `vertical`) | Turn a copy round its middle to `angle` degrees clockwise, the short way round over `ms` (0 at once), or spin it at `speed` degrees per second, negative the other way; 0 stops it where it is. Flip mirrors it left to right, upside down or both. All of it goes along with a glide or drift, and placing a copy again starts it unturned. Quarter turns and flips stay sharp, other angles are drawn pixel for pixel and look rougher |
+| `panel_area_animation` (`name`, `copy`, `left`, `top`, `right`, `bottom`, `edge_x`, `edge_y`) | Where a copy's drift or wander keeps. Each edge is `screen` (round the whole screen, the default), `cross` (out at one edge of the area, in at the other) or `bounce` |
+| `panel_wander_animation` (`name`, `copy`, `speed_min`, `speed_max`, `heading`, `spread`, `leg_min`, `leg_max`, `rest_min`, `rest_max`) | Legs of `speed_min` to `speed_max` pixels per second toward `heading` give or take `spread` degrees (0 right, 90 down, 180 left, 270 up; `spread` 180 is any way), each `leg_min` to `leg_max` ms (0 0 is one leg), with rests of `rest_min` to `rest_max` ms between (0 0 none). It keeps to its area, and a bounce turns the heading round |
+| `panel_face_animation` (`name`, `copy`, `facing`, `mirror`, `tilt`, `rate`, `level`) | Turns a copy toward where it goes. `facing` is the way its frames face, `mirror` flips it to face the other way, `tilt` the most it turns (0 to 180), `rate` degrees per second (0 at once), `level` back upright when it stops. A turn, spin or flip ends it |
+| `panel_size_animation` (`name`, `copy`, `size`, `ms`) | A copy at `size` percent (10 to 400) over `ms` (0 at once) |
+| `panel_fade_animation` (`name`, `copy`, `opacity`, `ms`) | A copy at `opacity` percent over `ms` (0 at once) |
+| `panel_rounds_animation` (`name`, `copy`, `rounds`) | A copy plays to the end of `rounds` rounds, then fades out and goes. 0 plays on. With `own: true` and `start: 0` it plays from the first frame and holds the last |
+
+Examples, for an ESP called `flexit`:
+
+```yaml
+# a bird crossing the sky to the right
+- action: esphome.flexit_panel_area_animation
+  data: {name: bird, copy: 0, left: 0, top: 10, right: 320, bottom: 90, edge_x: cross, edge_y: bounce}
+- action: esphome.flexit_panel_wander_animation
+  data: {name: bird, copy: 0, speed_min: 15, speed_max: 30, heading: 0, spread: 20, leg_min: 1500, leg_max: 4000,
+         rest_min: 0, rest_max: 0}
+- action: esphome.flexit_panel_face_animation
+  data: {name: bird, copy: 0, facing: 0, mirror: true, tilt: 15, rate: 30, level: true}
+# a fish in a tank
+- action: esphome.flexit_panel_area_animation
+  data: {name: fish, copy: 0, left: 20, top: 120, right: 300, bottom: 220, edge_x: bounce, edge_y: bounce}
+- action: esphome.flexit_panel_wander_animation
+  data: {name: fish, copy: 0, speed_min: 5, speed_max: 25, heading: 0, spread: 30, leg_min: 1000, leg_max: 5000,
+         rest_min: 500, rest_max: 3000}
+# a bouncing logo
+- action: esphome.flexit_panel_area_animation
+  data: {name: logo, copy: 0, left: 0, top: 0, right: 320, bottom: 240, edge_x: bounce, edge_y: bounce}
+- action: esphome.flexit_panel_drift_animation
+  data: {name: logo, copy: 0, vx: 40, vy: 30}
+# a shooting star, once
+- action: esphome.flexit_panel_place_animation
+  data: {name: star, copy: 1, x: 200, y: 30, own: true, start: 0}
+- action: esphome.flexit_panel_rounds_animation
+  data: {name: star, copy: 1, rounds: 1}
+```
 
 The panel's LEDs have their own selects (`Panel Alarm LED`, `Panel Filter LED`, `Panel OK LED`): Auto works like
 the stock panel, the rest let Home Assistant decide.

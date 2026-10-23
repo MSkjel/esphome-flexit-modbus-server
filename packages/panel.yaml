@@ -277,6 +277,90 @@ api:
         vy: int
       then:
         - lambda: flexit::panel::anim::drift(name, copy, vx, vy);
+    - action: panel_turn_animation
+      variables:
+        name: string
+        copy: int
+        angle: int
+        ms: int
+      then:
+        - lambda: flexit::panel::anim::turn(name, copy, angle, ms);
+    - action: panel_spin_animation
+      variables:
+        name: string
+        copy: int
+        speed: int
+      then:
+        - lambda: flexit::panel::anim::spin(name, copy, speed);
+    - action: panel_flip_animation
+      variables:
+        name: string
+        copy: int
+        horizontal: bool
+        vertical: bool
+      then:
+        - lambda: flexit::panel::anim::flip(name, copy, horizontal, vertical);
+    # edge_x, edge_y: screen, cross or bounce
+    - action: panel_area_animation
+      variables:
+        name: string
+        copy: int
+        left: int
+        top: int
+        right: int
+        bottom: int
+        edge_x: string
+        edge_y: string
+      then:
+        - lambda: flexit::panel::anim::area(name, copy, left, top, right, bottom, edge_x, edge_y);
+    - action: panel_wander_animation
+      variables:
+        name: string
+        copy: int
+        speed_min: int
+        speed_max: int
+        heading: int
+        spread: int
+        leg_min: int
+        leg_max: int
+        rest_min: int
+        rest_max: int
+      then:
+        - lambda: flexit::panel::anim::wander(name, copy, speed_min, speed_max, heading, spread, leg_min, leg_max, rest_min, rest_max);
+    - action: panel_face_animation
+      variables:
+        name: string
+        copy: int
+        facing: int
+        mirror: bool
+        tilt: int
+        rate: int
+        level: bool
+      then:
+        - lambda: flexit::panel::anim::face(name, copy, facing, mirror, tilt, rate, level);
+    - action: panel_size_animation
+      variables:
+        name: string
+        copy: int
+        size: int
+        ms: int
+      then:
+        - lambda: flexit::panel::anim::size(name, copy, size, ms);
+    - action: panel_fade_animation
+      variables:
+        name: string
+        copy: int
+        opacity: int
+        ms: int
+      then:
+        - lambda: flexit::panel::anim::fade(name, copy, opacity, ms);
+    - action: panel_rounds_animation
+      variables:
+        name: string
+        copy: int
+        rounds: int
+      then:
+        - lambda: flexit::panel::anim::rounds(name, copy, rounds);
     # A panel setting, value in the panel's own units. theme 0-2, brightness 0-100, idle_brightness 0-100,
     # idle_after 0-7 for 15 s to 30 min or never, screensaver 0-5, home_view 0-5, night 0/1, night_from and
     # night_to 0-23, night_brightness 0-100 when in use, night_idle_brightness 0-100 with 0 = dark, key_lock 0/1,
@@ -335,3 +419,41 @@ script:
     parameters: {name: string, copy: int, vx: int, vy: int}
     then:
       - lambda: flexit::panel::anim::drift(name, copy, vx, vy);
+  - id: panel_turn_animation
+    parameters: {name: string, copy: int, angle: int, ms: int}
+    then:
+      - lambda: flexit::panel::anim::turn(name, copy, angle, ms);
+  - id: panel_spin_animation
+    parameters: {name: string, copy: int, speed: int}
+    then:
+      - lambda: flexit::panel::anim::spin(name, copy, speed);
+  - id: panel_flip_animation
+    parameters: {name: string, copy: int, horizontal: bool, vertical: bool}
+    then:
+      - lambda: flexit::panel::anim::flip(name, copy, horizontal, vertical);
+  - id: panel_area_animation
+    parameters: {name: string, copy: int, left: int, top: int, right: int, bottom: int, edge_x: string, edge_y: string}
+    then:
+      - lambda: flexit::panel::anim::area(name, copy, left, top, right, bottom, edge_x, edge_y);
+  - id: panel_wander_animation
+    parameters:
+      {name: string, copy: int, speed_min: int, speed_max: int, heading: int, spread: int, leg_min: int, leg_max: int,
+       rest_min: int, rest_max: int}
+    then:
+      - lambda: flexit::panel::anim::wander(name, copy, speed_min, speed_max, heading, spread, leg_min, leg_max, rest_min, rest_max);
+  - id: panel_face_animation
+    parameters: {name: string, copy: int, facing: int, mirror: bool, tilt: int, rate: int, level: bool}
+    then:
+      - lambda: flexit::panel::anim::face(name, copy, facing, mirror, tilt, rate, level);
+  - id: panel_size_animation
+    parameters: {name: string, copy: int, size: int, ms: int}
+    then:
+      - lambda: flexit::panel::anim::size(name, copy, size, ms);
+  - id: panel_fade_animation
+    parameters: {name: string, copy: int, opacity: int, ms: int}
+    then:
+      - lambda: flexit::panel::anim::fade(name, copy, opacity, ms);
+  - id: panel_rounds_animation
+    parameters: {name: string, copy: int, rounds: int}
+    then:
+      - lambda: flexit::panel::anim::rounds(name, copy, rounds);

@@ -83,16 +83,47 @@ enum { PIC_PALETTE, PIC_JPEG };
 // the last frame back to the first. It replaces the slot's animation and its places. The panel keeps every slot's
 // frame and records in ANIM_POOL, and answers PIC_TOO_BIG when they don't fit next to the others.
 #define K_ANIM_BEGIN 0x336
-#define K_ANIM_CLEAR 0x337  // a slot, ANIM_PLACE_BIT | a place, or ANIM_ALL
-// ANIM_PLACE, where an animation shows: place (0..ANIM_PLACES - 1), slot, x (2), y (2), own, start. Replaces that
-// place. Every place of a slot shows its frames in step, unless own = 1 gives it a frame of its own (w x h / 2
-// bytes more of ANIM_POOL) that starts start frames in. Ignored without the animation or the room.
+#define K_ANIM_CLEAR 0x337  // a slot, ANIM_PLACE_BIT | a place, or ANIM_ALL, | ms << 8 to fade out over ms first
+// ANIM_PLACE, where an animation shows: place (0..ANIM_PLACES - 1), slot, x (2), y (2), own, start, fade (2). Replaces
+// that place. Every place of a slot shows its frames in step, unless own = 1 gives it a frame of its own (w x h / 2
+// bytes more of ANIM_POOL) that starts start frames in. It fades in over fade ms, upright, full size and on the whole
+// screen. Ignored without the animation or the room.
 #define K_ANIM_PLACE 0x339
-// ANIM_MOVE, moves a place: place, mode, then for ANIM_GLIDE x, y (2 each, signed, the top left to glide to) and
-// ms (2) to get there (0 = jump), for ANIM_DRIFT vx, vy (2 each, signed) in pixels per second, wrapping round the
-// screen. ANIM_STOP alone leaves it where it is. Ignored without the place.
+// ANIM_MOVE, moves a place: place, mode, then
+//   ANIM_GLIDE: x, y (2 each, signed, the top left to glide to) and ms (2) to get there, 0 = jump
+//   ANIM_DRIFT: vx, vy (2 each, signed) in pixels per second
+//   ANIM_WANDER: legs of speed min..max px/s (2 + 2) toward heading +- spread degrees (2 + 2, signed, clockwise from
+//     right) for leg min..max ms (2 + 2, 0 0 = one leg), rests of min..max ms (2 + 2, 0 0 = none) between. A bounce
+//     turns the heading round.
+// A drift or wander keeps to the place's ANIM_AREA. ANIM_STOP alone leaves it where it is. Ignored without the place.
 #define K_ANIM_MOVE 0x338
-enum { ANIM_STOP, ANIM_GLIDE, ANIM_DRIFT };
+enum { ANIM_STOP, ANIM_GLIDE, ANIM_DRIFT, ANIM_WANDER };
+// ANIM_TURN, turns and flips a place round its middle: place, mode, flip (ANIM_FLIP_*), then
+//   ANIM_GLIDE: angle (2, signed, degrees clockwise) to turn to the short way round and ms (2) to get there, 0 = at
+//   once ANIM_DRIFT: degrees per second (2, signed) to spin ANIM_FACE: toward where it goes: ANIM_FACE_* flags, the way
+//   the frames face (2, degrees), tilt (2, the most it
+//     turns, 0..180) and rate (2, degrees per second, 0 = at once)
+// ANIM_STOP stays at the angle it has.
+#define K_ANIM_TURN 0x33A
+#define ANIM_FACE 3         // ANIM_TURN's mode
+#define ANIM_FLIP_X 1       // mirrored left to right, before it turns
+#define ANIM_FLIP_Y 2       // upside down
+#define ANIM_FACE_MIRROR 1  // flips left to right to face the other way
+#define ANIM_FACE_LEVEL 2   // turns back upright when it stops
+// ANIM_AREA, where a drift or wander keeps: place, x0, y0, x1, y1 (2 each, signed, x1 and y1 just past it), then
+// ANIM_EDGE_* for x and for y. The turned and sized box keeps to it.
+#define K_ANIM_AREA 0x33B
+enum {
+  ANIM_EDGE_SCREEN,  // round the whole screen, what's over one edge shows at the other
+  ANIM_EDGE_CROSS,   // out across an edge of the area, back in at the other one
+  ANIM_EDGE_BOUNCE,  // back off the edges
+};
+#define K_ANIM_SIZE 0x33C  // place, percent (2, 10..400) and ms (2) to get there, round its middle
+#define K_ANIM_FADE 0x33D  // place, opacity (0..255) and ms (2) to get there
+// ANIM_ROUNDS: place, rounds (2), fade (2), tag. Plays to the end of rounds rounds, then fades out over fade ms and
+// goes, answering ANIM_GONE. A frame of its own holds the last one. 0 plays on.
+#define K_ANIM_ROUNDS 0x33E
+#define K_ANIM_GONE 0x33F  // panel -> ESP: place | tag << 8 of one that went after its rounds
 #define ANIM_OPAQUE 16
 #define ANIM_SLOTS 4
 #define ANIM_PLACES 8

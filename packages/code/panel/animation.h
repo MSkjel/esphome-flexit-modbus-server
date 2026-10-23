@@ -15,12 +15,13 @@
 namespace flexit::panel::anim {
 
 // x, y is where it goes on the screen, pixel(frame, x, y) gives 0xAARRGGBB, vx, vy a drift in px/s. flip sets its
-// switch, so it follows what the actions show and clear.
+// switch, so it follows what the actions show and clear. Its copies fade in and out over fade_ms.
 struct Source {
   int w, h, frames, frame_ms, x, y, scale;
   std::function<uint32_t(int, int, int)> pixel;
   int vx = 0, vy = 0;
   std::function<void(bool)> flip = {};
+  int fade_ms = 0;
 };
 inline std::map<std::string, Source> sources;
 
@@ -36,8 +37,8 @@ inline void add(const std::string &name, Source s) {
 
 // An animated GIF (animation.yaml) and its switch
 template<typename Img, typename Sw>
-void add_animation(const std::string &name, Img &&image, Sw &&sw, int frame_ms, int x, int y, int scale, int vx,
-                   int vy) {
+void add_animation(const std::string &name, Img &&image, Sw &&sw, int frame_ms, int x, int y, int scale, int vx, int vy,
+                   int fade_ms) {
   auto *img = picture::ptr_of(image);
   auto *s = picture::ptr_of(sw);
   add(name, {img->get_width(), img->get_height(), (int) img->get_animation_frame_count(), frame_ms, x, y, scale,
@@ -46,7 +47,7 @@ void add_animation(const std::string &name, Img &&image, Sw &&sw, int frame_ms, 
                auto c = img->get_pixel(px, py);
                return (uint32_t) c.w << 24 | (uint32_t) c.r << 16 | (uint32_t) c.g << 8 | c.b;
              },
-             vx, vy, [s](bool on) { s->publish_state(on); }});
+             vx, vy, [s](bool on) { s->publish_state(on); }, std::max(0, std::min(65535, fade_ms))});
 }
 
 // A copy on the panel: one of its places
@@ -64,6 +65,27 @@ struct Copy {
   struct {
     int16_t vx, vy;
   } drift = {};
+  struct {
+    uint16_t speed[2], leg[2], rest[2];  // min, max
+    int16_t heading, spread;
+  } wander = {};
+  struct {
+    int16_t x0 = 0, y0 = 0, x1 = 320, y1 = 240;
+    uint8_t edge[2] = {ANIM_EDGE_SCREEN, ANIM_EDGE_SCREEN};
+  } area;
+  uint8_t flip = 0;             // ANIM_FLIP_X, ANIM_FLIP_Y
+  uint8_t turning = ANIM_STOP;  // to angle over turn_ms, a spin, or ANIM_FACE
+  int16_t angle = 0, spin = 0;  // degrees clockwise, degrees per second
+  uint16_t turn_ms = 0;
+  uint32_t turn_at = 0;  // millis() when it was asked for, so one sent again ends on time
+  struct {
+    uint8_t flags;  // ANIM_FACE_*
+    int16_t facing, tilt, rate;
+  } face = {};
+  uint16_t size = 100;  // percent
+  uint8_t opacity = 255;
+  uint16_t rounds = 0;  // to the end of, 0 = on and on
+  uint8_t tag = 0;      // of its ANIM_ROUNDS, the panel's ANIM_GONE has it
 };
 
 enum State { WANT, SENT, FAILED };  // WANT: to be made and sent, or sent again after a panel restart
@@ -143,9 +165,10 @@ inline std::string shown() {
     } else if (n == 1) {
       for (auto &c : a.copies)
         if (c.used)
-          s += c.motion == ANIM_DRIFT   ? ", drifting"
-               : c.motion == ANIM_GLIDE ? ", moved to " + std::to_string(c.move.x) + "," + std::to_string(c.move.y)
-                                        : "";
+          s += c.motion == ANIM_DRIFT    ? ", drifting"
+               : c.motion == ANIM_WANDER ? ", wandering"
+               : c.motion == ANIM_GLIDE  ? ", moved to " + std::to_string(c.move.x) + "," + std::to_string(c.move.y)
+                                         : "";
     }
   }
   if (s.empty() && failed.empty())
@@ -211,16 +234,77 @@ inline std::string too_big(size_t n) {
 
 // ---- the link's messages
 
-inline void send_move(const Anim &a, const Copy &c) {
-  (void) a;
-  uint8_t m[8] = {c.place, c.motion};
+inline void send_move(const Copy &c) {
+  uint8_t m[18] = {c.place, c.motion};
+  if (c.motion == ANIM_WANDER) {
+    const auto &w = c.wander;
+    uint16_t v[8] = {w.speed[0], w.speed[1], (uint16_t) w.heading, (uint16_t) w.spread, w.leg[0], w.leg[1],
+                     w.rest[0],  w.rest[1]};
+    for (int i = 0; i < 8; i++)
+      picture::put16(m + 2 + 2 * i, v[i]);
+    link::send(K_ANIM_MOVE, m, 18);
+    return;
+  }
   picture::put16(m + 2, (uint16_t) (c.motion == ANIM_DRIFT ? c.drift.vx : c.move.x));
   picture::put16(m + 4, (uint16_t) (c.motion == ANIM_DRIFT ? c.drift.vy : c.move.y));
   picture::put16(m + 6, c.move.ms);
   link::send(K_ANIM_MOVE, m, c.motion == ANIM_GLIDE ? 8 : c.motion == ANIM_DRIFT ? 6 : 2);
 }
 
-// Puts a copy on the panel, with its motion. A frame of its own needs room in the panel's pool.
+// A sent turn keeps the time it had left
+inline void send_turn(const Copy &c) {
+  uint8_t m[10] = {c.place, c.turning, c.flip};
+  if (c.turning == ANIM_FACE) {
+    m[3] = c.face.flags;
+    picture::put16(m + 4, (uint16_t) c.face.facing);
+    picture::put16(m + 6, (uint16_t) c.face.tilt);
+    picture::put16(m + 8, (uint16_t) c.face.rate);
+    link::send(K_ANIM_TURN, m, 10);
+    return;
+  }
+  uint32_t gone = millis() - c.turn_at;
+  picture::put16(m + 3, (uint16_t) (c.turning == ANIM_DRIFT ? c.spin : c.angle));
+  picture::put16(m + 5, (uint16_t) (gone < c.turn_ms ? c.turn_ms - gone : 0));
+  link::send(K_ANIM_TURN, m, c.turning == ANIM_GLIDE ? 7 : c.turning == ANIM_DRIFT ? 5 : 3);
+}
+
+inline void send_area(const Copy &c) {
+  uint8_t m[11] = {c.place};
+  picture::put16(m + 1, (uint16_t) c.area.x0);
+  picture::put16(m + 3, (uint16_t) c.area.y0);
+  picture::put16(m + 5, (uint16_t) c.area.x1);
+  picture::put16(m + 7, (uint16_t) c.area.y1);
+  m[9] = c.area.edge[0];
+  m[10] = c.area.edge[1];
+  link::send(K_ANIM_AREA, m, sizeof m);
+}
+
+inline void send_size(const Copy &c, uint16_t ms) {
+  uint8_t m[5] = {c.place};
+  picture::put16(m + 1, c.size);
+  picture::put16(m + 3, ms);
+  link::send(K_ANIM_SIZE, m, sizeof m);
+}
+
+inline void send_fade(const Copy &c, uint16_t ms) {
+  uint8_t m[4] = {c.place, c.opacity};
+  picture::put16(m + 2, ms);
+  link::send(K_ANIM_FADE, m, sizeof m);
+}
+
+inline void send_rounds(const Anim &a, const Copy &c) {
+  uint8_t m[6] = {c.place};
+  picture::put16(m + 1, c.rounds);
+  picture::put16(m + 3, (uint16_t) a.src->fade_ms);
+  m[5] = c.tag;
+  link::send(K_ANIM_ROUNDS, m, sizeof m);
+}
+
+inline bool whole_screen(const Copy &c) {
+  return c.area.edge[0] == ANIM_EDGE_SCREEN && c.area.edge[1] == ANIM_EDGE_SCREEN;
+}
+
+// Puts a copy on the panel, with its motion and turn. A frame of its own needs room in the panel's pool.
 inline void send_place(Anim &a, Copy &c) {
   if (c.own) {
     size_t mine = a.frame() + a.data.size();
@@ -233,19 +317,31 @@ inline void send_place(Anim &a, Copy &c) {
       return;
     }
   }
-  uint8_t m[8] = {c.place, (uint8_t) (&a - anims)};
+  uint8_t m[10] = {c.place, (uint8_t) (&a - anims)};
   // the sizes round up at half size, so it moves in from the edge
   picture::put16(m + 2, (uint16_t) std::min<int>(c.x, 320 - a.w * a.scale));
   picture::put16(m + 4, (uint16_t) std::min<int>(c.y, 240 - a.h * a.scale));
   m[6] = c.own;
   m[7] = c.start;
+  picture::put16(m + 8, (uint16_t) a.src->fade_ms);
   link::send(K_ANIM_PLACE, m, sizeof m);
   c.placed = true;
+  if (!whole_screen(c))
+    send_area(c);
   if (c.motion != ANIM_STOP)
-    send_move(a, c);
+    send_move(c);
+  if (c.turning != ANIM_STOP || c.flip)
+    send_turn(c);
+  if (c.size != 100)
+    send_size(c, 0);
+  if (c.opacity != 255)
+    send_fade(c, (uint16_t) a.src->fade_ms);  // from 0 as it fades in
+  if (c.rounds)
+    send_rounds(a, c);
 }
 
-inline void send_clear(unsigned what) { link::send(K_ANIM_CLEAR, (uint32_t) what); }
+// A slot, ANIM_PLACE_BIT | a place, or ANIM_ALL, faded out over ms first
+inline void send_clear(unsigned what, int ms = 0) { link::send(K_ANIM_CLEAR, (uint32_t) what | (uint32_t) ms << 8); }
 
 // ---- making one
 
@@ -530,27 +626,30 @@ inline Anim *add_anim(const std::string &name) {
   return a;
 }
 
-inline void drop_anim(Anim &a) {
+inline void drop_anim(Anim &a, bool send = true) {
   if (W.a == &a) {
     W.head = false;
     W.phase = IDLE;
     W.a = nullptr;
     drop_work();
   }
-  if (a.state == SENT)
-    send_clear((unsigned) (&a - anims));
+  if (a.state == SENT && send)
+    send_clear((unsigned) (&a - anims), a.src->fade_ms);
   if (a.src->flip)
     a.src->flip(false);
   a = Anim();
 }
 
-// Clears one animation and all its copies, or all of them with no name
+// Clears one animation and all its copies, or all of them with no name, fading them out
 inline void clear(const std::string &name) {
   if (name.empty() || name == "None") {
+    int ms = 0;
     for (auto &a : anims)
-      if (!a.name.empty())
-        drop_anim(a);
-    send_clear(ANIM_ALL);
+      if (!a.name.empty()) {
+        ms = std::max(ms, a.src->fade_ms);
+        drop_anim(a, false);
+      }
+    send_clear(ANIM_ALL, ms);
   } else if (Anim *a = find(name)) {
     drop_anim(*a);
   }
@@ -581,8 +680,18 @@ inline void show(const std::string &name) {
 // The copy's motion goes out now if the panel has it, else with it once it's there
 inline void moved(Anim &a, Copy &c) {
   if (a.state == SENT && c.placed)
-    send_move(a, c);
+    send_move(c);
   status(shown());
+}
+
+inline bool sent(const std::string &name, const Copy &c) { return find(name)->state == SENT && c.placed; }
+
+inline int16_t clamp16(int v) { return (int16_t) std::max(-32768, std::min(32767, v)); }
+inline uint16_t clamp_u16(int v) { return (uint16_t) std::max(0, std::min(65535, v)); }
+
+inline void turned(Anim &a, Copy &c) {
+  if (a.state == SENT && c.placed)
+    send_turn(c);
 }
 
 // panel_place_animation: copy i of name at x, y, own = a frame of its own started start frames in. Shows the
@@ -611,7 +720,14 @@ inline void place(const std::string &name, int i, int x, int y, bool own, int st
   c->y = (int16_t) y;
   c->own = own;
   c->start = (uint8_t) std::max(0, std::min(255, start));
+  Copy fresh;
   c->motion = ANIM_STOP;
+  c->turning = ANIM_STOP;
+  c->flip = 0;
+  c->area = fresh.area;
+  c->size = 100;
+  c->opacity = 255;
+  c->rounds = 0;
   c->placed = false;
   if (a->state == SENT)
     send_place(*a, *c);
@@ -625,7 +741,7 @@ inline void remove(const std::string &name, int i) {
     return;
   Copy &c = a->copies[i];
   if (a->state == SENT && c.placed)
-    send_clear(ANIM_PLACE_BIT | c.place);
+    send_clear(ANIM_PLACE_BIT | c.place, a->src->fade_ms);
   c = Copy();
   status(shown());
 }
@@ -662,6 +778,149 @@ inline void drift(const std::string &name, int i, int vx, int vy) {
   c->drift = {(int16_t) std::max(-32768, std::min(32767, vx)), (int16_t) std::max(-32768, std::min(32767, vy))};
   c->motion = vx || vy ? ANIM_DRIFT : ANIM_STOP;
   moved(*find(name), *c);
+}
+
+// For panel_turn_animation: copy i turns to angle, degrees clockwise, the short way round over ms. 0 is at once.
+inline void turn(const std::string &name, int i, int angle, int ms) {
+  Copy *c = copy_for(name, i, "panel_turn_animation");
+  if (!c)
+    return;
+  c->turning = ANIM_GLIDE;
+  c->angle = (int16_t) ((angle % 360 + 360) % 360);
+  c->turn_ms = (uint16_t) std::max(0, std::min(65535, ms));
+  c->turn_at = millis();
+  turned(*find(name), *c);
+}
+
+// For panel_spin_animation: degrees per second clockwise, negative the other way. 0 stops it where it is.
+inline void spin(const std::string &name, int i, int speed) {
+  Copy *c = copy_for(name, i, "panel_spin_animation");
+  if (!c)
+    return;
+  c->spin = (int16_t) std::max(-32768, std::min(32767, speed));
+  c->turning = speed ? ANIM_DRIFT : ANIM_STOP;
+  turned(*find(name), *c);
+}
+
+// For panel_flip_animation: mirrored left to right, upside down, or both
+inline void flip(const std::string &name, int i, bool x, bool y) {
+  Copy *c = copy_for(name, i, "panel_flip_animation");
+  if (!c)
+    return;
+  c->flip = (uint8_t) ((x ? ANIM_FLIP_X : 0) | (y ? ANIM_FLIP_Y : 0));
+  turned(*find(name), *c);
+}
+
+// For panel_area_animation: where a drift or wander keeps. Each edge is screen, cross or bounce.
+inline void area(const std::string &name, int i, int left, int top, int right, int bottom, const std::string &edge_x,
+                 const std::string &edge_y) {
+  Copy *c = copy_for(name, i, "panel_area_animation");
+  if (!c)
+    return;
+  auto edge = [](const std::string &e) -> int {
+    return e == "screen" ? ANIM_EDGE_SCREEN : e == "cross" ? ANIM_EDGE_CROSS : e == "bounce" ? ANIM_EDGE_BOUNCE : -1;
+  };
+  int ex = edge(edge_x), ey = edge(edge_y);
+  if (ex < 0 || ey < 0 || right <= left || bottom <= top) {
+    ESP_LOGW("panel",
+             "panel_area_animation: %d,%d to %d,%d with edges %s and %s: the edges are screen, cross or "
+             "bounce, and right and bottom past left and top",
+             left, top, right, bottom, edge_x.c_str(), edge_y.c_str());
+    return;
+  }
+  c->area.x0 = clamp16(left);
+  c->area.y0 = clamp16(top);
+  c->area.x1 = clamp16(right);
+  c->area.y1 = clamp16(bottom);
+  c->area.edge[0] = (uint8_t) ex;
+  c->area.edge[1] = (uint8_t) ey;
+  if (sent(name, *c))
+    send_area(*c);
+}
+
+// For panel_wander_animation: legs of speed_min..speed_max px/s toward heading +- spread for leg_min..leg_max ms,
+// with rests of rest_min..rest_max ms between
+inline void wander(const std::string &name, int i, int speed_min, int speed_max, int heading, int spread, int leg_min,
+                   int leg_max, int rest_min, int rest_max) {
+  Copy *c = copy_for(name, i, "panel_wander_animation");
+  if (!c)
+    return;
+  if (speed_max < speed_min || leg_max < leg_min || rest_max < rest_min) {
+    ESP_LOGW("panel", "panel_wander_animation: each max has to be at least its min");
+    return;
+  }
+  auto &w = c->wander;
+  w.speed[0] = (uint16_t) std::max(0, std::min(10000, speed_min));
+  w.speed[1] = (uint16_t) std::max(0, std::min(10000, speed_max));
+  w.heading = (int16_t) ((heading % 360 + 360) % 360);
+  w.spread = (int16_t) std::max(0, std::min(180, spread));
+  w.leg[0] = clamp_u16(leg_min);
+  w.leg[1] = clamp_u16(leg_max);
+  w.rest[0] = clamp_u16(rest_min);
+  w.rest[1] = clamp_u16(rest_max);
+  c->motion = ANIM_WANDER;
+  moved(*find(name), *c);
+}
+
+// For panel_face_animation: turns toward where it goes, at most tilt degrees from facing, at rate degrees per second
+inline void face(const std::string &name, int i, int facing, bool mirror, int tilt, int rate, bool level) {
+  Copy *c = copy_for(name, i, "panel_face_animation");
+  if (!c)
+    return;
+  c->turning = ANIM_FACE;
+  c->face.flags = (uint8_t) ((mirror ? ANIM_FACE_MIRROR : 0) | (level ? ANIM_FACE_LEVEL : 0));
+  c->face.facing = (int16_t) ((facing % 360 + 360) % 360);
+  c->face.tilt = (int16_t) std::max(0, std::min(180, tilt));
+  c->face.rate = (int16_t) std::max(0, std::min(32767, rate));
+  if (sent(name, *c))
+    send_turn(*c);
+}
+
+// For panel_size_animation: copy i to size percent (10..400) round its middle over ms, 0 at once
+inline void size(const std::string &name, int i, int size, int ms) {
+  Copy *c = copy_for(name, i, "panel_size_animation");
+  if (!c)
+    return;
+  if (size < 10 || size > 400) {
+    ESP_LOGW("panel", "panel_size_animation: %d %% is outside 10..400", size);
+    return;
+  }
+  c->size = (uint16_t) size;
+  if (sent(name, *c))
+    send_size(*c, clamp_u16(ms));
+}
+
+// For panel_fade_animation: copy i to opacity percent over ms, 0 at once
+inline void fade(const std::string &name, int i, int opacity, int ms) {
+  Copy *c = copy_for(name, i, "panel_fade_animation");
+  if (!c)
+    return;
+  c->opacity = (uint8_t) ((std::max(0, std::min(100, opacity)) * 255 + 50) / 100);
+  if (sent(name, *c))
+    send_fade(*c, clamp_u16(ms));
+}
+
+inline uint8_t tags;  // so an old ANIM_GONE doesn't take a copy placed again
+
+// For panel_rounds_animation: plays to the end of rounds rounds, then fades out and goes. 0 plays on.
+inline void rounds(const std::string &name, int i, int n) {
+  Copy *c = copy_for(name, i, "panel_rounds_animation");
+  if (!c)
+    return;
+  c->rounds = clamp_u16(n);
+  c->tag = ++tags;
+  if (sent(name, *c))
+    send_rounds(*find(name), *c);
+}
+
+// The panel's K_ANIM_GONE = place | tag << 8: a copy played its rounds and went
+inline void gone(uint32_t v) {
+  for (auto &a : anims)
+    for (auto &c : a.copies)
+      if (c.used && c.placed && c.rounds && c.place == (v & 0xFF) && c.tag == (v >> 8 & 0xFF)) {
+        c = Copy();
+        status(shown());
+      }
 }
 
 // every 20 ms

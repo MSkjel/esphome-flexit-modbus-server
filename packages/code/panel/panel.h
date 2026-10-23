@@ -156,6 +156,7 @@ inline void setup(uint8_t panel_address) {
     picture::ack(v);
     anim::ack(v);
   };
+  h[K_ANIM_GONE] = anim::gone;
   for (int i = 0; i < N_ITEMS; i++)
     h[K_ITEM_VALUE + i] = [i](uint32_t v) { item_set(i, v); };
   h[K_ITEM_HELP] = item_help;
