@@ -348,18 +348,40 @@ int main() {
   auto resets = [] {
     return std::count_if(server.tx.begin(), server.tx.end(), [](auto &f) { return f[1] == FC && f[2] == SUB_RESET; });
   };
-  // the loader misses all three resets after the firmware's in, that's done, not a failure
+  // the loader misses all three resets after the firmware's in, that's done, not a failure. They go 2 and 4 s
+  // apart, then 5 s to give up, time for a busy loader.
   const auto idle = frame({BL_ADDR, FC, SUB_STATUS, 2, ST_IDLE, 0});
   server.tx.clear();
   enter_phase(RESET);
-  for (int i = 0; i < 20 && phase != DONE && phase != FAIL; i++) {
+  std::vector<uint32_t> reset_at;
+  for (int i = 0; i < 200 && phase != DONE && phase != FAIL; i++) {
+    long n = resets();
     pump();
+    if (resets() > n)
+      reset_at.push_back(now_ms);
     if (awaiting)
       on_frame(idle.data(), idle.size());
-    now_ms += 300;
+    now_ms += 100;
   }
   CHECK(phase == DONE && last_status == "The new firmware is in, but the panel didn't restart. Power it off and on");
   CHECK(resets() == 3 && last_pct == 100 && !server.updating);
+  CHECK(reset_at.size() == 3 && reset_at[1] - reset_at[0] >= 2000 && reset_at[2] - reset_at[1] >= 4000 &&
+        now_ms - reset_at[2] >= 5000);
+  // one that answers once more, then restarts: done once it's quiet, with no second reset
+  server.tx.clear();
+  server.updating = true;
+  reset_tries = 0;
+  enter_phase(RESET);
+  bool answered = false;
+  for (int i = 0; i < 100 && phase != DONE && phase != FAIL; i++) {
+    pump();
+    if (awaiting && !answered) {
+      on_frame(idle.data(), idle.size());
+      answered = true;
+    }
+    now_ms += 100;
+  }
+  CHECK(phase == DONE && last_status == "Done, the panel is restarting" && resets() == 1 && answered);
 
   // the poll after a busy-looking tail gets "starting" or an exception, that ends it right away
   for (const auto &odd : {frame({BL_ADDR, FC, SUB_STATUS, 2, ST_BOOT, 0}), frame({BL_ADDR, FC | 0x80, EXC_BUSY})}) {

@@ -105,6 +105,7 @@ inline uint32_t sent_ms = 0;     // when the last request went out
 inline bool awaiting = false;    // a request is out, waiting for its reply
 inline uint8_t tries = 0;        // enter retries
 inline uint8_t reset_tries = 0;  // resets sent at the end, the loader can miss one
+inline uint32_t answer_ms;       // the loader's last answer since the reset
 inline bool cleaned = false;     // we reset the loader this session, we always start from a clean one
 inline uint8_t clean_tries = 0;  // reset requests sent. A loader busy erasing can miss one
 inline bool fresh = false;       // saw the loader starting up, so it just booted with clean RAM
@@ -630,18 +631,25 @@ inline void pump() {
       else
         probed();
       break;
-    case RESET_WAIT:  // done once the loader stops answering or says it's starting, it missed the reset otherwise
-      if (got == R_STATUS && bl_state != ST_BOOT) {
+    // Done once the loader says it's starting or goes quiet. Else reset again after 2 s and 4 s, and give up 5 s
+    // after the third.
+    case RESET_WAIT:
+      if (got == R_STATUS && bl_state == ST_BOOT) {
+        finish(true);
+        return;
+      }
+      if (got == R_STATUS)
+        answer_ms = now;
+      if (now - answer_ms > 1200) {
+        finish(true);
+        return;
+      }
+      if (now - step_ms >= std::min<uint32_t>(2000u << reset_tries, 5000)) {
         if (++reset_tries >= 3) {  // the firmware's in already
           finish(true, "The new firmware is in, but the panel didn't restart. Power it off and on");
           return;
         }
         enter_phase(RESET);
-        break;
-      }
-      if ((got == R_STATUS && bl_state == ST_BOOT) || now - step_ms > 1500) {
-        finish(true);
-        return;
       }
       break;
     case WAIT_BL:
@@ -837,6 +845,7 @@ inline void pump() {
       send(BL_ADDR, SUB_RESET);  // no reply, it resets right away
       awaiting = false;
       enter_phase(RESET_WAIT);
+      answer_ms = step_ms;
       next_ms = now + 300;  // the ROM says "starting" for a moment after it reboots
       break;
     case RESET_WAIT:
