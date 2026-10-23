@@ -266,7 +266,7 @@ names, like `script.execute: {id: panel_notify, message: Hi, icon: bell, level: 
 | `panel_show_view` (`view`: dashboard, airflow, trends, sensors, comfort, smart_home) | Wakes the panel and opens that view |
 | `panel_set` (`setting`, `value`) | A panel setting, see the list in `panel.yaml`: theme, brightness, idle_after, screensaver, night hours, key_lock, language and more |
 | `panel_show_picture` (`name`), `panel_clear_picture` | The screensaver picture, same as the `Panel Picture` select |
-| `panel_show_animation` (`name`), `panel_clear_animation` (`name`, or none for all) | An animation over it, where its yaml puts it. The `Panel Animation` select shows one the same way, and picking another there replaces it; the action adds more alongside |
+| `panel_show_animation` (`name`), `panel_clear_animation` (`name`, or none for all) | An animation over it, where its yaml puts it, the same as its `Panel Animation <name>` switch. Any combination of them, within the panel's 6 KB |
 | `panel_place_animation` (`name`, `copy`, `x`, `y`, `own`, `start`), `panel_remove_animation` (`name`, `copy`) | The same animation in more places. Copy 0 is the one `panel_show_animation` shows, copy 1 and up are extra. They play in step and cost nothing extra, unless `own: true` gives the copy a frame of its own, which takes another w x h / 2 bytes of the 6 KB and starts `start` frames in |
 | `panel_move_animation` (`name`, `copy`, `x`, `y`, `ms`), `panel_drift_animation` (`name`, `copy`, `vx`, `vy`) | Glide a copy to `x`, `y` over `ms` (0 jumps, 65535 at most), or drift it at `vx`, `vy` pixels per second, wrapping round the screen; 0, 0 stops it. Drifting over a JPEG photo costs more redraws than over a palette picture, so keep it slow there |
 

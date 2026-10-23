@@ -1,7 +1,7 @@
 # An animated GIF from next to your config, played over the screensaver picture. The panel plays all its
 # animations from 6 KB, so keep them small. About 64x64 with a few frames, or more frames if little changes between
-# them. If it's too big at scale 1 it's made at half size and drawn 2x. Show it with the "Panel Animation" select
-# or the panel_show_animation action, and in more places with panel_place_animation.
+# them. If it's too big at scale 1 it's made at half size and drawn 2x. Each gets a "Panel Animation <name>" switch,
+# which the panel_show_animation and panel_clear_animation actions set too. More places with panel_place_animation.
 #   - path: packages/panel/animation.yaml
 #     vars: {name: flame, file: animations/flame.gif, resize: 48x48, x: 256, y: 16}
 # name: letters, digits and _ only
@@ -30,11 +30,25 @@ image:
     transparency: alpha_channel
     resize: ${resize}
 
-select:
-  - id: !extend panel_animation
-    options: ["${name}"]
+switch:
+  - platform: template
+    id: panel_anim_${name}
+    name: "Panel Animation ${name}"
+    icon: "mdi:animation-play"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - lambda: |-
+          if (flexit::panel::anim::sources.count("${name}"))  // before on_boot it is shown from there
+            flexit::panel::anim::show("${name}");
+    turn_off_action:
+      - lambda: flexit::panel::anim::clear("${name}");
 
 esphome:
   on_boot:
-    - then:
-        - lambda: flexit::panel::anim::add_animation("${name}", id(panel_animation_${name}), ${frame_ms}, ${x}, ${y}, ${scale}, ${drift_x}, ${drift_y});
+    - priority: -100
+      then:
+        - lambda: |-
+            flexit::panel::anim::add_animation("${name}", id(panel_animation_${name}), id(panel_anim_${name}), ${frame_ms}, ${x}, ${y}, ${scale}, ${drift_x}, ${drift_y});
+            if (id(panel_anim_${name}).state)
+              flexit::panel::anim::show("${name}");

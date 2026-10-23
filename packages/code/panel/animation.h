@@ -14,11 +14,13 @@
 
 namespace flexit::panel::anim {
 
-// x, y is where it goes on the screen, pixel(frame, x, y) gives 0xAARRGGBB, vx, vy a drift in px/s
+// x, y is where it goes on the screen, pixel(frame, x, y) gives 0xAARRGGBB, vx, vy a drift in px/s. flip sets its
+// switch, so it follows what the actions show and clear.
 struct Source {
   int w, h, frames, frame_ms, x, y, scale;
   std::function<uint32_t(int, int, int)> pixel;
   int vx = 0, vy = 0;
+  std::function<void(bool)> flip = {};
 };
 inline std::map<std::string, Source> sources;
 
@@ -32,17 +34,19 @@ inline void add(const std::string &name, Source s) {
   sources[name] = std::move(s);
 }
 
-// An animated GIF (animation.yaml)
-template<typename Img>
-void add_animation(const std::string &name, Img &&image, int frame_ms, int x, int y, int scale, int vx, int vy) {
+// An animated GIF (animation.yaml) and its switch
+template<typename Img, typename Sw>
+void add_animation(const std::string &name, Img &&image, Sw &&sw, int frame_ms, int x, int y, int scale, int vx,
+                   int vy) {
   auto *img = picture::ptr_of(image);
+  auto *s = picture::ptr_of(sw);
   add(name, {img->get_width(), img->get_height(), (int) img->get_animation_frame_count(), frame_ms, x, y, scale,
              [img](int f, int px, int py) -> uint32_t {
                img->set_frame(f);
                auto c = img->get_pixel(px, py);
                return (uint32_t) c.w << 24 | (uint32_t) c.r << 16 | (uint32_t) c.g << 8 | c.b;
              },
-             vx, vy});
+             vx, vy, [s](bool on) { s->publish_state(on); }});
 }
 
 // A copy on the panel: one of its places
@@ -78,7 +82,6 @@ struct Anim {
   size_t frame() const { return (size_t) w / 2 * h; }
 };
 inline Anim anims[ANIM_SLOTS];
-inline std::string selected;  // the Panel Animation select's, picking another replaces it
 
 // count() builds the palette from all frames, make() the records, send() sends them. One animation at a time.
 enum Phase { IDLE, COUNT, MAKE, SEND };
@@ -512,76 +515,43 @@ inline void drop_anim(Anim &a) {
   }
   if (a.state == SENT)
     send_clear((unsigned) (&a - anims));
-  if (selected == a.name)
-    selected.clear();
+  if (a.src->flip)
+    a.src->flip(false);
   a = Anim();
 }
-
-inline void clear_all() {
-  for (auto &a : anims)
-    if (!a.name.empty())
-      drop_anim(a);
-  send_clear(ANIM_ALL);
-  selected.clear();
-  status(shown());
-}
-
-inline void show(const std::string &name);
 
 // Clears one animation and all its copies, or all of them with no name
 inline void clear(const std::string &name) {
   if (name.empty() || name == "None") {
-    show("");  // through the select, so restore_value keeps None
-    return;
+    for (auto &a : anims)
+      if (!a.name.empty())
+        drop_anim(a);
+    send_clear(ANIM_ALL);
+  } else if (Anim *a = find(name)) {
+    drop_anim(*a);
   }
-  Anim *a = find(name);
-  if (!a)
-    return;
-  bool was_selected = selected == name;
-  drop_anim(*a);
-  int left = 0;
-  for (auto &o : anims)
-    left += !o.name.empty();
-  if (was_selected && !left)
-    show("");
-  else if (was_selected)
-    id(panel_animation).publish_state("None");
   status(shown());
 }
 
 inline void clear() { clear(""); }
 
-// The Panel Animation select's set_action: shows the one picked instead of the one picked before. "None" or ""
-// clears them all.
-inline void picked(const std::string &name) {
+// panel_show_animation and the switches: shows it where its yaml puts it, alongside the others. "" clears them all.
+inline void show(const std::string &name) {
   if (name.empty() || name == "None") {
-    clear_all();
+    clear("");
     return;
   }
-  if (!sources.count(name)) {
-    ESP_LOGW("panel", "No animation called '%s'", name.c_str());
-    return;
-  }
-  if (!selected.empty() && selected != name)
-    if (Anim *old = find(selected))
-      drop_anim(*old);
   Anim *a = add_anim(name);
-  if (a && a->state == FAILED) {  // once more
+  if (!a)
+    return;
+  if (a->state == FAILED) {  // once more
     a->state = WANT;
     a->half = false;
     picture::drop(a->data);
   }
-  selected = name;
+  if (a->src->flip)
+    a->src->flip(true);
   status(shown());
-}
-
-// panel_show_animation. Goes through the select when it has the name, so restore_value keeps it. "" is none.
-inline void show(const std::string &name) {
-  std::string o = name.empty() ? "None" : name;
-  if (id(panel_animation).has_option(o))
-    id(panel_animation).make_call().set_option(o).perform();
-  else
-    picked(o);
 }
 
 // The copy's motion goes out now if the panel has it, else with it once it's there
@@ -601,6 +571,8 @@ inline void place(const std::string &name, int i, int x, int y, bool own, int st
       return;
     if (i != 0 && !a->copies.empty())
       a->copies[0].used = false;  // only the copy asked for
+    if (a->src->flip)
+      a->src->flip(true);
   }
   Copy *c = copy_of(*a, i);
   if (!c)

@@ -29,15 +29,12 @@ esphome:
     - priority: 600
       then:
         - lambda: flexit::panel::setup(${panel_address});
-    - priority: -100                      # all pictures and animations are registered by now
+    - priority: -100                      # all pictures are registered by now, animation.yaml restores its own
       then:
         - lambda: |-
             auto p = id(panel_picture).current_option();
             if (!p.empty() && !(p == "None"))
               flexit::panel::picture::show(std::string(p.c_str(), p.size()));
-            auto a = id(panel_animation).current_option();
-            if (!a.empty() && !(a == "None"))
-              flexit::panel::anim::show(std::string(a.c_str(), a.size()));
 
 interval:
   # what the panel sent, its items, pictures and animations. A picture gets its own 16 colours and is compressed a
@@ -143,17 +140,6 @@ select:
     options: [None]
     set_action:
       - lambda: flexit::panel::picture::picked(std::string(x.c_str(), x.size()));
-  # one screensaver animation, picking another replaces it. packages/panel/animation.yaml adds its name to the
-  # options, the panel_show_animation action shows more alongside.
-  - platform: template
-    id: panel_animation
-    name: "Panel Animation"
-    icon: "mdi:animation-play"
-    optimistic: true
-    restore_value: true
-    options: [None]
-    set_action:
-      - lambda: flexit::panel::anim::picked(std::string(x.c_str(), x.size()));
 
 number:
   - platform: template
@@ -243,8 +229,8 @@ api:
     - action: panel_clear_picture
       then:
         - lambda: flexit::panel::picture::clear();
-    # an animation from packages/panel/animation.yaml, over the picture, where its yaml puts it. The panel holds 4
-    # at a time in 6 KB and shows them in up to 8 places. panel_clear_animation with no name clears them all.
+    # an animation from packages/panel/animation.yaml, over the picture, where its yaml puts it, like its switch.
+    # The panel holds 4 at a time in 6 KB and shows them in up to 8 places. No name clears them all.
     - action: panel_show_animation
       variables:
         name: string
