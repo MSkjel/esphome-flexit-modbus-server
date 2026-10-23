@@ -5,7 +5,8 @@
 # latitude and longitude go out with 4 decimals, as MET Norway asks. Every update_interval we check whether the
 # forecast has expired and only then ask again, with If-Modified-Since. ESPHome logs a 304 answer to that as a
 # failed request, but the forecast just hasn't changed. When refused or not answered we back off, from an hour
-# up to 12. The picture is redrawn every redraw_interval. name, encoding and quality work as in picture.yaml.
+# up to 12. The picture is redrawn every redraw_interval. name, encoding and quality work as in picture.yaml, but
+# encoding is palette here: the scene is flat colours, and trying JPEGs takes the ESP far longer.
 # "Panel Weather Scene" picks the landscape and starts at scene. "Panel Weather Aurora" starts at aurora, where auto
 # means some clear nights north of 55 degrees. "Panel Weather Forecast" draws the forecast over the picture.
 # The current weather is also a dashboard tile on the panel, under Display > Home screen > Dashboard tiles. It's
@@ -13,7 +14,7 @@
 # Weather data: MET Norway, CC BY 4.0.
 defaults:
   name: weather
-  encoding: auto
+  encoding: palette
   quality: auto
   update_interval: 5min
   redraw_interval: 5min
