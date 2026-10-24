@@ -383,7 +383,7 @@ api:
         rounds: int
       then:
         - lambda: flexit::panel::anim::rounds(name, copy, rounds);
-    # A panel setting, value in the panel's own units. theme 0-2, brightness 0-100, idle_brightness 0-100,
+    # A panel setting, value in the panel's own units. theme 0-2, brightness 0-100, idle_brightness 0-100 with 0 = dark,
     # idle_after 0-7 for 15 s to 30 min or never, screensaver 0-5, home_view 0-5, night 0/1, night_from and
     # night_to 0-23, night_brightness 0-100 when in use, night_idle_brightness 0-100 with 0 = dark, key_lock 0/1,
     # indoor_source 0 extract air / 1 the panel, clock_24h and key_hints 0/1, room_offset in 0.1 C,
