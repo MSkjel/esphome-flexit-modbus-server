@@ -4,7 +4,7 @@
 //
 //   0x001..0x00F  the link
 //   0x010..0x03F  panel settings the ESP sees, plink_values.h
-//   0x040..0x07F  the unit's values, plink_values.h
+//   0x040..0x07F  the unit's settings only the lowest address may write, plink_values.h
 //   0x080..0x09F  equipment, K_FEATURE + app/equipment.h's id
 //   0x0A0..0x0FF  panel settings only the panel has, app/values.h. Their keys only name them in its flash
 //   0x100..0x11F  the screensaver picture

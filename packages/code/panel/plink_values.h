@@ -1,5 +1,5 @@
-// Panel settings and unit values, known to both ends by key. Whatever the ESP adds itself is an item, see
-// plink_keys.h. One X() per value:
+// Panel settings, and the unit's settings the panel sends the ESP to write, known to both ends by key. Whatever the ESP
+// adds itself is an item, see plink_keys.h. One X() per value:
 //
 //   X(id, key, field, min, max, flags, cx60, scale)
 //
@@ -83,24 +83,11 @@ enum { LED_AUTO, LED_OFF, LED_ON, LED_BLINK };
     X(INDOOR_SOURCE,   0x034, M.indoor_source,      0, INDOOR_COUNT - 1, VF_PANEL, 0, 1) \
     X(ROOM_TEMP,       0x035, M.t_room,        -32768, 1000, VF_RO | VF_LINK_R, 0, 1) /* 0.1 C, INT16_MIN = none */ \
     X(FW_VERSION,      0x036, M.fw_version,         0, 0xFFFFFF, VF_RO | VF_LINK_R, 0, 1) /* maj<<16 | min<<8 | patch */ \
-    /* the unit */ \
-    X(MODE,            0x040, M.mode,               0, MODE_MAX,    VF_CX60 | VF_CMD | VF_LINK_RW, 0x000, 1) \
-    X(BOOST,           0x041, M.boost_on,           0, 1,    VF_CX60 | VF_CMD | VF_LINK_RW, 0, 1) /* commands 0x13A/0x13B */ \
-    X(BOOST_MINUTES,   0x042, M.boost_minutes,      0, 360,  VF_CX60 | VF_LINK_RW, 0x091, 1) \
-    X(SETPOINT,        0x043, M.setpoint,         100, 300,  VF_CX60 | VF_MASTER | VF_LINK_RW, 0x00C, 1) \
-    X(SUPPLY_MIN,      0x044, M.supply_min,        50, 250,  VF_CX60 | VF_LINK_RW, 0x00D, 1) \
-    X(SUPPLY_MAX,      0x045, M.supply_max,       150, 450,  VF_CX60 | VF_LINK_RW, 0x00E, 1) \
-    X(REGULATION,      0x046, M.regulation,         0, REG_COUNT - 1, VF_CX60 | VF_LINK_RW, 0x114, 1) \
-    X(HEATER,          0x047, M.heater_enabled,     0, 1,    VF_CX60 | VF_PER_PANEL | VF_LINK_RW, 0x13F, 1) \
-    X(COOLING,         0x048, M.cooling_enabled,    0, 1,    VF_CX60 | VF_LINK_RW, 0x115, 1) \
-    X(FAN_MIN_SUP,     0x049, M.fan_pct[0][0],     20, 100,  VF_CX60 | VF_LINK_RW, 0x002, 1) \
-    X(FAN_NORM_SUP,    0x04A, M.fan_pct[1][0],     20, 100,  VF_CX60 | VF_MASTER | VF_LINK_RW, 0x003, 1) \
-    X(FAN_MAX_SUP,     0x04B, M.fan_pct[2][0],     20, 100,  VF_CX60 | VF_LINK_RW, 0x004, 1) \
-    X(FAN_MIN_EXT,     0x04C, M.fan_pct[0][1],     20, 100,  VF_CX60 | VF_LINK_RW, 0x007, 1) \
-    X(FAN_NORM_EXT,    0x04D, M.fan_pct[1][1],     20, 100,  VF_CX60 | VF_MASTER | VF_LINK_RW, 0x008, 1) \
-    X(FAN_MAX_EXT,     0x04E, M.fan_pct[2][1],     20, 100,  VF_CX60 | VF_LINK_RW, 0x009, 1) \
-    X(FILTER_INTERVAL, 0x04F, M.filter_days,       30, 360,  VF_CX60 | VF_LINK_RW, 0x016, 1) /* days */ \
-    X(WEEK_PROGRAM,    0x050, M.week_program,       0, 1,    VF_CX60 | VF_LINK_RW, 0x117, 1)
+    /* the unit's settings the CX60 only takes from the lowest panel address. With the ESP at 1 that's the ESP, so */ \
+    /* ours sends them there. The unit's other values are in app/values.h and go on the bus */ \
+    X(SETPOINT,        0x043, M.setpoint,         100, 300,  VF_CX60 | VF_MASTER | VF_LINK_R, 0x00C, 1) \
+    X(FAN_NORM_SUP,    0x04A, M.fan_pct[1][0],     20, 100,  VF_CX60 | VF_MASTER | VF_LINK_R, 0x003, 1) \
+    X(FAN_NORM_EXT,    0x04D, M.fan_pct[1][1],     20, 100,  VF_CX60 | VF_MASTER | VF_LINK_R, 0x008, 1)
 // clang-format on
 
 // K_<id>: each value's key by name
