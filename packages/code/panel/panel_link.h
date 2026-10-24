@@ -1,4 +1,5 @@
-// Our end of the panel link. plink.h, pbulk.h and pbus.h are copied unchanged from the panel firmware's proto/.
+// Our end of the panel link. plink.h, pbulk.h and pbus.h, like the rest of proto/, are copied unchanged from the panel
+// firmware.
 //
 // Right after each CS60 status broadcast, about 9 times a second, we send the panel as many queued messages as fit,
 // even none, so it can answer with its own. While there's more to send, extra frames go in the gaps after polls.
@@ -149,8 +150,8 @@ inline bool send(uint16_t key, const uint8_t *b, int n) {
 }
 
 inline bool send(uint16_t key, uint32_t value) {
-  uint8_t b[4] = {(uint8_t) value, (uint8_t) (value >> 8), (uint8_t) (value >> 16), (uint8_t) (value >> 24)};
-  return send(key, b, 4);
+  uint8_t b[4];
+  return send(key, b, plink_put_number(b, value));
 }
 
 // After a hello, drop what's unsent except values. hello() sends the rest again.

@@ -17,10 +17,10 @@ extern "C" {
 enum { PLINK_VALUE, PLINK_EVENT, PLINK_BYTES };
 int plink_kind(uint16_t key);
 uint32_t plink_number(const uint8_t *b, int n);  // up to 4 bytes, low first
+int plink_put_number(uint8_t *out, uint32_t v);  // the other way round, without high zero bytes. Returns 0..4
 
 // ---- The panel's messages to the ESP, numbers only
 #define PLINK_QUEUE 32
-#define PLINK_NUMBER_BYTES 7  // a number in a payload: key (2), length, value (4)
 
 typedef struct {
   struct {

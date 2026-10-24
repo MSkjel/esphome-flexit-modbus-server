@@ -278,15 +278,32 @@ bool pbulk_esp_queued(const pbulk_esp_t *t, uint16_t key) {
   return false;
 }
 
+// Takes out the unsent message at `at`
+static void remove_msg(pbulk_esp_t *t, int at) {
+  int len = 3 + t->q[at + 2];
+  memmove(t->q + at, t->q + at + len, t->qn - at - len);
+  t->qn = (uint16_t) (t->qn - len);
+  t->last = t->last == at ? -1 : t->last > at ? (int16_t) (t->last - len) : t->last;
+}
+
+// The unsent message with this key, -1 if there's none
+static int unsent(const pbulk_esp_t *t, uint16_t key) {
+  for (int at = sent_bytes(t); at + 3 <= t->qn; at += 3 + t->q[at + 2])
+    if (get16(t->q + at) == key)
+      return at;
+  return -1;
+}
+
 bool pbulk_esp_send(pbulk_esp_t *t, uint16_t key, const uint8_t *b, int n, bool replace) {
   if (n < 0 || n > (key == PBULK_DATA_KEY ? 252 : PBULK_MSG_MAX) || (key == PBULK_DATA_KEY && n % 4))
     return false;  // DATA can be split, anything else has to fit the best window, or it would wait forever
-  if (replace && key != K_HELLO)  // a newer value for a message that hasn't gone out
-    for (int at = sent_bytes(t); at + 3 <= t->qn; at += 3 + t->q[at + 2])
-      if (get16(t->q + at) == key && t->q[at + 2] == n) {
-        memcpy(t->q + at + 3, b, n);
-        return true;
-      }
+  int old = replace || key == K_HELLO ? unsent(t, key) : -1;  // a newer value or HELLO replaces one still waiting
+  if (old >= 0 && key != K_HELLO && t->q[old + 2] == n) {
+    memcpy(t->q + old + 3, b, n);
+    return true;
+  }
+  if (old >= 0)
+    remove_msg(t, old);
   // picture bytes are appended to the DATA message before them
   if (key == PBULK_DATA_KEY && t->last >= 0 && get16(t->q + t->last) == PBULK_DATA_KEY &&
       t->q[t->last + 2] + n <= 252) {
@@ -297,18 +314,8 @@ bool pbulk_esp_send(pbulk_esp_t *t, uint16_t key, const uint8_t *b, int n, bool 
     t->q[t->last + 2] = (uint8_t) (t->q[t->last + 2] + n);
     return true;
   }
-  int at = t->qn;
-  if (key == K_HELLO) {  // ahead of the unsent messages, a restarted panel ignores everything before a HELLO
-    at = sent_bytes(t);
-    for (int i = at; i + 3 <= t->qn; i += 3 + t->q[i + 2])
-      if (get16(t->q + i) == K_HELLO) {  // the newer one replaces it
-        int len = 3 + t->q[i + 2];
-        memmove(t->q + i, t->q + i + len, t->qn - i - len);
-        t->qn = (uint16_t) (t->qn - len);
-        t->last = t->last == i ? -1 : t->last > i ? (int16_t) (t->last - len) : t->last;
-        break;
-      }
-  }
+  // a HELLO goes ahead of the unsent messages, a restarted panel ignores everything before one
+  int at = key == K_HELLO ? sent_bytes(t) : t->qn;
   if (t->qn + 3 + n > ESP_ROOM)
     return false;
   memmove(t->q + at + 3 + n, t->q + at, t->qn - at);

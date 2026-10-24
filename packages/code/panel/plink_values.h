@@ -54,32 +54,35 @@ enum { LED_AUTO, LED_OFF, LED_ON, LED_BLINK };
 
 // clang-format off: a table, laid out by hand
 #define PLINK_VALUES(X) \
-    /* panel settings */ \
+    /* display */ \
     X(THEME,           0x010, M.theme,              0, N_THEMES - 1, VF_PANEL | VF_LAYOUT, 0, 1) \
     X(BRIGHTNESS,      0x011, M.brightness,         0, 100,  VF_PANEL, 0, 1) \
-    X(IDLE_BRIGHTNESS, 0x012, M.idle_brightness,    0, 100,  VF_PANEL, 0, 1) \
+    X(IDLE_BRIGHTNESS, 0x012, M.idle_brightness,    0, 100,  VF_PANEL, 0, 1) /* 0 = off */ \
     X(IDLE_AFTER,      0x013, M.idle_after,         0, IDLE_STEPS - 1, VF_PANEL, 0, 1) \
     X(SCREENSAVER,     0x014, M.screensaver,        0, SAVER_COUNT - 1, VF_PANEL | VF_LAYOUT, 0, 1) \
     X(HOME_VIEW,       0x015, M.home_view,          0, VIEW_COUNT - 1, VF_PANEL, 0, 1) \
-    X(CLOCK_24H,       0x016, M.clock_24h,          0, 1,    VF_PANEL, 0, 1) \
-    X(KEY_HINTS,       0x017, M.key_hints,          0, 1,    VF_PANEL | VF_LAYOUT, 0, 1) \
-    X(BUS_ADDR,        0x019, M.bus_addr,           1, 3,    VF_SAVED | VF_LINK_R, 0, 1) \
-    X(LEDS,            0x01A, M.leds,               0, 0xFFFF, VF_LINK_W | VF_RO, 0, 1) \
-    X(ROOM_OFFSET,     0x01B, M.room_offset,      -90, 90,   VF_PANEL, 0, 1) \
-    X(ROOM_TEMP,       0x01C, M.t_room,        -32768, 1000, VF_RO | VF_LINK_R, 0, 1) /* 0.1 C, INT16_MIN = none */ \
-    X(FW_VERSION,      0x01D, M.fw_version,         0, 0xFFFFFF, VF_RO | VF_LINK_R, 0, 1) /* maj<<16 | min<<8 | patch */ \
-    X(NIGHT,           0x01E, M.night,              0, 1,    VF_PANEL, 0, 1) \
-    X(NIGHT_FROM,      0x01F, M.night_from,         0, 23,   VF_PANEL, 0, 1) \
-    X(NIGHT_TO,        0x025, M.night_to,           0, 23,   VF_PANEL, 0, 1) \
-    X(NIGHT_IDLE_BRIGHTNESS, 0x026, M.night_idle_brightness, 0, 100, VF_PANEL, 0, 1) /* 0 = off */ \
-    X(NIGHT_BRIGHTNESS, 0x02F, M.night_brightness,  0, 100,  VF_PANEL, 0, 1) /* used at night */ \
-    X(KEY_LOCK,        0x028, M.key_lock,           0, 1,    VF_PANEL, 0, 1) \
-    X(INDOOR_SOURCE,   0x029, M.indoor_source,      0, INDOOR_COUNT - 1, VF_PANEL, 0, 1) \
-    X(TILE1,           0x02A, M.tiles[0],           0, TILE_MAX, VF_PANEL | VF_LAYOUT, 0, 1) /* dashboard tiles */ \
-    X(TILE2,           0x02B, M.tiles[1],           0, TILE_MAX, VF_PANEL | VF_LAYOUT, 0, 1) \
-    X(TILE3,           0x02C, M.tiles[2],           0, TILE_MAX, VF_PANEL | VF_LAYOUT, 0, 1) \
-    X(TILE4,           0x02D, M.tiles[3],           0, TILE_MAX, VF_PANEL | VF_LAYOUT, 0, 1) \
-    X(LANGUAGE,        0x02E, M.language,           0, N_LANGS - 1, VF_PANEL | VF_LAYOUT, 0, 1) \
+    X(LANGUAGE,        0x016, M.language,           0, N_LANGS - 1, VF_PANEL | VF_LAYOUT, 0, 1) \
+    X(CLOCK_24H,       0x017, M.clock_24h,          0, 1,    VF_PANEL, 0, 1) \
+    X(KEY_HINTS,       0x018, M.key_hints,          0, 1,    VF_PANEL | VF_LAYOUT, 0, 1) \
+    /* night */ \
+    X(NIGHT,           0x020, M.night,              0, 1,    VF_PANEL, 0, 1) \
+    X(NIGHT_FROM,      0x021, M.night_from,         0, 23,   VF_PANEL, 0, 1) \
+    X(NIGHT_TO,        0x022, M.night_to,           0, 23,   VF_PANEL, 0, 1) \
+    X(NIGHT_BRIGHTNESS, 0x023, M.night_brightness,  0, 100,  VF_PANEL, 0, 1) \
+    X(NIGHT_IDLE_BRIGHTNESS, 0x024, M.night_idle_brightness, 0, 100, VF_PANEL, 0, 1) /* 0 = off */ \
+    /* dashboard tiles */ \
+    X(TILE1,           0x028, M.tiles[0],           0, TILE_MAX, VF_PANEL | VF_LAYOUT, 0, 1) \
+    X(TILE2,           0x029, M.tiles[1],           0, TILE_MAX, VF_PANEL | VF_LAYOUT, 0, 1) \
+    X(TILE3,           0x02A, M.tiles[2],           0, TILE_MAX, VF_PANEL | VF_LAYOUT, 0, 1) \
+    X(TILE4,           0x02B, M.tiles[3],           0, TILE_MAX, VF_PANEL | VF_LAYOUT, 0, 1) \
+    /* the panel */ \
+    X(BUS_ADDR,        0x030, M.bus_addr,           1, 3,    VF_SAVED | VF_LINK_R, 0, 1) \
+    X(KEY_LOCK,        0x031, M.key_lock,           0, 1,    VF_PANEL, 0, 1) \
+    X(LEDS,            0x032, M.leds,               0, 0xFFFF, VF_LINK_W | VF_RO, 0, 1) \
+    X(ROOM_OFFSET,     0x033, M.room_offset,      -90, 90,   VF_PANEL, 0, 1) \
+    X(INDOOR_SOURCE,   0x034, M.indoor_source,      0, INDOOR_COUNT - 1, VF_PANEL, 0, 1) \
+    X(ROOM_TEMP,       0x035, M.t_room,        -32768, 1000, VF_RO | VF_LINK_R, 0, 1) /* 0.1 C, INT16_MIN = none */ \
+    X(FW_VERSION,      0x036, M.fw_version,         0, 0xFFFFFF, VF_RO | VF_LINK_R, 0, 1) /* maj<<16 | min<<8 | patch */ \
     /* the unit */ \
     X(MODE,            0x040, M.mode,               0, MODE_MAX,    VF_CU60 | VF_CMD | VF_LINK_RW, 0x000, 1) \
     X(BOOST,           0x041, M.boost_on,           0, 1,    VF_CU60 | VF_CMD | VF_LINK_RW, 0, 1) /* commands 0x13A/0x13B */ \

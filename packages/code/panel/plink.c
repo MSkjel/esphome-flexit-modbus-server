@@ -91,6 +91,8 @@ int plink_kind(uint16_t key) {
   return def || text || word || val || key == K_ITEM_HELP ? PLINK_BYTES : PLINK_VALUE;
 }
 
+_Static_assert(N_ITEMS <= 0x40, "each kind of item has 0x40 keys");
+
 uint32_t plink_number(const uint8_t *b, int n) {
   uint32_t v = 0;
   for (int i = 0; i < n && i < 4; i++)
@@ -102,7 +104,19 @@ void plink_init(plink_t *l) { memset(l, 0, sizeof *l); }
 
 uint8_t plink_room(const plink_t *l) { return l->qn < PLINK_QUEUE - 1 ? (uint8_t) (PLINK_QUEUE - 1 - l->qn) : 0; }
 
-int plink_waiting(const plink_t *l) { return l->qn * PLINK_NUMBER_BYTES; }
+static int number_len(uint32_t v) {
+  int n = 0;
+  for (; v; v >>= 8)
+    n++;
+  return n;
+}
+
+int plink_waiting(const plink_t *l) {
+  int n = 0;
+  for (int k = 0; k < l->qn; k++)
+    n += 3 + number_len(l->q[k].value);
+  return n;
+}
 
 bool plink_send(plink_t *l, uint16_t key, uint32_t value) {
   int i = -1;  // a newer value or help request replaces one still waiting
@@ -135,14 +149,20 @@ void plink_forget(plink_t *l) {
   l->qn = (uint8_t) k;
 }
 
+int plink_put_number(uint8_t *out, uint32_t v) {
+  int n = number_len(v);
+  for (int i = 0; i < n; i++)
+    out[i] = (uint8_t) (v >> (8 * i));
+  return n;
+}
+
 int plink_pack(plink_t *l, uint8_t *out, int max) {
   int n = 0, k = 0;
-  for (; k < l->qn && n + PLINK_NUMBER_BYTES <= max; k++) {  // key, length 4, value, low bytes first
+  for (; k < l->qn && n + 3 + number_len(l->q[k].value) <= max; k++) {  // key, length, value
     out[n++] = l->q[k].key & 0xFF;
     out[n++] = l->q[k].key >> 8;
-    out[n++] = 4;
-    for (int b = 0; b < 4; b++)
-      out[n++] = (uint8_t) (l->q[k].value >> (8 * b));
+    out[n] = (uint8_t) plink_put_number(out + n + 1, l->q[k].value);
+    n += 1 + out[n];
   }
   memmove(&l->q[0], &l->q[k], (l->qn - k) * sizeof l->q[0]);
   l->qn = (uint8_t) (l->qn - k);
