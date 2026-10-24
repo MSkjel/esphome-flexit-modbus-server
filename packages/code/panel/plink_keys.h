@@ -22,6 +22,9 @@
 #define K_ACTION 0x003     // ESP -> panel: run action A_*. Panel -> ESP: the user ran it
 #define K_SHOW_VIEW 0x004  // ESP -> panel: show home view VIEW_*
 #define K_NOTIFY 0x005     // ESP -> panel: a notification with icon, level (NOTE_*) and text
+// ESP -> panel: reg << 16 | value, a CX60 register the ESP has seen since it started. It sends them all after the
+// panel's HELLO_ASK, and the panel takes them as if the CX60 sent them, so it has what changed while it was away.
+#define K_CX60_REG 0x006
 enum { NOTE_INFO, NOTE_WARNING, NOTE_ALARM };
 #define PLINK_TEXT_MAX 64  // max bytes of UTF-8 in a text
 

@@ -421,10 +421,11 @@ bool FlexitModbusServer::keep_ours_(uint16_t reg, uint16_t before) {
 
 // The CS60 wrote a register, so it has that value now
 void FlexitModbusServer::bus_written_(uint16_t reg, uint16_t before) {
+  uint16_t now = mb_.getHoldingRegister(reg);
+  register_callback_.call(reg, now);
   int i = slot_(reg);
   if (i < 0)
     return;
-  uint16_t now = mb_.getHoldingRegister(reg);
   if (now != before)
     set_real_(i, reg, now);
   if (now == saved_.values[i])

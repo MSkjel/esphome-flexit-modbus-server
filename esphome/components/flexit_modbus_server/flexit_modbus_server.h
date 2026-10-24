@@ -167,7 +167,7 @@ enum HoldingRegisterIndex {
   REG_CMD_DEICING_FAN_REDUCTION_TEMP = 0x15A,  // x0.1 C, signed
   REG_CMD_DEICING_ROTOR_SPEED = 0x15B,         // 15-180
 
-  MAX_NUM_HOLDING_REGISTERS = 0x160
+  MAX_NUM_HOLDING_REGISTERS = 0x169  // all the CI600 has, some CX60 versions use those past 0x15F
 };
 
 /**
@@ -283,6 +283,11 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
   ///        temporary or from a panel via the CS60. Not for temporary values or restore().
   void add_on_setting_callback(std::function<void(uint16_t, uint16_t)> &&callback) {
     setting_callback_.add(std::move(callback));
+  }
+
+  /// @brief Called with register and value for every register the CS60 writes, settings or not.
+  void add_on_register_callback(std::function<void(uint16_t, uint16_t)> &&callback) {
+    register_callback_.add(std::move(callback));
   }
 
   /// @brief Called every loop after the bus is read, after the status callback.
@@ -444,6 +449,7 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
   CallbackManager<void()> status_callback_;
   CallbackManager<void()> read_callback_;
   CallbackManager<void(uint16_t, uint16_t)> setting_callback_;
+  CallbackManager<void(uint16_t, uint16_t)> register_callback_;
   uint8_t other_addr_{0};
   size_t (*other_len_)(const uint8_t *, size_t){nullptr};  // set_frame_length
 

@@ -66,6 +66,7 @@ unsigned plink_anim_record(const uint8_t *prev, const uint8_t *cur, unsigned w, 
 int plink_kind(uint16_t key) {
   switch (key) {
     case K_ACTION:
+    case K_CX60_REG:
     case K_PIC_END:
     case K_PIC_ACK:
     case K_PIC_CLEAR:
