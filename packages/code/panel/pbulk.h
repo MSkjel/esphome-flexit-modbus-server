@@ -1,6 +1,6 @@
 // Link frames between the ESP and the panel. They carry the plink.h messages both ways, in order and without loss.
-// The ESP starts one transaction every cycle in the CU60's quiet time, just a poll if it has nothing to send, and
-// more in the gaps after the CU60's polls while it has more.
+// The ESP starts one transaction every cycle in the CX60's quiet time, just a poll if it has nothing to send, and
+// more in the gaps after the CX60's polls while it has more.
 //
 //   ESP -> panel   F7 66 n panel esess num psess pnext payload[n] crc          n <= PBULK_MAX
 //   panel -> ESP   F7 67 n esess enext status psess pnum want payload[n] crc   n <= PBULK_ANSWER_MAX
@@ -132,7 +132,7 @@ bool pbulk_esp_queued(const pbulk_esp_t *t, uint16_t key);  // one with this key
 // everything has to be off the bus. Builds a frame or a poll in out, PBULK_FRAME_MAX bytes with the CRC, and
 // returns its length. 0 if not even a poll fits or the panel refused.
 int pbulk_esp_window(pbulk_esp_t *t, uint32_t left_us, uint8_t *out);
-// Time left in a gap after a CU60 poll for a frame starting now, 0 = don't send.
+// Time left in a gap after a CX60 poll for a frame starting now, 0 = don't send.
 uint32_t pbulk_esp_gap_left(const pbulk_esp_t *t, pbus_gaps_t *g, uint32_t now_us);
 // The last frame got no answer. A window finds that out itself, this frees the gaps for frames sooner.
 void pbulk_esp_no_answer(pbulk_esp_t *t);

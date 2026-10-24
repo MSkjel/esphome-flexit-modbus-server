@@ -1,5 +1,5 @@
 // Flashes the CI600 panel over the bus through its stock bootloader, from stock or our firmware. No SWD or jumper.
-// First it probes the panel like the CU60 does at discovery, and only flashes stock 7.x or ours, and ours only
+// First it probes the panel like the CX60 does at discovery, and only flashes stock 7.x or ours, and ours only
 // when the file is another version unless forced. Also finds one stuck in its bootloader after a failed flash.
 #pragma once
 #include "esphome/core/log.h"
@@ -67,7 +67,7 @@ static constexpr uint8_t EXC_BUSY = 6;
 static constexpr size_t PIECE = 240;                // stream bytes per sub-4 frame, max 249
 static constexpr size_t MIN_PIECE = 128;            // shortest last piece, see piece_len
 static constexpr uint32_t REPLY_TIMEOUT_MS = 30;    // the loader answers within ~2 ms if it answers at all
-static constexpr uint32_t PROBE_TIMEOUT_MS = 100;   // what the CU60 gives a panel at discovery
+static constexpr uint32_t PROBE_TIMEOUT_MS = 100;   // what the CX60 gives a panel at discovery
 static constexpr uint32_t POLL_GAP_MS = 10;         // between status polls while the loader is working
 static constexpr uint32_t WORK_TIMEOUT_MS = 90000;  // the loader erases on the first piece and goes quiet for seconds
 static constexpr uint32_t TOTAL_TIMEOUT_MS = 20 * 60000;
@@ -180,7 +180,7 @@ inline void send(uint8_t addr, uint8_t sub, const uint8_t *data = nullptr, size_
   last_sub = sub;
 }
 
-// [addr 04 00 00 00 04 crc], the CU60's discovery read of input registers 0..3
+// [addr 04 00 00 00 04 crc], the CX60's discovery read of input registers 0..3
 inline void send_probe(uint8_t addr) {
   uint8_t f[8] = {addr, 0x04, 0, 0, 0, 4};
   send_raw(f, 6);

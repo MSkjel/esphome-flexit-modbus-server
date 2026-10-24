@@ -32,7 +32,7 @@ struct Value {
   const char *id;
   uint16_t key;
   int32_t min, max;
-  uint16_t flags, cu60, scale;
+  uint16_t flags, cx60, scale;
 };
 #define VALUE(id, key, field, lo, hi, fl, reg, sc) {#id, key, lo, hi, fl, reg, sc},
 static const Value VALUES[] = {PLINK_VALUES(VALUE)};
@@ -50,7 +50,7 @@ inline std::string note;
 inline bool note_queued;     // it's in the link's queue
 inline uint16_t note_psess;  // the panel's session at its last hello, the one the note is for
 
-// CU60 settings we've seen change since we started, see hello()
+// CX60 settings we've seen change since we started, see hello()
 inline std::bitset<0x200> changed;
 
 inline void notify(const std::string &message, const std::string &icon_name, const std::string &level) {
@@ -73,7 +73,7 @@ inline void show_view(const std::string &view) {
 // panel had reported it. The LEDs only go by their selects, which hello() sends again.
 inline void set(const std::string &setting, int value) {
   for (auto &v : VALUES)
-    if ((v.flags & VF_LINK_W) && !(v.flags & (VF_CU60 | VF_ESP)) && v.key != K_LEDS && lower(v.id) == setting) {
+    if ((v.flags & VF_LINK_W) && !(v.flags & (VF_CX60 | VF_ESP)) && v.key != K_LEDS && lower(v.id) == setting) {
       if (value < v.min || value > v.max) {
         ESP_LOGW("panel", "%s: %d to %d, not %d", setting.c_str(), (int) v.min, (int) v.max, value);
         return;
@@ -107,9 +107,9 @@ inline void send_leds() {
 inline void hello(bool asked) {
   if (asked)
     for (auto &v : VALUES)
-      if ((v.flags & (VF_CU60 | VF_CMD | VF_PER_PANEL)) == VF_CU60 && changed[v.cu60])
+      if ((v.flags & (VF_CX60 | VF_CMD | VF_PER_PANEL)) == VF_CX60 && changed[v.cx60])
         link::send(v.key,
-                   (uint32_t) (id(server).read_holding_register((flexit_modbus_server::HoldingRegisterIndex) v.cu60) /
+                   (uint32_t) (id(server).read_holding_register((flexit_modbus_server::HoldingRegisterIndex) v.cx60) /
                                v.scale));
   send_leds();
   send_time();
@@ -190,7 +190,7 @@ inline void setup(uint8_t panel_address) {
   // The CS60 only takes these from the lowest panel address, which is us, so the panel asks us to write them.
   for (auto &v : VALUES)
     if (v.flags & VF_MASTER) {
-      uint16_t reg = v.cu60, scale = v.scale;
+      uint16_t reg = v.cx60, scale = v.scale;
       h[v.key] = [reg, scale](uint32_t x) {
         ESP_LOGI("panel", "Panel sets 0x%03X to %d", reg, (int) (int16_t) x);
         id(server).send_cmd((flexit_modbus_server::HoldingRegisterIndex) reg, (uint16_t) (x * scale));

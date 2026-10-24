@@ -1,4 +1,4 @@
-// CU60 bus timing for the link, see pbus.h
+// CX60 bus timing for the link, see pbus.h
 #include "pbus.h"
 #include <string.h>
 
@@ -46,10 +46,10 @@ int pbus_status_part(const uint8_t *buf, int n) {
   return 0;
 }
 
-// Length of the CU60 frame at the start of f[n], 0 if none. The CU60 sends broadcasts with FC 6, 16 and 0x65 to
+// Length of the CX60 frame at the start of f[n], 0 if none. The CX60 sends broadcasts with FC 6, 16 and 0x65 to
 // address 0, and requests to panels with FC 1, 3, 4 to address 1-3 from register 0x000-0x1FF. A reply has its
 // byte count where the register's high byte would be.
-static int cu60_len(const uint8_t *f, int n) {
+static int cx60_len(const uint8_t *f, int n) {
   if (n < 8)
     return 0;
   int len = f[1] == 0x10 ? f[6] + 9 : 8;
@@ -60,7 +60,7 @@ static int cu60_len(const uint8_t *f, int n) {
   return broadcast || request ? len : 0;
 }
 
-bool pbus_is_cu60(const uint8_t *f, int n) { return cu60_len(f, n) > 0; }
+bool pbus_is_cx60(const uint8_t *f, int n) { return cx60_len(f, n) > 0; }
 
 uint32_t pbus_since_status(uint32_t dt_us, int k, int rx_threshold, uint32_t isr_us) {
   // 86.806 us per byte, rounded so the result can't come out too small.
@@ -81,7 +81,7 @@ uint32_t pbus_status_left(uint32_t age_us, uint32_t end_us) {
   return age_us < end_us - PBUS_ESP_START_US ? end_us - PBUS_ESP_START_US - age_us : 0;
 }
 
-// One more check of the CU60's timing. bad sets *off, and base good checks in a row clear it. That count doubles
+// One more check of the CX60's timing. bad sets *off, and base good checks in a row clear it. That count doubles
 // each time it's set again, up to 128x.
 static void judge(bool *off, uint8_t *times, uint32_t *clean, bool bad, uint32_t base) {
   if (bad) {
@@ -115,12 +115,12 @@ static uint32_t end_for(const pbus_panel_t *w) {
 static bool recent(const pbus_panel_t *w, uint32_t now_ms) { return w->after_status && now_ms - w->status_ms < 1000; }
 
 void pbus_panel_burst(pbus_panel_t *w, const uint8_t *b, int n, uint32_t start_us, uint32_t idle_us, uint32_t now_ms) {
-  if (recent(w, now_ms) && pbus_is_cu60(b, n)) {  // the CU60's next frame, not a late reply from a server
+  if (recent(w, now_ms) && pbus_is_cx60(b, n)) {  // the CX60's next frame, not a late reply from a server
     uint32_t us = start_us - w->status_end_us;
     // only if the 1 ms tick agrees, in case the microsecond clock was off, like after a debugger halted the chip
     if (us + 2000 >= (now_ms - w->status_ms) * 1000) {
       bool was = w->refused;
-      judge(&w->refused, &w->refusals, &w->clean, us < PBUS_CU60_MIN_US, PBUS_REARM);
+      judge(&w->refused, &w->refusals, &w->clean, us < PBUS_CX60_MIN_US, PBUS_REARM);
       if (was && !w->refused)  // let back in, measure again
         w->quiet_n = 0;
       if (us < w->quiet_min_us || !w->quiet_n)
@@ -150,7 +150,7 @@ uint32_t pbus_panel_window(pbus_panel_t *w, uint32_t idle_us, uint32_t now_ms, u
   return left;
 }
 
-// ---------------------------------------------------------------- gaps after the CU60's polls
+// ---------------------------------------------------------------- gaps after the CX60's polls
 
 void pbus_gaps_frame(pbus_gaps_t *g, const uint8_t *f, int n, uint32_t start_lo_us, uint32_t start_hi_us) {
   // One frame at a time on the bus, so it started after the last one ended. Tighter than a late read can tell.
@@ -161,10 +161,10 @@ void pbus_gaps_frame(pbus_gaps_t *g, const uint8_t *f, int n, uint32_t start_lo_
   if (n >= 1 && f[0] == PBUS_LINK_ADDR)
     return;                                // a link frame
   bool ok = pbus_crc_ok(f, n);             // one whole frame with its CRC at the end
-  bool probe = ok && n == 8 && f[1] == 4;  // the CU60 looking for panels, also at address 0xFE
-  bool cu60 = probe || cu60_len(f, n) == n;
+  bool probe = ok && n == 8 && f[1] == 4;  // the CX60 looking for panels, also at address 0xFE
+  bool cx60 = probe || cx60_len(f, n) == n;
   g->open = false;
-  if (cu60) {
+  if (cx60) {
     if (g->armed)  // did it come back sooner than its steps say?
       judge(&g->off, &g->offs, &g->clean,
             (int32_t) (start_hi_us - g->req_us) < (int32_t) (g->next_us - PBUS_GAP_EARLY_US), PBUS_GAP_REARM);
@@ -193,7 +193,7 @@ void pbus_gaps_frame(pbus_gaps_t *g, const uint8_t *f, int n, uint32_t start_lo_
     g->probing = true;
     g->cycles = 0;
   }
-  if (cu60) {
+  if (cx60) {
     uint16_t from = (uint16_t) (f[2] << 8 | f[3]);
     bool poll = f[1] == 1 && f[0] >= 1 && f[0] <= 3 && (from == 0 || from == 0x14C);
     if (poll) {
@@ -213,7 +213,7 @@ void pbus_gaps_frame(pbus_gaps_t *g, const uint8_t *f, int n, uint32_t start_lo_
     g->step_hi_us = start_hi_us;
     return;
   }
-  // A reply to the poll that flags nothing the CU60 would ask about next. The counters poll looks at the first
+  // A reply to the poll that flags nothing the CX60 would ask about next. The counters poll looks at the first
   // 20 coils, the settings poll at all of them.
   if (!a || f[0] != a || f[1] != 1 || f[2] + 5 != n || g->cycles < 2)
     return;

@@ -1,25 +1,25 @@
 // Panel settings and unit values, known to both ends by key. Whatever the ESP adds itself is an item, see
 // plink_keys.h. One X() per value:
 //
-//   X(id, key, field, min, max, flags, cu60, scale)
+//   X(id, key, field, min, max, flags, cx60, scale)
 //
 //   id     V_<id> on the panel. The ESP's name for it is the id in lower case
 //   key    message key, also what it's saved under in the panel's flash
 //   field  where the panel keeps it, the ESP ignores it
 //   flags  VF_* below
-//   cu60   CU60 register that holds it, for VF_CU60. scale = register value per unit
+//   cx60   CX60 register that holds it, for VF_CX60. scale = register value per unit
 #pragma once
 #include "plink_keys.h"
 
 #define VF_SAVED 0x01      // kept in the panel's flash
-#define VF_CU60 0x02       // lives in the CU60, written over the bus
-#define VF_MASTER 0x04     // the CU60 only takes it from the lowest panel address, other panels send it via the ESP
+#define VF_CX60 0x02       // lives in the CX60, written over the bus
+#define VF_MASTER 0x04     // the CX60 only takes it from the lowest panel address, other panels send it via the ESP
 #define VF_ESP 0x08        // an ESP item. A change on the panel is only a request, the ESP answers with the new state
 #define VF_LINK_R 0x10     // the ESP is told when it changes
 #define VF_LINK_W 0x20     // the ESP may set it
 #define VF_RO 0x40         // shown but never edited on the panel
-#define VF_PER_PANEL 0x80  // one register per panel address, cu60 + address - 1
-#define VF_CMD 0x100       // command register, written but never read back. The CU60 broadcasts it as 0
+#define VF_PER_PANEL 0x80  // one register per panel address, cx60 + address - 1
+#define VF_CMD 0x100       // command register, written but never read back. The CX60 broadcasts it as 0
 #define VF_LAYOUT 0x200    // the screen is rebuilt when it changes
 #define VF_CLOCK 0x400     // the panel's clock, kept by the RTC
 #define VF_LINK_RW (VF_LINK_R | VF_LINK_W)
@@ -31,7 +31,7 @@
 #define N_LANGS 2     // English, Norwegian (ui/lang.c)
 #define IDLE_STEPS 8  // IDLE_AFTER steps, 15 s .. 30 min, then never. See idle_seconds()
 enum { MODE_STOP, MODE_MIN, MODE_NORMAL, MODE_MAX, MODE_COUNT };
-enum { REG_EXTRACT, REG_SUPPLY, REG_COUNT };          // which temperature the setpoint is for, CU60 0x114
+enum { REG_EXTRACT, REG_SUPPLY, REG_COUNT };          // which temperature the setpoint is for, CX60 0x114
 enum { INDOOR_EXTRACT, INDOOR_PANEL, INDOOR_COUNT };  // where the indoor temperature comes from
 enum { SAVER_OFF, SAVER_CLOCK, SAVER_CLOCK_TEMPS, SAVER_PIC, SAVER_PIC_CLOCK, SAVER_PIC_ALL, SAVER_COUNT };
 // What a dashboard tile shows: one of the unit's values, or TILE_ITEM + the id of an ESP item
@@ -84,23 +84,23 @@ enum { LED_AUTO, LED_OFF, LED_ON, LED_BLINK };
     X(ROOM_TEMP,       0x035, M.t_room,        -32768, 1000, VF_RO | VF_LINK_R, 0, 1) /* 0.1 C, INT16_MIN = none */ \
     X(FW_VERSION,      0x036, M.fw_version,         0, 0xFFFFFF, VF_RO | VF_LINK_R, 0, 1) /* maj<<16 | min<<8 | patch */ \
     /* the unit */ \
-    X(MODE,            0x040, M.mode,               0, MODE_MAX,    VF_CU60 | VF_CMD | VF_LINK_RW, 0x000, 1) \
-    X(BOOST,           0x041, M.boost_on,           0, 1,    VF_CU60 | VF_CMD | VF_LINK_RW, 0, 1) /* commands 0x13A/0x13B */ \
-    X(BOOST_MINUTES,   0x042, M.boost_minutes,      0, 360,  VF_CU60 | VF_LINK_RW, 0x091, 1) \
-    X(SETPOINT,        0x043, M.setpoint,         100, 300,  VF_CU60 | VF_MASTER | VF_LINK_RW, 0x00C, 1) \
-    X(SUPPLY_MIN,      0x044, M.supply_min,        50, 250,  VF_CU60 | VF_LINK_RW, 0x00D, 1) \
-    X(SUPPLY_MAX,      0x045, M.supply_max,       150, 450,  VF_CU60 | VF_LINK_RW, 0x00E, 1) \
-    X(REGULATION,      0x046, M.regulation,         0, REG_COUNT - 1, VF_CU60 | VF_LINK_RW, 0x114, 1) \
-    X(HEATER,          0x047, M.heater_enabled,     0, 1,    VF_CU60 | VF_PER_PANEL | VF_LINK_RW, 0x13F, 1) \
-    X(COOLING,         0x048, M.cooling_enabled,    0, 1,    VF_CU60 | VF_LINK_RW, 0x115, 1) \
-    X(FAN_MIN_SUP,     0x049, M.fan_pct[0][0],     20, 100,  VF_CU60 | VF_LINK_RW, 0x002, 1) \
-    X(FAN_NORM_SUP,    0x04A, M.fan_pct[1][0],     20, 100,  VF_CU60 | VF_MASTER | VF_LINK_RW, 0x003, 1) \
-    X(FAN_MAX_SUP,     0x04B, M.fan_pct[2][0],     20, 100,  VF_CU60 | VF_LINK_RW, 0x004, 1) \
-    X(FAN_MIN_EXT,     0x04C, M.fan_pct[0][1],     20, 100,  VF_CU60 | VF_LINK_RW, 0x007, 1) \
-    X(FAN_NORM_EXT,    0x04D, M.fan_pct[1][1],     20, 100,  VF_CU60 | VF_MASTER | VF_LINK_RW, 0x008, 1) \
-    X(FAN_MAX_EXT,     0x04E, M.fan_pct[2][1],     20, 100,  VF_CU60 | VF_LINK_RW, 0x009, 1) \
-    X(FILTER_INTERVAL, 0x04F, M.filter_days,       30, 360,  VF_CU60 | VF_LINK_RW, 0x016, 1) /* days */ \
-    X(WEEK_PROGRAM,    0x050, M.week_program,       0, 1,    VF_CU60 | VF_LINK_RW, 0x117, 1)
+    X(MODE,            0x040, M.mode,               0, MODE_MAX,    VF_CX60 | VF_CMD | VF_LINK_RW, 0x000, 1) \
+    X(BOOST,           0x041, M.boost_on,           0, 1,    VF_CX60 | VF_CMD | VF_LINK_RW, 0, 1) /* commands 0x13A/0x13B */ \
+    X(BOOST_MINUTES,   0x042, M.boost_minutes,      0, 360,  VF_CX60 | VF_LINK_RW, 0x091, 1) \
+    X(SETPOINT,        0x043, M.setpoint,         100, 300,  VF_CX60 | VF_MASTER | VF_LINK_RW, 0x00C, 1) \
+    X(SUPPLY_MIN,      0x044, M.supply_min,        50, 250,  VF_CX60 | VF_LINK_RW, 0x00D, 1) \
+    X(SUPPLY_MAX,      0x045, M.supply_max,       150, 450,  VF_CX60 | VF_LINK_RW, 0x00E, 1) \
+    X(REGULATION,      0x046, M.regulation,         0, REG_COUNT - 1, VF_CX60 | VF_LINK_RW, 0x114, 1) \
+    X(HEATER,          0x047, M.heater_enabled,     0, 1,    VF_CX60 | VF_PER_PANEL | VF_LINK_RW, 0x13F, 1) \
+    X(COOLING,         0x048, M.cooling_enabled,    0, 1,    VF_CX60 | VF_LINK_RW, 0x115, 1) \
+    X(FAN_MIN_SUP,     0x049, M.fan_pct[0][0],     20, 100,  VF_CX60 | VF_LINK_RW, 0x002, 1) \
+    X(FAN_NORM_SUP,    0x04A, M.fan_pct[1][0],     20, 100,  VF_CX60 | VF_MASTER | VF_LINK_RW, 0x003, 1) \
+    X(FAN_MAX_SUP,     0x04B, M.fan_pct[2][0],     20, 100,  VF_CX60 | VF_LINK_RW, 0x004, 1) \
+    X(FAN_MIN_EXT,     0x04C, M.fan_pct[0][1],     20, 100,  VF_CX60 | VF_LINK_RW, 0x007, 1) \
+    X(FAN_NORM_EXT,    0x04D, M.fan_pct[1][1],     20, 100,  VF_CX60 | VF_MASTER | VF_LINK_RW, 0x008, 1) \
+    X(FAN_MAX_EXT,     0x04E, M.fan_pct[2][1],     20, 100,  VF_CX60 | VF_LINK_RW, 0x009, 1) \
+    X(FILTER_INTERVAL, 0x04F, M.filter_days,       30, 360,  VF_CX60 | VF_LINK_RW, 0x016, 1) /* days */ \
+    X(WEEK_PROGRAM,    0x050, M.week_program,       0, 1,    VF_CX60 | VF_LINK_RW, 0x117, 1)
 // clang-format on
 
 // K_<id>: each value's key by name
