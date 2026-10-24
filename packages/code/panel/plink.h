@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define PLINK_VERSION 1
+#define PLINK_VERSION 2
 
 // Message kinds. A newer VALUE replaces one still waiting, but every EVENT counts. BYTES are texts and pictures,
 // every one counts too.
