@@ -2,7 +2,6 @@
 
 This project implements a Modbus server for Flexit ventilation systems using ESPHome.  
 **No Flexit CI66 adapter is required.**  
-> **Note:** This is a work in progress and does not yet support all Flexit CS60 sensors or switches.
 
 ---
 
@@ -519,10 +518,6 @@ A Python script for monitoring and decoding the TCP bridge traffic is included i
 </details>
 
 ---
-
-## TODO
-
-- Add support for more sensors and switches
 
 ## License
 
