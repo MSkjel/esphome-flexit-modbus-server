@@ -436,7 +436,7 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
     FlexitModbusServer *server_;
   };
 
-  /// @brief The new Modbus RTU server object.
+  /// @brief The Modbus RTU server.
   ModbusRTUServer mb_;
   UartPort port_{this};
 

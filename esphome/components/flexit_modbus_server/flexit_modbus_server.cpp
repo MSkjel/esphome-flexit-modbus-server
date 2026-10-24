@@ -96,7 +96,7 @@ void FlexitModbusServer::dump_config() {
 }
 
 void FlexitModbusServer::setup() {
-  // Initialize the new ModbusRTUServer instance using our UART port,
+  // Initialize the ModbusRTUServer instance using our UART port,
   // the baud rate from our UART parent, the server address, and the maximum number
   // of coils and holding registers.
   mb_.begin(&port_, baudRate(), server_address_, tx_enable_pin_, tx_enable_direct_, MAX_NUM_COILS,

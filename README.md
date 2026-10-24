@@ -34,7 +34,6 @@ This project implements a Modbus server for Flexit ventilation systems using ESP
 
 ## Limitations
 
-- **Supply Air Temperature:** Can only be set if no CI600 is connected (CS60 limitation).
 - **Startup Order:** ESP must be powered on before CS60, or CS60 won’t poll it.
 - **Settings read-back:** Settings are read from what the CS60 broadcasts: all of them when the CS60 starts, and every change made from any panel. The ESP writes each change to flash right away and loads them on boot (all but the week program's slot times, speeds and temperatures). A change made on a CI600 while the ESP is off or restarting isn't heard: it shows the old value until it changes again or the CS60 restarts, and a boost may put the old value back. On a fresh install, or after an update that changes which settings are saved (the log warns about it), the settings show up once the CS60 has restarted with the ESP running, and boosts wait until then. A boost running during such an update leaves its mode and fan speeds in the CS60, so set those back by hand.
 - **Runtime counters:** The CS60 only sends a counter word when it changes, so the ESP saves them to flash and loads them on boot. On a fresh install they show as unknown until the CS60 has sent both words (at the latest when it restarts). The filter's high word comes from the CS60's status hours, which also correct the filter and total after the ESP was off. The others can be short by multiples of 18 h after a long ESP outage, until the CS60 restarts.
