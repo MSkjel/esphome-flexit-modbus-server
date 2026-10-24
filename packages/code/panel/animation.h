@@ -925,6 +925,13 @@ inline void gone(uint32_t v) {
 
 // every 20 ms
 inline void loop() {
+  if (!link::connected && (W.phase == COUNT || W.phase == MAKE)) {  // nothing is made without the panel
+    W.a->state = WANT;
+    picture::drop(W.a->data);
+    W.phase = IDLE;
+    W.a = nullptr;
+    drop_work();
+  }
   if (W.phase == IDLE) {
     if (!link::connected)
       return;

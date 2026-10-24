@@ -9,6 +9,9 @@
 #include <string>
 #include "animation.h"
 #include "items.h"
+
+// True while update.h has the panel in its bootloader. Weak, the harness builds without update.h.
+extern "C" bool flexit_panel_in_bootloader() __attribute__((weak));
 #include "panel_link.h"
 #include "picture.h"
 #include "plink.h"
@@ -202,11 +205,17 @@ inline void setup(uint8_t panel_address) {
 inline void loop() {
   static int last_hour = -1;  // local hour when the time was last sent
 
-  bool connected = link::online() && compatible;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Waddress"  // update.h is always there on the ESP
+  bool flashing = flexit_panel_in_bootloader && flexit_panel_in_bootloader();
+#pragma GCC diagnostic pop
+  bool connected = link::online() && compatible && !flashing;
   if (connected != link::connected) {
     link::connected = connected;
     if (connected) {
       ESP_LOGI("panel", "Panel connected");
+    } else if (flashing) {
+      ESP_LOGI("panel", "Panel is in its bootloader");
     } else {
       ESP_LOGW("panel", "Panel went quiet");
     }

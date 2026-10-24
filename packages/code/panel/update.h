@@ -113,6 +113,8 @@ inline bool bl_seen = false;     // the loader has answered this session
 inline uint8_t polls = 0;        // status polls in the current phase
 inline uint8_t last_sub = 0;     // the sub-command of the request that is out
 inline uint8_t app_addr = 0;     // where the panel answered the probe and gets the kick, 0 = in its bootloader
+// From the loader's first answer until the flash ends. panel.h counts the panel as away meanwhile.
+inline bool in_bootloader = false;
 // the addresses to probe in order, probe_i == probe_n is the bootloader
 inline uint8_t probe_addrs[4], probe_n = 0, probe_i = 0, probe_tries = 0;
 inline uint8_t probe_addr = 0;     // the address a probe is out to, 0 = a bootloader request is out
@@ -436,6 +438,7 @@ inline void finish(bool ok, const std::string &why = "") {
   if (!ok && bl_seen)          // leave the loader clean for the next try, and if the old app
     send(BL_ADDR, SUB_RESET);  // was never erased the panel goes back to running it
   id(server).set_updating(false);
+  in_bootloader = false;
   phase = ok ? DONE : FAIL;
   if (ok)
     status(why.empty() ? "Done, the panel is restarting" : why);
@@ -447,6 +450,7 @@ inline void finish(bool ok, const std::string &why = "") {
 // Stops before anything is flashed, so the panel keeps running what it has
 inline void refuse(const std::string &why) {
   id(server).set_updating(false);
+  in_bootloader = false;
   phase = FAIL;
   status(why);
   progress(0);
@@ -598,7 +602,7 @@ inline void pump() {
   reply = R_NONE;
 
   if (got == R_STATUS || got == R_ACK)
-    bl_seen = true;
+    bl_seen = in_bootloader = true;
   // a failure ends the update, except when it's left over from an earlier session
   if (got == R_STATUS && bl_state == ST_FAILED && phase != WAIT_BL && phase != PROBE_WAIT) {
     ESP_LOGW(TAG, "Bootloader failed: detail %u at %u/%u bytes", bl_detail, (unsigned) sent, (unsigned) staged_len);
@@ -865,3 +869,5 @@ inline void setup() {
 }
 
 }  // namespace flexit::panel::update
+
+extern "C" bool flexit_panel_in_bootloader() { return flexit::panel::update::in_bootloader; }

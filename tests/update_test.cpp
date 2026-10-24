@@ -352,8 +352,10 @@ int main() {
   // apart, then 5 s to give up, time for a busy loader.
   const auto idle = frame({BL_ADDR, FC, SUB_STATUS, 2, ST_IDLE, 0});
   server.tx.clear();
+  CHECK(!flexit_panel_in_bootloader());  // kicked, but the loader hasn't answered yet
   enter_phase(RESET);
   std::vector<uint32_t> reset_at;
+  bool away = false;  // the panel counts as away once its loader answers
   for (int i = 0; i < 200 && phase != DONE && phase != FAIL; i++) {
     long n = resets();
     pump();
@@ -361,9 +363,11 @@ int main() {
       reset_at.push_back(now_ms);
     if (awaiting)
       on_frame(idle.data(), idle.size());
+    away |= flexit_panel_in_bootloader();
     now_ms += 100;
   }
   CHECK(phase == DONE && last_status == "The new firmware is in, but the panel didn't restart. Power it off and on");
+  CHECK(away && !flexit_panel_in_bootloader());
   CHECK(resets() == 3 && last_pct == 100 && !server.updating);
   CHECK(reset_at.size() == 3 && reset_at[1] - reset_at[0] >= 2000 && reset_at[2] - reset_at[1] >= 4000 &&
         now_ms - reset_at[2] >= 5000);
