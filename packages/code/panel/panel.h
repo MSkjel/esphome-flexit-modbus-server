@@ -11,18 +11,20 @@
 #include "items.h"
 #include "panel_link.h"
 #include "picture.h"
+#include "picture_online.h"
 #include "plink.h"
 #include "plink_icons.h"
 #include "settings.h"
+#include "util.h"
 
 namespace flexit::panel {
 
 // Action ids and view names from plink_keys.h, indexed by their number
 #define ID_NAME(id, ...) #id,
-static const char *const ACTION_IDS[] = {PLINK_ACTIONS(ID_NAME)};
+inline constexpr const char *ACTION_IDS[] = {PLINK_ACTIONS(ID_NAME)};
 #undef ID_NAME
 #define VIEW_NAME(id, name) name,
-static const char *const VIEW_NAMES[] = {PLINK_VIEWS(VIEW_NAME)};
+inline constexpr const char *VIEW_NAMES[] = {PLINK_VIEWS(VIEW_NAME)};
 #undef VIEW_NAME
 
 // The PLINK_VALUES table from plink_values.h
@@ -33,10 +35,10 @@ struct Value {
   uint16_t flags, cx60;
 };
 #define VALUE(id, key, lo, hi, fl, reg) {#id, key, lo, hi, fl, reg},
-static const Value VALUES[] = {PLINK_VALUES(VALUE)};
+inline constexpr Value VALUES[] = {PLINK_VALUES(VALUE)};
 #undef VALUE
 
-// What to do with each key from the panel. update.yaml adds K_BUS_ADDR.
+// What to do with each key from the panel. update_yaml.h adds K_BUS_ADDR.
 inline std::map<uint16_t, std::function<void(uint32_t)>> handlers;
 
 // Set when the panel's HELLO has our link version. We ignore its other messages until then.
@@ -236,10 +238,11 @@ inline void track_connection() {
   }
 }
 
-// What the panel sent, to its handlers
+// The panel's messages to their handlers. Swapped with link::in so neither reallocates.
 inline void dispatch() {
-  auto in = std::move(link::in);
-  link::in.clear();
+  static std::vector<std::pair<uint16_t, uint32_t>> in;
+  in.clear();
+  in.swap(link::in);
   for (auto &m : in) {
     if (m.first == K_HELLO) {
       got_hello(m.second);
@@ -266,9 +269,10 @@ inline void send_note() {
     note.clear();
 }
 
-// Every 20 ms
+// Every 20 ms. The pictures and animations share one slice, so the bus callbacks don't wait long.
 inline void loop() {
   static int last_hour = -1;  // local hour when the time was last sent
+  uint32_t deadline_us = micros() + SLICE_US;
   track_connection();
   dispatch();
   bool connected = link::connected;
@@ -286,8 +290,9 @@ inline void loop() {
     send_registers();
     items_loop();
   }
-  picture::loop();
-  anim::loop();
+  picture::refresh();
+  picture::loop(deadline_us);
+  anim::loop(deadline_us);
 }
 
 }  // namespace flexit::panel

@@ -46,7 +46,7 @@ jobs:
       - name: The panel updater's probe
         run: |
           g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stubs -Ipackages/code \
-            tests/update_test.cpp packages/code/panel/pbus.c -o update_test
+            tests/update_test.cpp packages/code/panel/update.cpp packages/code/panel/pbus.c -o update_test
           ./update_test
 
       - uses: actions/checkout@v7

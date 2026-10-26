@@ -17,11 +17,6 @@ esphome:
     - then:
         - lambda: |-
             static int i = flexit::panel::Item("${name}", ITEM_TEXT)
-                               .label(R"~(${label})~")
-                               .help(R"~(${help})~")
-                               .icon("${icon}")
-                               .page("${page}")
-                               .view(${view})
-                               .menu(${menu})
+                               .vars(R"~(${label})~", R"~(${help})~", "${icon}", "${page}", ${view}, ${menu})
                                .add();
             flexit::panel::follow(i, id(${entity}));

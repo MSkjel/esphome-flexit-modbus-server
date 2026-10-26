@@ -13,8 +13,7 @@
 # update_interval: like 30s, 10min, 1.5h or 1d, or never to only download it when it's shown
 # format: PNG, JPEG, BMP or AUTO, which goes by the server's Content-Type
 # encoding and quality work as in picture.yaml.
-# Home Assistant's own camera URLs need a token we can't send. Use the camera's own address, like Frigate's, or
-# have HA save a snapshot in /config/www and use http://homeassistant.local:8123/local/...
+# For a Home Assistant camera or image entity use ha_picture.yaml, which follows its access token.
 defaults:
   format: AUTO
   resize: 160x120

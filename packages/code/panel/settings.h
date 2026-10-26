@@ -1,4 +1,4 @@
-// The panel's own settings around a flash, which erases them. update.h has them saved before it flashes, and once
+// The panel's own settings around a flash, which erases them. update.cpp has them saved before it flashes, and once
 // the panel says hello without any they go back, see K_SETTINGS. Only in RAM.
 #pragma once
 #include <vector>
@@ -11,7 +11,7 @@ inline std::vector<uint32_t> records;  // as the panel sent them, its format fir
 inline bool asked, all, restore;       // all: the last one came with every record, restore: after our flash
 inline size_t next;                    // records sent back so far
 
-// update.h: before it flashes
+// update.cpp: before it flashes
 inline void save() {
   records.clear();
   all = restore = false;
@@ -21,10 +21,10 @@ inline void save() {
     link::send(K_SETTINGS, 0);
 }
 
-// update.h: they're in, or there was no panel to ask
+// update.cpp: they're in, or there was no panel to ask
 inline bool saved() { return !asked || all; }
 
-// update.h: the flash went fine
+// update.cpp: the flash went fine
 inline void flashed() { restore = all; }
 
 inline void got(uint32_t v) {

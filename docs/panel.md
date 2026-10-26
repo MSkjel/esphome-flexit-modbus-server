@@ -416,4 +416,6 @@ plug, door, battery, solar, lock, motion, washer, vacuum, tv, cash and about 80 
 
 How the panel and the ESP share the bus is in the
 [firmware's README](https://github.com/MSkjel/flexit-ci600-firmware#the-esp-link). The C files in
-[`packages/code/panel/`](../packages/code/panel) are copies of its `proto/`.
+[`packages/code/panel/`](../packages/code/panel) are copies of its `proto/`. The `.cpp` files there are plain C++
+without ESPHome entities, like the colours, the JPEG's quality, the pieces a picture goes in and the flashing,
+which ESPHome builds on their own, so a change to your YAML doesn't build them again.

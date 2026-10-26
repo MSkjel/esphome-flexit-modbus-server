@@ -11,8 +11,11 @@
 #include <vector>
 #include "panel_link.h"
 #include "pdeflate.h"
-#include "picture.h"
 #include "plink.h"
+#include "quant.h"
+#include "rgb.h"
+#include "transfer.h"
+#include "util.h"
 
 namespace flexit::panel::anim {
 
@@ -35,7 +38,7 @@ inline uint32_t frame_ms(const Source &s, int f) { return s.delays.empty() ? s.f
 inline std::map<std::string, Source> sources;
 
 // frame_ms goes in ANIM_TICK_MS steps, and the panel shows a frame ANIM_FRAME_MIN_MS at least
-static constexpr int MAX_FRAME_MS = ANIM_DELAY_MAX * ANIM_TICK_MS;
+inline constexpr int MAX_FRAME_MS = ANIM_DELAY_MAX * ANIM_TICK_MS;
 inline void add(const std::string &name, Source s) {
   int ms = std::clamp(s.frame_ms, ANIM_FRAME_MIN_MS, MAX_FRAME_MS);
   if (ms != s.frame_ms) {
@@ -44,21 +47,6 @@ inline void add(const std::string &name, Source s) {
   }
   s.frame_ms = ms;
   sources[name] = std::move(s);
-}
-
-// An animated GIF (animation.yaml) and its switch
-template<typename Img, typename Sw>
-void add_gif(const std::string &name, Img &&image, Sw &&sw, int frame_ms, int x, int y, int scale, int vx, int vy,
-             int fade_ms) {
-  auto *img = picture::ptr_of(image);
-  auto *s = picture::ptr_of(sw);
-  add(name, {img->get_width(), img->get_height(), (int) img->get_animation_frame_count(), frame_ms, x, y, scale,
-             [img](int f, int px, int py) -> uint32_t {
-               img->set_frame(f);
-               auto c = img->get_pixel(px, py);
-               return (uint32_t) c.w << 24 | (uint32_t) c.r << 16 | (uint32_t) c.g << 8 | c.b;
-             },
-             vx, vy, [s](bool on) { s->publish_state(on); }, clamp_u16(fade_ms)});
 }
 
 // A copy on the panel: one of its places
@@ -103,21 +91,22 @@ inline Anim anims[ANIM_SLOTS];
 
 // count() builds the palette from all frames, make() the records, send() sends them. One animation at a time.
 enum Phase { IDLE, COUNT, MAKE, SEND };
-static constexpr int ROWS_PX = 256;  // pixels a call takes at least, a row or a few, so the time is looked at seldom
-static constexpr uint32_t FNV_START = 2166136261u, FNV_PRIME = 16777619u;  // FNV-1a, for the frames' hashes
+inline constexpr int ROWS_PX = 256;  // pixels a call takes at least, a row or a few, so the time is looked at seldom
+inline constexpr uint32_t FNV_START = 2166136261u, FNV_PRIME = 16777619u;  // FNV-1a, for the frames' hashes
 
-inline struct {
+struct Work {
   Anim *a = nullptr;
   int phase = IDLE, f = 0, y = 0;  // y: the row of frame f
   bool any_transp = false;
-  picture::Transfer t;
+  Transfer t;
   std::vector<uint32_t> hist, hash;         // hash: each frame's pixels, to find a GIF that repeats itself
   uint32_t sum = 0;                         // frame f's hash so far
   int frames = 0;                           // to make, a repeating GIF's first round only
   size_t last = 0;                          // the last record in data, 0 = only the first frame's
   std::vector<uint8_t> frame, prev, first;  // 2 pixels per byte
   std::vector<uint8_t> lut;                 // colour at 4 bits per channel -> palette index
-} W;
+};
+inline Work W;
 
 inline Anim *find(const std::string &name) {
   for (auto &a : anims)
@@ -172,7 +161,7 @@ inline std::string shown() {
   return all.empty() ? "None" : all;
 }
 
-inline void status(const std::string &s) { picture::status(id(panel_animation_status), s); }
+inline void status(const std::string &s) { panel::status(id(panel_animation_status), s); }
 
 inline bool opaque(uint32_t c) { return c >> 24 >= 128; }  // 0xAARRGGBB, at least half opaque
 
@@ -198,18 +187,18 @@ inline uint32_t px(int f, int x, int y) {
 
 // Frees what count() and make() work in
 inline void drop_work() {
-  picture::drop(W.hist);
-  picture::drop(W.hash);
-  picture::drop(W.lut);
-  picture::drop(W.frame);
-  picture::drop(W.prev);
-  picture::drop(W.first);
+  drop(W.hist);
+  drop(W.hash);
+  drop(W.lut);
+  drop(W.frame);
+  drop(W.prev);
+  drop(W.first);
 }
 
 // Stops making or sending the one in hand. What was made of one being made goes.
 inline void stop() {
   if (W.phase == COUNT || W.phase == MAKE)
-    picture::drop(W.a->data);
+    drop(W.a->data);
   W.t.head = false;
   W.phase = IDLE;
   W.a = nullptr;
@@ -221,7 +210,7 @@ inline void stop() {
 inline bool fail(const std::string &why, bool lasting = false) {
   Anim *a = W.a;
   stop();
-  picture::drop(a->data);
+  drop(a->data);
   a->why = why;
   a->state = FAILED;
   a->lasting = lasting;
@@ -245,8 +234,8 @@ inline size_t data_max() {
 // what pdeflate takes for a frame. Without exceptions a failed allocation restarts the ESP.
 inline bool has_ram() {
   size_t f = W.a->frame_bytes();
-  return picture::has_ram(std::max<size_t>(picture::COUNT_RAM, picture::BINS + 3 * f + data_max() + PDEFLATE_HEAP(f)),
-                          std::max<size_t>({picture::BINS * 4, data_max(), PDEFLATE_HEAP(0), 4 * f + 4}));
+  return panel::has_ram(std::max<size_t>(COUNT_RAM, BINS + 3 * f + data_max() + PDEFLATE_HEAP(f)),
+                        std::max<size_t>({BINS * 4, data_max(), PDEFLATE_HEAP(0), 4 * f + 4}));
 }
 
 // ---- the link's messages
@@ -383,8 +372,8 @@ inline bool start() {
     }
     a.half = true;
   }
-  W.hist.assign(picture::BINS, 0);
-  W.lut.resize(picture::BINS);
+  W.hist.assign(BINS, 0);
+  W.lut.resize(BINS);
   W.hash.clear();
   W.sum = FNV_START;
   W.any_transp = false;
@@ -423,13 +412,13 @@ inline void count() {
     if (n % p == 0 && std::equal(W.hash.begin() + p, W.hash.end(), W.hash.begin()) &&
         (d.empty() || std::equal(d.begin() + p, d.end(), d.begin())))
       W.frames = p;
-  picture::drop(W.hash);
+  drop(W.hash);
   std::vector<uint16_t> bins;
   memset(a.pal, 0, sizeof a.pal);
-  int colours = picture::median_cut(W.hist, W.any_transp ? 15 : 16, a.pal, bins);
+  int colours = median_cut(W.hist, W.any_transp ? 15 : 16, a.pal, bins);
   a.transp = W.any_transp ? 15 : ANIM_OPAQUE;
-  picture::fill_lut(W.lut, W.hist, a.pal, colours);
-  picture::drop(W.hist);
+  fill_lut(W.lut, W.hist, a.pal, colours);
+  drop(W.hist);
   a.data.clear();
   a.data.reserve(data_max());  // so it never moves
   W.frame.resize(a.frame_bytes());
@@ -443,9 +432,11 @@ inline void count() {
 // waits MAX_FRAME_MS at most, the rest goes in empty records after it. A frame like the one before adds its time to
 // the last record instead as far as that goes, unless that's the first frame's, which only plays once. The record
 // back to the first frame, which the panel ends a round on, waits as long as the first frame's own, the empty
-// ones after that are in the loop. False if there was no memory to compress it.
+// ones after that are in the loop. False without the memory to compress it. Stops where data would have to grow,
+// which only happens past the pool, where made() turns it down anyway.
 inline bool record(const std::vector<uint8_t> *from, const std::vector<uint8_t> &to, uint32_t ms, bool back = false) {
   Anim &a = *W.a;
+  const size_t most = ANIM_RECORD_HEAD + PDEFLATE_BOUND(a.frame_bytes());  // what a record takes while it's made
   uint32_t ticks = std::max<uint32_t>(1, (ms + ANIM_TICK_MS / 2) / ANIM_TICK_MS);
   if (back)
     ticks = std::min<uint32_t>(ticks, ANIM_DELAY_MAX);
@@ -458,7 +449,9 @@ inline bool record(const std::vector<uint8_t> *from, const std::vector<uint8_t> 
   for (; ticks; from = &to) {
     uint8_t delay = (uint8_t) std::min<uint32_t>(ticks, ANIM_DELAY_MAX);
     size_t at = a.data.size();
-    a.data.resize(at + ANIM_RECORD_HEAD + PDEFLATE_BOUND(a.frame_bytes()));
+    if (at + most > a.data.capacity())
+      return true;  // it would move, a peak has_ram() didn't count
+    a.data.resize(at + most);
     unsigned n = plink_anim_record(from ? from->data() : nullptr, to.data(), a.w, a.h, delay, a.data.data() + at);
     a.data.resize(at + n);
     if (!n)
@@ -472,7 +465,7 @@ inline bool record(const std::vector<uint8_t> *from, const std::vector<uint8_t> 
 // Made again at half size
 inline void halve() {
   W.t.head = false;
-  picture::drop(W.a->data);
+  drop(W.a->data);
   W.a->half = true;
   start();
 }
@@ -533,27 +526,21 @@ inline void make() {
     made(ok, left);
 }
 
-// The header once the link is free, then the records as it has room, then END
-inline void send() {
+// The header once the link is free, then the records as it has room until deadline_us, then END
+inline void send(uint32_t deadline_us) {
   Anim &a = *W.a;
-  if (W.t.no_answer()) {  // the panel lost it or its answer
-    if (W.t.retry()) {
-      ESP_LOGW("panel", "Animation %s: no answer from the panel, sending it again", a.name.c_str());
-    } else {
-      fail("the panel didn't answer");
-    }
-    return;
-  }
-  if (!W.t.head) {
-    if (!link::connected || link::waiting() > link::BACKLOG || W.t.blocked())
-      return;
-    W.t.open();
+  Transfer::Pumped p = W.t.pump(deadline_us, [&a] {
+    W.t.open(a.data.data(), (uint32_t) a.data.size());
     uint8_t h[ANIM_BEGIN_HEAD + PIC_PAL_LEN];
     link::send(K_ANIM_BEGIN, h,
                plink_anim_begin(h, W.t.id, (uint8_t) (&a - anims), (uint16_t) a.w, (uint16_t) a.h, (uint8_t) a.scale,
                                 a.transp, (uint32_t) a.data.size(), a.pal));
+  });
+  if (p == Transfer::AGAIN) {  // the panel lost it or its answer
+    ESP_LOGW("panel", "Animation %s: no answer from the panel, sending it again", a.name.c_str());
+  } else if (p == Transfer::GAVE_UP) {
+    fail("the panel didn't answer");
   }
-  W.t.send_raw(a.data.data(), a.data.size());
 }
 
 // The panel has it: its copies go on
@@ -581,12 +568,12 @@ inline void ack(uint32_t v) {
   Anim &a = *W.a;
   uint8_t st = v >> 24;
   if (st == PIC_PROGRESS) {
-    status(picture::progress(a.name, v, a.data.size()));
+    status(progress(a.name, v, a.data.size()));
   } else if (st == PIC_DONE) {
     done();
   } else if (st == PIC_TOO_BIG && can_halve()) {
     halve();
-  } else if ((st != PIC_BAD && st != PIC_BAD_CRC) || !W.t.retry()) {  // a bad one goes again while it has tries
+  } else if (!W.t.refused(st)) {
     fail("the panel didn't take it (" + std::to_string(st) + ")");
   }
 }
@@ -727,6 +714,29 @@ inline void show(const std::string &name) {
   status(shown());
 }
 
+// An animated GIF from animation.yaml and its switch, shown if the switch was restored on
+template<typename Img, typename Sw>
+void add_gif(const std::string &name, Img &&image, Sw &&sw, int frame_ms, int x, int y, int scale, int vx, int vy,
+             int fade_ms) {
+  auto *img = ptr_of(image);
+  auto *s = ptr_of(sw);
+  add(name, {img->get_width(), img->get_height(), (int) img->get_animation_frame_count(), frame_ms, x, y, scale,
+             [img](int f, int px, int py) -> uint32_t {
+               img->set_frame(f);
+               auto c = img->get_pixel(px, py);
+               return (uint32_t) c.w << 24 | (uint32_t) c.r << 16 | (uint32_t) c.g << 8 | c.b;
+             },
+             vx, vy, [s](bool on) { s->publish_state(on); }, clamp_u16(fade_ms)});
+  if (s->state)
+    show(name);
+}
+
+// animation.yaml's switch turned on. If that's before add_gif(), add_gif() shows it.
+inline void switched_on(const std::string &name) {
+  if (sources.count(name))
+    show(name);
+}
+
 // panel_place_animation: copy i of name at x, y, which can be off the screen, own = a frame of its own started start
 // frames in. Shows the animation if it isn't yet, a failed one is tried again. fade: ms it fades in and out, -1
 // for the animation's.
@@ -793,9 +803,9 @@ template<size_t N> int option(const char *const (&names)[N], const std::string &
   return -1;
 }
 
-static const char *const CHANNELS[] = {"x", "y", "turn", "size", "opacity", "speed"};
-static const char *const EASES[] = {"none", "in", "out", "both"};    // ANIM_EASE_* bits
-static const char *const SLOWS[] = {"none", "low", "high", "both"};  // ANIM_WAVE_SLOW_* bits
+inline constexpr const char *CHANNELS[] = {"x", "y", "turn", "size", "opacity", "speed"};
+inline constexpr const char *EASES[] = {"none", "in", "out", "both"};    // ANIM_EASE_* bits
+inline constexpr const char *SLOWS[] = {"none", "low", "high", "both"};  // ANIM_WAVE_SLOW_* bits
 static_assert(sizeof CHANNELS / sizeof *CHANNELS == ANIM_CHANNELS, "a name for each channel");
 
 inline int no_change(int ch) { return ch >= ANIM_SIZE ? 100 : 0; }
@@ -1016,8 +1026,8 @@ inline void gone(uint32_t v) {
       }
 }
 
-// every 20 ms
-inline void loop() {
+// Every 20 ms, until deadline_us
+inline void loop(uint32_t deadline_us) {
   if (!link::connected && (W.phase == COUNT || W.phase == MAKE))  // nothing is made without the panel
     stop();
   if (W.phase == IDLE) {
@@ -1037,13 +1047,12 @@ inline void loop() {
     if (W.phase == IDLE)
       return;
   }
-  uint32_t t0 = micros();
-  while (W.phase == COUNT && micros() - t0 < picture::SLICE_US)
+  while (W.phase == COUNT && before(deadline_us))
     count();
-  while (W.phase == MAKE && micros() - t0 < picture::SLICE_US)
+  while (W.phase == MAKE && before(deadline_us))
     make();
   if (W.phase == SEND)
-    send();
+    send(deadline_us);
 }
 
 }  // namespace flexit::panel::anim

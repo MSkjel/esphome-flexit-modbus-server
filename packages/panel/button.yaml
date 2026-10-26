@@ -15,11 +15,6 @@ esphome:
     - then:
         - lambda: |-
             flexit::panel::Item("${name}", ITEM_BUTTON)
-                .label(R"~(${label})~")
-                .help(R"~(${help})~")
-                .icon("${icon}")
-                .page("${page}")
-                .view(${view})
-                .menu(${menu})
+                .vars(R"~(${label})~", R"~(${help})~", "${icon}", "${page}", ${view}, ${menu})
                 .on_set([](float) { id(${entity}).press(); })
                 .add();
