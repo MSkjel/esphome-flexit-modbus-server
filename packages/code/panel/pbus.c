@@ -1,4 +1,5 @@
 // CX60 bus timing for the link, see pbus.h
+// Copied into esphome-flexit-modbus-server by make -C sim esp_sync, edit it here.
 #include "pbus.h"
 #include <string.h>
 
@@ -33,15 +34,25 @@ uint16_t pbus_crc16(const uint8_t *p, int n) {
 
 bool pbus_crc_ok(const uint8_t *f, int n) { return n >= 4 && pbus_crc16(f, n - 2) == (f[n - 2] | f[n - 1] << 8); }
 
-static const uint8_t STATUS_HEAD[7] = {0x00, 0x10, 0x00, 0xBE, 0x00, 0x55, 0xAA};
+int pbus_put_crc(uint8_t *f, int n) {
+  uint16_t c = pbus_crc16(f, n);
+  f[n] = (uint8_t) c;
+  f[n + 1] = (uint8_t) (c >> 8);
+  return n + 2;
+}
+
+// FC16 from PBUS_STATUS_FIRST, which is under 0x100, its registers and their bytes
+#define STATUS_REGS (PBUS_STATUS_LAST - PBUS_STATUS_FIRST + 1)
+const uint8_t PBUS_STATUS_HEAD[7] = {0x00, 0x10, 0x00, PBUS_STATUS_FIRST, 0x00, STATUS_REGS, 2 * STATUS_REGS};
 
 bool pbus_is_status(const uint8_t *f, int n) {
-  return n == PBUS_STATUS_LEN && !memcmp(f, STATUS_HEAD, sizeof STATUS_HEAD);
+  return n == PBUS_STATUS_LEN && !memcmp(f, PBUS_STATUS_HEAD, sizeof PBUS_STATUS_HEAD);
 }
 
 int pbus_status_part(const uint8_t *buf, int n) {
+  int head = (int) sizeof PBUS_STATUS_HEAD;
   for (int k = n < PBUS_STATUS_LEN - 1 ? n : PBUS_STATUS_LEN - 1; k > 0; k--)
-    if (!memcmp(buf + n - k, STATUS_HEAD, k < 7 ? k : 7))
+    if (!memcmp(buf + n - k, PBUS_STATUS_HEAD, (size_t) (k < head ? k : head)))
       return k;
   return 0;
 }
@@ -63,13 +74,13 @@ static int cx60_len(const uint8_t *f, int n) {
 bool pbus_is_cx60(const uint8_t *f, int n) { return cx60_len(f, n) > 0; }
 
 uint32_t pbus_since_status(uint32_t dt_us, int k, int rx_threshold, uint32_t isr_us) {
-  // 86.806 us per byte, rounded so the result can't come out too small.
+  // Byte times rounded so the result can't come out too small, up where they add and down where they take away.
   // Nothing follows the status frame for a while, so its last byte is handed over 2 byte times after it arrives.
-  int64_t a = (int64_t) dt_us + isr_us + 2 * 86806 / 1000 + 1;
+  int64_t a = (int64_t) dt_us + isr_us + 2 * PBUS_BYTE_NS / 1000 + 1;
   // Byte k + 1 wasn't readable then, so it arrived less than rx_threshold - 1 byte times before. The remaining
   // 178 - k bytes took at least a byte time each.
-  int64_t b = (int64_t) dt_us + isr_us + (int64_t) (rx_threshold - 1) * 86806 / 1000 + 1 -
-              (int64_t) (PBUS_STATUS_LEN - 1 - k) * 86805 / 1000;
+  int64_t b = (int64_t) dt_us + isr_us + (int64_t) (rx_threshold - 1) * PBUS_BYTE_NS / 1000 + 1 -
+              (int64_t) (PBUS_STATUS_LEN - 1 - k) * (PBUS_BYTE_NS - 1) / 1000;
   if (b < 0)
     b = 0;
   return (uint32_t) (a < b ? a : b);
@@ -95,6 +106,8 @@ static void judge(bool *off, uint8_t *times, uint32_t *clean, bool bad, uint32_t
 }
 
 // ---------------------------------------------------------------- panel side
+#define STATUS_RECENT_MS 1000  // the CX60's next frame after a status broadcast comes well within this
+#define TICK_SLACK_US 2000     // how far the microsecond clock and the 1 ms tick may be apart
 
 void pbus_panel_init(pbus_panel_t *w) {
   memset(w, 0, sizeof *w);
@@ -112,13 +125,15 @@ static uint32_t end_for(const pbus_panel_t *w) {
 }
 
 // the last burst was a status broadcast, less than a second ago
-static bool recent(const pbus_panel_t *w, uint32_t now_ms) { return w->after_status && now_ms - w->status_ms < 1000; }
+static bool recent(const pbus_panel_t *w, uint32_t now_ms) {
+  return w->after_status && now_ms - w->status_ms < STATUS_RECENT_MS;
+}
 
 void pbus_panel_burst(pbus_panel_t *w, const uint8_t *b, int n, uint32_t start_us, uint32_t idle_us, uint32_t now_ms) {
   if (recent(w, now_ms) && pbus_is_cx60(b, n)) {  // the CX60's next frame, not a late reply from a server
     uint32_t us = start_us - w->status_end_us;
     // only if the 1 ms tick agrees, in case the microsecond clock was off, like after a debugger halted the chip
-    if (us + 2000 >= (now_ms - w->status_ms) * 1000) {
+    if (us + TICK_SLACK_US >= (now_ms - w->status_ms) * 1000) {
       bool was = w->refused;
       judge(&w->refused, &w->refusals, &w->clean, us < PBUS_CX60_MIN_US, PBUS_REARM);
       if (was && !w->refused)  // let back in, measure again
@@ -151,12 +166,67 @@ uint32_t pbus_panel_window(pbus_panel_t *w, uint32_t idle_us, uint32_t now_ms, u
 }
 
 // ---------------------------------------------------------------- gaps after the CX60's polls
+#define STARTING_US 1000000  // this long without a status broadcast, the CX60 is starting up
+
+// The status broadcast, a step to time the next poll from
+static void on_status(pbus_gaps_t *g, uint32_t lo_us, uint32_t hi_us) {
+  if (g->probing || (g->started && lo_us - g->status_us > STARTING_US)) {  // panels may have changed
+    g->present = 0;
+    g->cycles = 0;
+  } else if (g->started && g->cycles < 2) {
+    g->cycles++;
+  }
+  g->started = true;
+  g->probing = false;
+  g->status_us = lo_us;
+  g->step_ok = true;
+  g->step_lo_us = lo_us;
+  g->step_hi_us = hi_us;
+}
+
+// Any other frame of the CX60's. A poll of a panel's coils that's on time waits for its reply, see on_reply().
+static void on_poll(pbus_gaps_t *g, const uint8_t *f, uint32_t lo_us, uint32_t hi_us) {
+  uint16_t from = (uint16_t) (f[2] << 8 | f[3]);
+  bool poll = f[1] == 1 && f[0] >= 1 && f[0] <= 3 && (from == 0 || from == PBUS_COUNTERS);
+  if (poll) {
+    g->present |= (uint8_t) (1u << f[0]);
+    // On time if right after another step and possibly on the grid. The time since that step is between lo
+    // and hi.
+    int32_t lo = (int32_t) (lo_us - g->step_hi_us), hi = (int32_t) (hi_us - g->step_lo_us);
+    int32_t k = (lo / 2 + hi / 2 + PBUS_GAP_STEP_US / 2) / PBUS_GAP_STEP_US * PBUS_GAP_STEP_US;
+    bool off_grid = lo > k + PBUS_GAP_GRID_US || hi < k - PBUS_GAP_GRID_US;
+    if (g->step_ok && k > 0 && !off_grid)
+      g->req = f[0];
+    g->counters = from == PBUS_COUNTERS;
+    g->req_us = lo_us;
+  }
+  g->step_ok = poll;  // a step to time the next request from
+  g->step_lo_us = lo_us;
+  g->step_hi_us = hi_us;
+}
+
+// A reply from panel a to its on-time poll. A gap opens if it flags nothing the CX60 would ask about next. The
+// counters poll looks at the first 20 coils, the settings poll at all of them.
+static void on_reply(pbus_gaps_t *g, const uint8_t *f, int n, uint8_t a) {
+  if (!a || f[0] != a || f[1] != 1 || f[2] + 5 != n || g->cycles < 2)
+    return;
+  for (int i = 0; i < f[2]; i++)
+    if (f[3 + i] & (!g->counters ? 0xFF : i < 2 ? 0xFF : i == 2 ? 0x0F : 0))
+      return;
+  int steps = 2;    // the reply is read on the next step, the next poll goes out on the one after
+  if (g->counters)  // plus the absent panels it would poll next, it goes from the highest address down
+    for (int q = a - 1; q >= 1 && !(g->present & 1u << q); q--)
+      steps += 2;
+  g->next_us = (uint32_t) steps * PBUS_GAP_STEP_US;
+  g->open = g->armed = true;
+  g->gaps++;
+}
 
 void pbus_gaps_frame(pbus_gaps_t *g, const uint8_t *f, int n, uint32_t start_lo_us, uint32_t start_hi_us) {
   // One frame at a time on the bus, so it started after the last one ended. Tighter than a late read can tell.
   if (g->end_known && (int32_t) (g->end_lo_us - start_lo_us) > 0 && (int32_t) (g->end_lo_us - start_hi_us) <= 0)
     start_lo_us = g->end_lo_us;
-  g->end_lo_us = start_lo_us + (uint32_t) n * 86806u / 1000u;
+  g->end_lo_us = start_lo_us + (uint32_t) n * PBUS_BYTE_NS / 1000u;
   g->end_known = true;
   if (n >= 1 && f[0] == PBUS_LINK_ADDR)
     return;                                // a link frame
@@ -175,58 +245,17 @@ void pbus_gaps_frame(pbus_gaps_t *g, const uint8_t *f, int n, uint32_t start_lo_
   if (!ok)
     return;  // can't tell what that was
   if (pbus_is_status(f, n)) {
-    if (g->probing || (g->started && start_lo_us - g->status_us > 1000000)) {  // panels may have changed
-      g->present = 0;
-      g->cycles = 0;
-    } else if (g->started && g->cycles < 2) {
-      g->cycles++;
-    }
-    g->started = true;
-    g->probing = false;
-    g->status_us = start_lo_us;
-    g->step_ok = true;
-    g->step_lo_us = start_lo_us;
-    g->step_hi_us = start_hi_us;
+    on_status(g, start_lo_us, start_hi_us);
     return;
   }
   if (probe) {
     g->probing = true;
     g->cycles = 0;
   }
-  if (cx60) {
-    uint16_t from = (uint16_t) (f[2] << 8 | f[3]);
-    bool poll = f[1] == 1 && f[0] >= 1 && f[0] <= 3 && (from == 0 || from == 0x14C);
-    if (poll) {
-      g->present |= (uint8_t) (1u << f[0]);
-      // On time if right after another step and possibly on the grid. The time since that step is between lo
-      // and hi.
-      int32_t lo = (int32_t) (start_lo_us - g->step_hi_us), hi = (int32_t) (start_hi_us - g->step_lo_us);
-      int32_t k = (lo / 2 + hi / 2 + PBUS_GAP_STEP_US / 2) / PBUS_GAP_STEP_US * PBUS_GAP_STEP_US;
-      bool off_grid = lo > k + PBUS_GAP_GRID_US || hi < k - PBUS_GAP_GRID_US;
-      if (g->step_ok && k > 0 && !off_grid)
-        g->req = f[0];
-      g->counters = from == 0x14C;
-      g->req_us = start_lo_us;
-    }
-    g->step_ok = poll;  // a step to time the next request from
-    g->step_lo_us = start_lo_us;
-    g->step_hi_us = start_hi_us;
-    return;
-  }
-  // A reply to the poll that flags nothing the CX60 would ask about next. The counters poll looks at the first
-  // 20 coils, the settings poll at all of them.
-  if (!a || f[0] != a || f[1] != 1 || f[2] + 5 != n || g->cycles < 2)
-    return;
-  for (int i = 0; i < f[2]; i++)
-    if (f[3 + i] & (!g->counters ? 0xFF : i < 2 ? 0xFF : i == 2 ? 0x0F : 0))
-      return;
-  int steps = 2;    // the reply is read on the next step, the next poll goes out on the one after
-  if (g->counters)  // plus the absent panels it would poll next, it goes from the highest address down
-    for (int q = a - 1; q >= 1 && !(g->present & 1u << q); q--)
-      steps += 2;
-  g->next_us = (uint32_t) steps * PBUS_GAP_STEP_US;
-  g->open = g->armed = true;
-  g->gaps++;
+  if (cx60)
+    on_poll(g, f, start_lo_us, start_hi_us);
+  else
+    on_reply(g, f, n, a);
 }
 
 uint32_t pbus_gaps_left(pbus_gaps_t *g, uint32_t now_us) {

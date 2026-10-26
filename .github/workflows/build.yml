@@ -35,15 +35,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: The packages that change the CS60 for a while, across reboots
-        run: |
-          g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -Ipackages/code \
-            tests/restart_test.cpp -o restart_test
-          ./restart_test
-
       - name: The panel updater's probe
         run: |
-          g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stubs -Ipackages/code/panel \
+          g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stubs -Ipackages/code \
             tests/update_test.cpp packages/code/panel/pbus.c -o update_test
           ./update_test
 
@@ -55,10 +49,18 @@ jobs:
       - name: The component on the bus
         run: |
           g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined \
-            -Itests/stubs -Iesphome/components/flexit_modbus_server -Imodbus-library tests/server_test.cpp \
+            -Itests/stubs -Ipackages/code -Iesphome/components/flexit_modbus_server -Imodbus-library tests/server_test.cpp \
             esphome/components/flexit_modbus_server/flexit_modbus_server.cpp modbus-library/ModbusRTUServer.cpp \
-            -o server_test
+            packages/code/panel/pbus.c -o server_test
           ./server_test
+
+      - name: The packages that change the CX60 for a while, across reboots
+        run: |
+          g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Itests/stubs -Ipackages/code -Iesphome/components/flexit_modbus_server -Imodbus-library tests/restart_test.cpp \
+            esphome/components/flexit_modbus_server/flexit_modbus_server.cpp modbus-library/ModbusRTUServer.cpp \
+            packages/code/panel/pbus.c -o restart_test
+          ./restart_test
 
   build:
     runs-on: ubuntu-latest

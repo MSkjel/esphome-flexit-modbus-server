@@ -4,23 +4,13 @@
 #     vars: {url: "https://github.com/MSkjel/flexit-ci600-firmware/releases/latest/download/ci600.fxup"}
 #
 # url: where to get the .fxup, built by tools/mkupdate.py in the firmware repo. The default is the newest GitHub
-# release. For a file in Home Assistant's /config/www use "http://homeassistant.local:8123/local/ci600.fxup".
-# Any other HTTP(S) URL works too. The "Panel Firmware URL" text box starts at it after each restart of the ESP,
-# change it there for a one-off. "Flash Panel Firmware" starts the update, "Panel Firmware Update" and
-# "Panel Firmware Progress" show how it goes.
+# release, any other HTTP(S) URL works too. The "Panel Firmware URL" text box starts at it, change it there for a
+# one-off. "Flash Panel Firmware" starts the update, "Panel Firmware Update" and "Panel Firmware Progress" show how
+# it goes.
 #
 # The ESP downloads the file a few KB at a time into its spare app slot, where its own next OTA update goes, and
-# streams it to the panel's ROM bootloader. The bootloader decrypts it and checks the whole image before marking
-# it valid, as the last thing it writes. A bad download, a wrong image or a frame the unit talked over fails that
-# check, and then the panel has nothing bootable and waits in the bootloader for another try.
-# Before anything is flashed the ESP probes the bus the way the unit does at start-up: the address the panel
-# reported over the link if any, then 3, 1 and 2, never the ESP's own. The first panel that answers gets flashed, a
-# stock one if it's a 7.x, ours if the file is another version, and nothing else. "Panel Firmware Force" also
-# flashes the same version again, or a stock panel that isn't 7.x. The bootloader always answers at 1, so a panel
-# elsewhere is only flashed with nothing else at 1. A panel left in its bootloader by a failed flash goes first.
-# A flash takes a few minutes, with the panel's screen dark and its three LEDs on.
-# Right after an OTA update of the ESP itself, wait about a minute until it has booted fine. Until then it keeps
-# its previous firmware in the spare slot in case it has to go back.
+# streams it to the panel's ROM bootloader. What it checks and how the flash goes: docs/flashing.md in the firmware
+# repo.
 defaults:
   url: "https://github.com/MSkjel/flexit-ci600-firmware/releases/latest/download/ci600.fxup"
 
@@ -34,7 +24,8 @@ esp32:
     advanced:
       use_full_certificate_bundle: true  # for https, the full set so GitHub's CA is in it
     sdkconfig_options:
-      CONFIG_MBEDTLS_DYNAMIC_BUFFER: "y"  # see met.yaml
+      # TLS buffers only as big as each record, not 20 KB for the whole download, see met.yaml
+      CONFIG_MBEDTLS_DYNAMIC_BUFFER: "y"
 
 text:
   - platform: template

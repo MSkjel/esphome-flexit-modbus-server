@@ -4,7 +4,7 @@
 # name, label, help, icon, page, view and menu work as in sensor.yaml, on_text and off_text as in
 # binary_sensor.yaml
 defaults:
-  name: ""
+  name: ${entity}
   on_text: ""
   off_text: ""
   icon: circle
@@ -17,7 +17,7 @@ esphome:
   on_boot:
     - then:
         - lambda: |-
-            static int i = flexit::panel::Item(std::string("${name}").empty() ? "${entity}" : "${name}", ITEM_TOGGLE)
+            static int i = flexit::panel::Item("${name}", ITEM_TOGGLE)
                                .label(R"~(${label})~")
                                .help(R"~(${help})~")
                                .states(R"~(${on_text})~", R"~(${off_text})~")
@@ -32,5 +32,5 @@ esphome:
                                    id(${entity}).turn_off();
                                })
                                .add();
-            id(${entity}).add_on_state_callback([](bool on) { flexit::panel::item_value(i, on); });
-            flexit::panel::item_value(i, id(${entity}).state);
+            flexit::panel::follow(i, id(${entity}));
+            flexit::panel::item_value(i, id(${entity}).state);  // a switch is never has_state(), always on or off

@@ -1,9 +1,19 @@
 #pragma once
+#include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
+#include <optional>
 #include <vector>
 
 namespace esphome {
+
+template<typename T> using optional = std::optional<T>;
+using std::clamp;
+
+// ESPHome's is on pointers only, the tests keep some of their entities by value
+template<typename T> T &id(T *value) { return *value; }
+template<typename T> T &id(T &value) { return value; }
 
 template<typename... X> class CallbackManager;
 template<typename... Ts> class CallbackManager<void(Ts...)> {
@@ -26,5 +36,11 @@ inline uint32_t fnv1_hash(const char *str) {
   }
   return hash;
 }
+
+inline bool no_ram;  // RAMAllocator fails while set
+template<typename T> struct RAMAllocator {
+  T *allocate(size_t n) { return no_ram ? nullptr : (T *) malloc(n * sizeof(T)); }
+  void deallocate(T *p, size_t) { free(p); }
+};
 
 }  // namespace esphome

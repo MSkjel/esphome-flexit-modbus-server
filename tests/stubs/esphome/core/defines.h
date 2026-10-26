@@ -1,2 +1,2 @@
-// Stand-ins for the ESPHome the component uses, for tests/server_test.cpp
+// Stand-ins for the ESPHome the component and the packages use, for the tests in tests/
 #pragma once

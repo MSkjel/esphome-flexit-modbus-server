@@ -1,6 +1,7 @@
 // Items are the ESP's own entities on the panel. packages/panel/ adds them at boot and the panel gets them all
 // after each hello, as the link has room. Messages are K_ITEM_* in plink_keys.h.
 #pragma once
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
@@ -8,6 +9,7 @@
 #include <string>
 #include <vector>
 #include "panel_link.h"
+#include "picture.h"
 #include "plink.h"
 #include "plink_icons.h"
 
@@ -99,7 +101,7 @@ class Item {
     return *this;
   }
   Item &decimals(int d) {  // 0 to 3
-    dec_ = std::max(0, std::min(3, d));
+    dec_ = std::clamp(d, 0, 3);
     return *this;
   }
   // In the entity's units. Range and step for a number, ends of the gauge and bar for a sensor.
@@ -140,11 +142,11 @@ class Item {
     return x >= 2147483648.0f ? INT32_MAX : x <= -2147483648.0f ? -INT32_MAX : (int32_t) x;
   }
   // What goes again in the panel's new language. An ITEM_TEXT's value is a text too.
-  uint8_t texts() const {
+  uint8_t text_needs() const {
     return NEED_LABEL | NEED_UNIT | (type_ == ITEM_TOGGLE ? NEED_STATES : 0) |
            (type_ == ITEM_TEXT && known_ ? NEED_TEXT : 0);
   }
-  uint8_t value() const { return known_ && type_ != ITEM_TEXT ? NEED_VALUE : 0; }
+  uint8_t value_need() const { return known_ && type_ != ITEM_TEXT ? NEED_VALUE : 0; }
 
   std::string name_, label_, unit_, help_, icon_ = "circle", on_, off_, text_;
   uint8_t type_, flags_ = ITEMF_VIEW | ITEMF_MENU;
@@ -163,90 +165,99 @@ class Item {
     flags_ = on ? flags_ | f : flags_ & ~f;
     return *this;
   }
+  void make_id();
+  void warn_cut(const char *what, const std::string &both, size_t max) const;
+  void fit_decimals();
 };
 
 inline std::vector<Item> items;
 
-inline int Item::add() {
-  if (items.size() >= N_ITEMS) {
-    ESP_LOGW("panel", "The panel takes %d items: '%s' isn't one of them", N_ITEMS, name_.c_str());
-    return -1;
-  }
-  uint32_t h = 2166136261u;  // id is a 14-bit FNV-1a of the name, never 0 and unique among the items
-  for (char c : name_)
-    h = (h ^ (uint8_t) c) * 16777619u;
-  id_ = (uint16_t) (h & 0x3FFF ? h & 0x3FFF : 1);
+// From the name, unique among the items
+inline void Item::make_id() {
+  id_ = plink_item_id(name_.c_str());
   for (bool taken = true; taken;) {
     taken = false;
     for (auto &o : items)
       if (o.id_ == id_) {
-        id_ = (uint16_t) ((id_ * 31u + 7u) & 0x3FFF ? (id_ * 31u + 7u) & 0x3FFF : 1);
+        id_ = (uint16_t) ((id_ * 31u + 7u) & ITEM_ID_MASK ? (id_ * 31u + 7u) & ITEM_ID_MASK : 1);
         taken = true;
       }
   }
-  if (type_ == ITEM_SENSOR || type_ == ITEM_TEXT)
-    flags_ |= ITEMF_RO;
-  // Longer texts get cut for the panel, each language's part on its own
-  auto room = [this](const char *what, const std::string &both, size_t max) {
-    for (size_t at = 0; at <= both.size();) {
-      size_t bar = std::min(both.find('|', at), both.size());
-      if (bar - at > max) {
-        ESP_LOGW("panel", "'%s': the panel shows %u bytes of its %s, '%s' is cut", name_.c_str(), (unsigned) max, what,
-                 both.substr(at, bar - at).c_str());
-      }
-      at = bar + 1;
+}
+
+// Longer texts get cut for the panel, each language's part on its own
+inline void Item::warn_cut(const char *what, const std::string &both, size_t max) const {
+  for (size_t at = 0; at <= both.size();) {
+    size_t bar = std::min(both.find('|', at), both.size());
+    if (bar - at > max) {
+      ESP_LOGW("panel", "'%s': the panel shows %u bytes of its %s, '%s' is cut", name_.c_str(), (unsigned) max, what,
+               both.substr(at, bar - at).c_str());
     }
-  };
-  room("label", label_, ITEM_LABEL - 1);
-  room("unit", unit_, ITEM_UNIT - 1);
-  room("on_text", on_, ITEM_STATE - 1);
-  room("off_text", off_, ITEM_STATE - 1);
-  room("help", help_, PLINK_HELP_MAX);
-  // The panel takes the step as 16 bits and the levels as signed 16 bits, in the value's units: 900 ppm with 1
-  // decimal is 9000. Fewer decimals until they fit.
+    at = bar + 1;
+  }
+}
+
+// The panel takes the step as 16 bits and the levels as signed 16 bits, in the value's units: 900 ppm with 1
+// decimal is 9000. Fewer decimals until they fit.
+inline void Item::fit_decimals() {
   int dec = dec_;
   while (dec_ > 0 && scaled(step_) > 65535)
     dec_--;
   if (dec_ != dec) {
     ESP_LOGW("panel", "'%s': %d decimals on the panel, so its step fits", name_.c_str(), dec_);
   }
-  if (flags_ & ITEMF_LEVELS) {
-    dec = dec_;
-    auto fit = [this] {
-      for (float l : level_)
-        if (std::abs(scaled(l)) > 32767)
-          return false;
-      return true;
-    };
-    while (dec_ > 0 && !fit())
-      dec_--;
-    if (!fit()) {
-      ESP_LOGW("panel", "'%s': its levels don't fit the panel, so it isn't coloured", name_.c_str());
-      dec_ = dec;
-      flags_ &= ~ITEMF_LEVELS;
-    } else if (dec_ != dec) {
-      ESP_LOGW("panel", "'%s': %d decimals on the panel, so its levels fit", name_.c_str(), dec_);
-    }
+  if (!(flags_ & ITEMF_LEVELS))
+    return;
+  dec = dec_;
+  auto fit = [this] {
+    for (float l : level_)
+      if (std::abs(scaled(l)) > 32767)
+        return false;
+    return true;
+  };
+  while (dec_ > 0 && !fit())
+    dec_--;
+  if (!fit()) {
+    ESP_LOGW("panel", "'%s': its levels don't fit the panel, so it isn't coloured", name_.c_str());
+    dec_ = dec;
+    flags_ &= ~ITEMF_LEVELS;
+  } else if (dec_ != dec) {
+    ESP_LOGW("panel", "'%s': %d decimals on the panel, so its levels fit", name_.c_str(), dec_);
   }
-  need_ |= texts();
+}
+
+inline int Item::add() {
+  if (items.size() >= N_ITEMS) {
+    ESP_LOGW("panel", "The panel takes %d items: '%s' isn't one of them", N_ITEMS, name_.c_str());
+    return -1;
+  }
+  make_id();
+  if (type_ == ITEM_SENSOR || type_ == ITEM_TEXT)
+    flags_ |= ITEMF_RO;
+  warn_cut("label", label_, ITEM_LABEL_LEN - 1);
+  warn_cut("unit", unit_, ITEM_UNIT_LEN - 1);
+  warn_cut("on_text", on_, ITEM_STATE_LEN - 1);
+  warn_cut("off_text", off_, ITEM_STATE_LEN - 1);
+  warn_cut("help", help_, PLINK_HELP_MAX);
+  fit_decimals();
+  need_ |= text_needs();
   items.push_back(*this);
   return (int) items.size() - 1;
 }
+
+// Item i, nullptr if there's none
+inline Item *at(int i) { return i >= 0 && i < (int) items.size() ? &items[i] : nullptr; }
 
 // Layout at K_ITEM_DEF in plink_keys.h
 inline bool send_def(int i) {
   const Item &it = items[i];
   uint8_t d[ITEM_DEF_LEN] = {it.type_, it.flags_, (uint8_t) icon(it.icon_), (uint8_t) it.dec_};
-  auto put = [&d](int at, uint32_t v, int n) {
-    for (int k = 0; k < n; k++)
-      d[at + k] = (uint8_t) (v >> 8 * k);
-  };
-  put(4, (uint32_t) std::min<int32_t>(65535, std::max<int32_t>(1, it.scaled(it.step_))), 2);
-  put(6, it.id_, 2);
-  put(8, (uint32_t) it.scaled(it.min_), 4);
-  put(12, (uint32_t) it.scaled(it.max_), 4);
+  plink_put16(d + ITEM_DEF_STEP, (uint16_t) std::min<int32_t>(65535, std::max<int32_t>(1, it.scaled(it.step_))));
+  plink_put16(d + ITEM_DEF_ID, it.id_);
+  plink_put32(d + ITEM_DEF_MIN, (uint32_t) it.scaled(it.min_));
+  plink_put32(d + ITEM_DEF_MAX, (uint32_t) it.scaled(it.max_));
   for (int k = 0; k < 4; k++)
-    put(16 + 2 * k, (uint32_t) it.scaled(it.level_[k]), 2);
+    plink_put16(d + ITEM_DEF_LEVELS + 2 * k, (uint16_t) it.scaled(it.level_[k]));
   return link::send(K_ITEM_DEF + i, d, sizeof d);
 }
 
@@ -268,10 +279,10 @@ inline void items_loop() {
     while (it.need_ && link::waiting() < link::BACKLOG) {
       uint8_t part = it.need_ & -it.need_;  // the lowest, so the definition goes first
       bool sent = part == NEED_DEF      ? send_def((int) i)
-                  : part == NEED_LABEL  ? send_text(K_ITEM_LABEL + i, it.label_, ITEM_LABEL - 1)
-                  : part == NEED_UNIT   ? send_text(K_ITEM_UNIT + i, it.unit_, ITEM_UNIT - 1)
-                  : part == NEED_STATES ? send_text(K_ITEM_ON + i, it.on_, ITEM_STATE - 1) &&
-                                              send_text(K_ITEM_OFF + i, it.off_, ITEM_STATE - 1)
+                  : part == NEED_LABEL  ? send_text(K_ITEM_LABEL + i, it.label_, ITEM_LABEL_LEN - 1)
+                  : part == NEED_UNIT   ? send_text(K_ITEM_UNIT + i, it.unit_, ITEM_UNIT_LEN - 1)
+                  : part == NEED_STATES ? send_text(K_ITEM_ON + i, it.on_, ITEM_STATE_LEN - 1) &&
+                                              send_text(K_ITEM_OFF + i, it.off_, ITEM_STATE_LEN - 1)
                   : part == NEED_TEXT   ? send_text(K_ITEM_TEXT + i, it.text_, ITEM_TEXT_LEN - 1)
                                         : link::send(K_ITEM_VALUE + i, (uint32_t) it.value_);
       if (!sent)
@@ -284,64 +295,75 @@ inline void items_loop() {
 // After the panel's hello, it needs them all
 inline void items_hello() {
   for (auto &it : items)
-    it.need_ = NEED_DEF | it.texts() | it.value();
+    it.need_ = NEED_DEF | it.text_needs() | it.value_need();
 }
 
 // In the entity's units, NaN when it has none. Only sent if it changed.
 inline void item_value(int i, float v) {
-  if (i < 0 || i >= (int) items.size())
+  Item *it = at(i);
+  if (!it)
     return;
-  Item &it = items[i];
-  int32_t s = std::isnan(v) ? ITEM_UNKNOWN : it.scaled(v);
-  if (it.known_ && s == it.value_)
+  int32_t s = std::isnan(v) ? ITEM_UNKNOWN : it->scaled(v);
+  if (it->known_ && s == it->value_)
     return;
-  it.value_ = s;
-  it.known_ = true;
-  it.need_ |= NEED_VALUE;
-  it.echo_ = false;  // the new value goes anyway
+  it->value_ = s;
+  it->known_ = true;
+  it->need_ |= NEED_VALUE;
+  it->echo_ = false;  // the new value goes anyway
 }
 
 // An ITEM_TEXT's value, "English|Norsk" like the label. The panel shows a dash for "".
-inline void item_value_text(int i, const std::string &both) {
-  if (i < 0 || i >= (int) items.size() || (items[i].known_ && items[i].text_ == both))
+inline void item_value(int i, const std::string &both) {
+  Item *it = at(i);
+  if (!it || (it->known_ && it->text_ == both))
     return;
-  Item &it = items[i];
-  it.text_ = both;
-  it.known_ = true;
-  it.need_ |= NEED_TEXT;
+  it->text_ = both;
+  it->known_ = true;
+  it->need_ |= NEED_TEXT;
+}
+
+// The entity's state on item i, now and as it changes. id() is a pointer in ESPHome's lambdas.
+template<typename Entity> void follow(int i, Entity &&entity) {
+  auto *e = picture::ptr_of(entity);
+  e->add_on_state_callback([i](const auto &v) { item_value(i, v); });
+  if (e->has_state())
+    item_value(i, e->state);
 }
 
 // met.h uses these to name the weather item after the weather
 inline void item_label(int i, const std::string &both) {
-  if (i < 0 || i >= (int) items.size() || items[i].label_ == both)
+  Item *it = at(i);
+  if (!it || it->label_ == both)
     return;
-  items[i].label_ = both;
-  items[i].need_ |= NEED_LABEL;
+  it->label_ = both;
+  it->need_ |= NEED_LABEL;
 }
 
 inline void item_icon(int i, const std::string &name) {
-  if (i < 0 || i >= (int) items.size() || items[i].icon_ == name)
+  Item *it = at(i);
+  if (!it || it->icon_ == name)
     return;
-  items[i].icon_ = name;
-  items[i].need_ |= NEED_DEF;
+  it->icon_ = name;
+  it->need_ |= NEED_DEF;
 }
 
 // Changed on the panel. If the entity hasn't changed within its echo_ms we send back the value it has, so a refused
 // change shows. An entity that answers later than that would flip the panel back and forth.
 inline void item_set(int i, uint32_t v) {
-  if (i >= (int) items.size() || !items[i].set_)
+  Item *it = at(i);
+  if (!it || !it->set_)
     return;
-  Item &it = items[i];
-  it.set_((int32_t) v / powf(10, it.dec_));
-  it.echo_ = true;
-  it.echo_at_ = millis() + it.echo_ms_;
+  it->set_((int32_t) v / powf(10, it->dec_));
+  it->echo_ = true;
+  it->echo_at_ = millis() + it->echo_ms_;
 }
 
 // ? pressed on item i
 inline void item_help(uint32_t i) {
-  if (i >= items.size())
+  const Item *it = at((int) i);
+  if (!it)
     return;
-  std::string t = std::string(1, (char) i) + cut(in_language(items[i].help_), PLINK_HELP_MAX);
+  std::string t = std::string(1, (char) i) + cut(in_language(it->help_), PLINK_HELP_MAX);
   link::send(K_ITEM_HELP, (const uint8_t *) t.data(), (int) t.size());
 }
 
@@ -350,7 +372,7 @@ inline void set_language(uint32_t v) {
     return;
   language = (uint8_t) v;
   for (auto &it : items)
-    it.need_ |= it.texts();
+    it.need_ |= it.text_needs();
 }
 
 }  // namespace flexit::panel

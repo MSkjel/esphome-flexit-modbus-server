@@ -1,21 +1,13 @@
 // Link frames, see pbulk.h
+// Copied into esphome-flexit-modbus-server by make -C sim esp_sync, edit it here.
 #include "pbulk.h"
+#include "plink.h"
 #include <string.h>
 
 _Static_assert(1 + PLINK_HELP_MAX <= PBULK_MSG_MAX, "a help text fits an ordinary window");
+_Static_assert(PBULK_DATA_KEY == K_PIC_DATA, "picture data is what pbulk splits");
 
-static void put_crc(uint8_t *f, int n) {
-  uint16_t c = pbus_crc16(f, n);
-  f[n] = c & 0xFF;
-  f[n + 1] = c >> 8;
-}
-
-static uint16_t get16(const uint8_t *b) { return (uint16_t) (b[0] | b[1] << 8); }
-
-static void put16(uint8_t *b, uint16_t v) {
-  b[0] = v & 0xFF;
-  b[1] = v >> 8;
-}
+#define RESYNC_AFTER 3  // frames in a row from the other end that start past the one we want, before we follow
 
 static int16_t diff(uint16_t a, uint16_t b) {  // a - b for message numbers, which wrap around
   return (int16_t) (uint16_t) (a - b);
@@ -24,10 +16,17 @@ static int16_t diff(uint16_t a, uint16_t b) {  // a - b for message numbers, whi
 // message numbers a message uses, DATA uses one per 4 bytes
 static int count(uint16_t key, int len) { return key == PBULK_DATA_KEY ? len / 4 : 1; }
 
+// Offset of the message after the one at i in p[n], -1 if that one is cut short
+static int msg_next(const uint8_t *p, int n, int i) {
+  if (n - i < PBULK_MSG_HEAD || n - i < PBULK_MSG_HEAD + p[i + 2])
+    return -1;
+  return i + PBULK_MSG_HEAD + p[i + 2];
+}
+
 static int count_all(const uint8_t *p, int n) {  // message numbers used by the payload p[n]
   int c = 0;
-  for (int i = 0; i + 3 <= n; i += 3 + p[i + 2])
-    c += count(get16(p + i), p[i + 2]);
+  for (int i = 0, j; (j = msg_next(p, n, i)) >= 0; i = j)
+    c += count(plink_get16(p + i), p[i + 2]);
   return c;
 }
 
@@ -51,41 +50,54 @@ int pbulk_frame_len(const uint8_t *q, int n) {
 
 bool pbulk_parse(const uint8_t *p, int n, void (*f)(void *u, uint16_t key, const uint8_t *b, int len), void *u) {
   int i = 0;
-  while (i < n) {
-    if (n - i < 3 || n - i < 3 + p[i + 2])
-      return false;
-    f(u, get16(p + i), p + i + 3, p[i + 2]);
-    i += 3 + p[i + 2];
-  }
-  return true;
+  for (int j; (j = msg_next(p, n, i)) >= 0; i = j)
+    f(u, plink_get16(p + i), p + i + PBULK_MSG_HEAD, p[i + 2]);
+  return i == n;
 }
 
-int pbulk_skip(const uint8_t *p, int n, uint16_t num, uint16_t *next, uint8_t *out) {
+// The messages in p[n] are numbered from num. Copies the ones from *next on to out unless it's NULL, moves *next
+// past them and returns their length. -1 if p is malformed.
+static int skip(const uint8_t *p, int n, uint16_t num, uint16_t *next, uint8_t *out) {
   if (diff(num, *next) > 0)
     return 0;  // it starts after the one we want, so none of it follows on
   int i = 0, o = 0;
   uint16_t m = num;
-  while (i < n) {
-    if (n - i < 3 || n - i < 3 + p[i + 2])
-      return -1;
-    uint16_t key = get16(p + i);
+  for (int j; (j = msg_next(p, n, i)) >= 0; i = j) {
+    uint16_t key = plink_get16(p + i);
     int len = p[i + 2], c = count(key, len);
     int have = diff(*next, m);  // how many of this message's numbers we already have
     if (have < c) {
-      int skip = have > 0 ? have * 4 : 0;  // only DATA can be partly received
+      int part = have > 0 ? have * 4 : 0;  // only DATA can be partly received
       if (out) {
-        put16(out + o, key);
-        out[o + 2] = (uint8_t) (len - skip);
-        memcpy(out + o + 3, p + i + 3 + skip, len - skip);
+        plink_put16(out + o, key);
+        out[o + 2] = (uint8_t) (len - part);
+        memcpy(out + o + PBULK_MSG_HEAD, p + i + PBULK_MSG_HEAD + part, len - part);
       }
-      o += 3 + len - skip;
+      o += PBULK_MSG_HEAD + len - part;
     }
     m = (uint16_t) (m + c);
-    i += 3 + len;
   }
+  if (i != n)
+    return -1;
   if (diff(m, *next) > 0)
     *next = m;
   return o;
+}
+
+static bool well_formed(const uint8_t *p, int n) {
+  uint16_t next = 0;
+  return skip(p, n, 0, &next, NULL) >= 0;
+}
+
+// The other end's messages from num on, n bytes of them, when we want *next. It shouldn't send past that. If it
+// does RESYNC_AFTER times running we follow, and the ones in between are lost.
+static void follow(uint16_t num, int n, uint16_t *next, uint8_t *ahead, uint32_t *resyncs) {
+  if (n && diff(num, *next) > 0 && ++*ahead >= RESYNC_AFTER) {
+    *next = num;
+    (*resyncs)++;
+  }
+  if (diff(num, *next) <= 0)
+    *ahead = 0;
 }
 
 // ---------------------------------------------------------------- panel side
@@ -99,32 +111,89 @@ static unsigned rx_room(const pbulk_panel_t *p) {
   return (unsigned) (PBULK_RX_BUF - 1 - (p->head - p->tail + PBULK_RX_BUF) % PBULK_RX_BUF);
 }
 
-// How many bytes of our messages, from message `from` of out, fit in room bytes. *msgs gets their count.
-static int out_fit(const pbulk_panel_t *p, int from, int room, int *msgs) {
-  int i = 0, k = 0, b = 0, m = 0;
-  while (i < p->out_n) {
-    uint16_t key = get16(p->out + i);
-    int len = p->out[i + 2];
-    if (m >= from) {
-      if (b + 3 + len > room)
-        break;
-      b += 3 + len;
-      k += count(key, len);
-    }
-    m += count(key, len);
-    i += 3 + len;
-  }
-  *msgs = k;
-  return b;
+// Bytes of whole messages from offset at of out that fit in room
+static int out_fit(const pbulk_panel_t *p, int at, int room) {
+  int i = at, j;
+  while ((j = msg_next(p->out, p->out_n, i)) >= 0 && j - at <= room)
+    i = j;
+  return i - at;
 }
 
 static int out_bytes_from(const pbulk_panel_t *p, int from) {  // offset of message `from` in out
   int i = 0, m = 0;
-  while (i < p->out_n && m < from) {
-    m += count(get16(p->out + i), p->out[i + 2]);
-    i += 3 + p->out[i + 2];
-  }
+  for (int j; m < from && (j = msg_next(p->out, p->out_n, i)) >= 0; i = j)
+    m += count(plink_get16(p->out + i), p->out[i + 2]);
   return i;
+}
+
+// What the ESP has of ours, from frame f: the first of our messages in out that it doesn't have, counted from
+// out_num. Lets the main loop put the next ones once it has them all.
+static int acked(pbulk_panel_t *p, const uint8_t *f) {
+  if (plink_get16(f + PBULK_PSESS) != p->psess)
+    return 0;
+  uint16_t pnext = plink_get16(f + PBULK_PNEXT);
+  if (diff(pnext, p->pnum) > 0) {  // it wants what we never sent, so it heard an earlier session of ours
+    p->psess = new_session(p->psess);
+    return 0;
+  }
+  if (!p->out_full)
+    return 0;
+  int have = diff(pnext, p->out_num);
+  if (have < count_all(p->out, p->out_n))
+    return have > 0 ? have : 0;
+  p->out_full = false;  // it has them all, the main loop can put the next ones
+  return 0;
+}
+
+// Takes the new messages in frame f into buf for the main loop. PB_BUSY if they don't fit.
+static uint8_t take(pbulk_panel_t *p, const uint8_t *f) {
+  uint16_t num = plink_get16(f + PBULK_NUM);
+  follow(num, f[PBULK_N], &p->enext, &p->ahead, &p->resyncs);
+  uint16_t next = p->enext;
+  uint8_t tmp[PBULK_MAX];
+  int n = skip(f + PBULK_PAYLOAD, f[PBULK_N], num, &next, tmp);
+  if (n > 0 && rx_room(p) < (unsigned) n + 1) {
+    p->busy++;
+    return PB_BUSY;
+  }
+  // Into the ring as n, then the messages. Nothing new in it means our last answer got lost.
+  if (n > 0) {
+    uint16_t h = p->head;
+    p->buf[h] = (uint8_t) n;
+    h = (h + 1) % PBULK_RX_BUF;
+    for (int i = 0; i < n; i++) {
+      p->buf[h] = tmp[i];
+      h = (h + 1) % PBULK_RX_BUF;
+    }
+    __sync_synchronize();  // the batch is in buf before head says so
+    p->head = h;           // set last, the main loop may be reading
+  }
+  p->enext = next;
+  return PB_OK;
+}
+
+// Our answer to the ESP's frame, with as many of our messages from out_from on as fit in left_us
+static int answer(pbulk_panel_t *p, uint8_t *a, uint32_t left_us, uint8_t st, uint32_t end_us, int out_from) {
+  int at = p->out_full ? out_bytes_from(p, out_from) : 0, b = 0;
+  if (p->out_full && st != PB_REFUSED && st != PB_NO_GAPS) {
+    int room = (int) (left_us - PBUS_PANEL_US) / PBUS_BYTE_US - PBULK_ANSWER(0);
+    b = out_fit(p, at, room < PBULK_ANSWER_MAX ? room : PBULK_ANSWER_MAX);
+  }
+  unsigned want = p->waiting + (p->out_full ? p->out_n - at - b : 0);
+  a[0] = PBULK_ADDR;
+  a[1] = PBULK_FC_ANSWER;
+  a[PBULK_N] = (uint8_t) b;
+  plink_put16(a + PBULK_A_ESESS, p->esess);
+  plink_put16(a + PBULK_A_ENEXT, p->enext);
+  uint32_t ext = end_us > PBUS_END_US ? (end_us - PBUS_END_US) / PBUS_END_STEP_US : 0;
+  a[PBULK_A_STATUS] = (uint8_t) (st | (ext < 63 ? ext : 63) << 2);
+  plink_put16(a + PBULK_A_PSESS, p->psess);
+  // Number of our first message in it. With none waiting, the number our next one gets, in case the ESP just
+  // started.
+  plink_put16(a + PBULK_A_PNUM, (uint16_t) (p->out_full ? p->out_num + out_from : p->pnum));
+  a[PBULK_A_WANT] = want > 255 ? 255 : (uint8_t) want;
+  memcpy(a + PBULK_A_PAYLOAD, p->out + at, b);
+  return pbus_put_crc(a, PBULK_A_PAYLOAD + b);
 }
 
 int pbulk_panel_frame(pbulk_panel_t *p, uint8_t addr, const uint8_t *f, int n, uint32_t left_us, uint8_t say,
@@ -133,103 +202,41 @@ int pbulk_panel_frame(pbulk_panel_t *p, uint8_t addr, const uint8_t *f, int n, u
   if (ok && (f[1] != PBULK_FC_SEND || f[PBULK_PANEL] != addr))
     return 0;  // another panel's link: the ESP's frames to it, or its answers
   p->frames++;
-  if (!ok || pbulk_skip(f + PBULK_PAYLOAD, f[PBULK_N], 0, &(uint16_t) {0}, NULL) < 0) {
+  if (!ok || !well_formed(f + PBULK_PAYLOAD, f[PBULK_N])) {
     p->bad++;
     return 0;
   }
-  uint8_t len = f[PBULK_N], st = say;
-  uint16_t num = get16(f + PBULK_NUM), esess = get16(f + PBULK_ESESS);
+  uint16_t esess = plink_get16(f + PBULK_ESESS);
   if (esess != p->esess) {  // the ESP restarted, start from this frame's first message
     p->esess = esess;
-    p->enext = num;
+    p->enext = plink_get16(f + PBULK_NUM);
   }
-  // What the ESP has of ours
-  int out_from = 0;  // our first message in out that it doesn't have
-  if (get16(f + PBULK_PSESS) == p->psess) {
-    uint16_t pnext = get16(f + PBULK_PNEXT), pnum = p->pnum;
-    if (diff(pnext, pnum) > 0) {  // it wants what we never sent, so it heard an earlier session of ours
-      p->psess = new_session(p->psess);
-      p->sessions++;
-    } else if (p->out_full) {
-      int have = diff(pnext, p->out_num);
-      if (have >= count_all(p->out, p->out_n))
-        p->out_full = false;  // it has them all, the main loop can put the next ones
-      else if (have > 0)
-        out_from = have;
-    }
-  }
-  if (st != PB_OK) {
+  int out_from = acked(p, f);
+  uint8_t st = say;
+  if (st != PB_OK)
     p->refused++;
-  } else if (!len) {
-    p->polls++;
-  } else {
-    // It shouldn't send past what we have. If it does three times running, resync to what it sends.
-    if (diff(num, p->enext) > 0 && ++p->ahead >= 3) {
-      p->enext = num;
-      p->resyncs++;
-    }
-    if (diff(num, p->enext) <= 0)
-      p->ahead = 0;
-    uint16_t next = p->enext;
-    int take = pbulk_skip(f + PBULK_PAYLOAD, len, num, &next, NULL);
-    if (take > 0 && rx_room(p) < (unsigned) take + 1) {
-      st = PB_BUSY;
-      p->busy++;
-    } else if (take > 0) {
-      uint8_t tmp[PBULK_MAX];
-      pbulk_skip(f + PBULK_PAYLOAD, len, num, &p->enext, tmp);
-      uint16_t h = p->head;
-      p->buf[h] = (uint8_t) take;
-      h = (h + 1) % PBULK_RX_BUF;
-      for (int i = 0; i < take; i++) {
-        p->buf[h] = tmp[i];
-        h = (h + 1) % PBULK_RX_BUF;
-      }
-      p->head = h;  // set last, the main loop may be reading
-      p->taken++;
-    } else {
-      p->enext = next;  // nothing new in it, our last answer got lost
-    }
-  }
-  // Only answer if it will be off the bus in time, with as many of our messages as fit
+  else if (f[PBULK_N])
+    st = take(p, f);
+  // Only answer if it will be off the bus in time
   if (left_us < PBUS_PANEL_US + PBULK_ANSWER(0) * PBUS_BYTE_US) {
     p->late++;
     return 0;
   }
-  int k = 0, b = 0;
-  if (p->out_full && st != PB_REFUSED && st != PB_NO_GAPS) {
-    int room = (int) (left_us - PBUS_PANEL_US) / PBUS_BYTE_US - PBULK_ANSWER(0);
-    b = out_fit(p, out_from, room < PBULK_ANSWER_MAX ? room : PBULK_ANSWER_MAX, &k);
-  }
-  unsigned want = p->waiting + (p->out_full ? p->out_n - out_bytes_from(p, out_from) - b : 0);
-  a[0] = PBULK_ADDR;
-  a[1] = PBULK_FC_ANSWER;
-  a[PBULK_N] = (uint8_t) b;
-  put16(a + PBULK_A_ESESS, esess);
-  put16(a + PBULK_A_ENEXT, p->enext);
-  uint32_t ext = end_us > PBUS_END_US ? (end_us - PBUS_END_US) / PBUS_END_STEP_US : 0;
-  a[PBULK_A_STATUS] = (uint8_t) (st | (ext < 63 ? ext : 63) << 2);
-  put16(a + PBULK_A_PSESS, p->psess);
-  // Number of our first message in it. With none waiting, the number our next one gets, in case the ESP just
-  // started.
-  put16(a + PBULK_A_PNUM, (uint16_t) (p->out_full ? p->out_num + out_from : p->pnum));
-  a[PBULK_A_WANT] = want > 255 ? 255 : (uint8_t) want;
-  if (b)
-    memcpy(a + PBULK_A_PAYLOAD, p->out + out_bytes_from(p, out_from), b);
-  put_crc(a, PBULK_A_PAYLOAD + b);
-  return PBULK_ANSWER(b);
+  return answer(p, a, left_us, st, end_us, out_from);
 }
 
 int pbulk_panel_take(pbulk_panel_t *p, uint8_t *out) {
   uint16_t t = p->tail;
   if (t == p->head)
     return 0;
+  __sync_synchronize();  // buf after head, which the interrupt sets last
   int n = p->buf[t];
   t = (t + 1) % PBULK_RX_BUF;
   for (int i = 0; i < n; i++) {
     out[i] = p->buf[t];
     t = (t + 1) % PBULK_RX_BUF;
   }
+  __sync_synchronize();  // done with buf before tail frees it for the interrupt
   p->tail = t;
   return n;
 }
@@ -264,49 +271,44 @@ unsigned pbulk_esp_room(const pbulk_esp_t *t) { return t->qn < ESP_ROOM ? ESP_RO
 // Bytes at the front of the queue in messages that have gone out, all or part of them
 static int sent_bytes(const pbulk_esp_t *t) {
   int at = 0;
-  for (uint16_t m = t->num; at + 3 <= t->qn && diff(t->unsent, m) > 0; at += 3 + t->q[at + 2])
-    m = (uint16_t) (m + count(get16(t->q + at), t->q[at + 2]));
+  uint16_t m = t->num;
+  for (int j; diff(t->unsent, m) > 0 && (j = msg_next(t->q, t->qn, at)) >= 0; at = j)
+    m = (uint16_t) (m + count(plink_get16(t->q + at), t->q[at + 2]));
   return at;
 }
 
-bool pbulk_esp_pending(const pbulk_esp_t *t) { return t->qn > 0; }
-
-bool pbulk_esp_queued(const pbulk_esp_t *t, uint16_t key) {
-  for (int at = 0; at + 3 <= t->qn; at += 3 + t->q[at + 2])
-    if (get16(t->q + at) == key)
-      return true;
-  return false;
+// The first message with this key from byte `from` of the queue on, -1 if there's none
+static int find(const pbulk_esp_t *t, int from, uint16_t key) {
+  for (int at = from, j; (j = msg_next(t->q, t->qn, at)) >= 0; at = j)
+    if (plink_get16(t->q + at) == key)
+      return at;
+  return -1;
 }
+
+bool pbulk_esp_queued(const pbulk_esp_t *t, uint16_t key) { return find(t, 0, key) >= 0; }
 
 // Takes out the unsent message at `at`
 static void remove_msg(pbulk_esp_t *t, int at) {
-  int len = 3 + t->q[at + 2];
+  int len = PBULK_MSG_HEAD + t->q[at + 2];
   memmove(t->q + at, t->q + at + len, t->qn - at - len);
   t->qn = (uint16_t) (t->qn - len);
   t->last = t->last == at ? -1 : t->last > at ? (int16_t) (t->last - len) : t->last;
 }
 
-// The unsent message with this key, -1 if there's none
-static int unsent(const pbulk_esp_t *t, uint16_t key) {
-  for (int at = sent_bytes(t); at + 3 <= t->qn; at += 3 + t->q[at + 2])
-    if (get16(t->q + at) == key)
-      return at;
-  return -1;
-}
-
-bool pbulk_esp_send(pbulk_esp_t *t, uint16_t key, const uint8_t *b, int n, bool replace) {
-  if (n < 0 || n > (key == PBULK_DATA_KEY ? 252 : PBULK_MSG_MAX) || (key == PBULK_DATA_KEY && n % 4))
+bool pbulk_esp_send(pbulk_esp_t *t, uint16_t key, const uint8_t *b, int n, unsigned flags) {
+  if (n < 0 || n > (key == PBULK_DATA_KEY ? PBULK_DATA_MAX : PBULK_MSG_MAX) || (key == PBULK_DATA_KEY && n % 4))
     return false;  // DATA can be split, anything else has to fit the best window, or it would wait forever
-  int old = replace || key == K_HELLO ? unsent(t, key) : -1;  // a newer value or HELLO replaces one still waiting
-  if (old >= 0 && key != K_HELLO && t->q[old + 2] == n) {
-    memcpy(t->q + old + 3, b, n);
+  // a newer value or HELLO replaces one still waiting
+  int old = flags & (PBULK_REPLACE | PBULK_FIRST) ? find(t, sent_bytes(t), key) : -1;
+  if (old >= 0 && !(flags & PBULK_FIRST) && t->q[old + 2] == n) {
+    memcpy(t->q + old + PBULK_MSG_HEAD, b, n);
     return true;
   }
   if (old >= 0)
     remove_msg(t, old);
   // picture bytes are appended to the DATA message before them
-  if (key == PBULK_DATA_KEY && t->last >= 0 && get16(t->q + t->last) == PBULK_DATA_KEY &&
-      t->q[t->last + 2] + n <= 252) {
+  if (key == PBULK_DATA_KEY && t->last >= 0 && plink_get16(t->q + t->last) == PBULK_DATA_KEY &&
+      t->q[t->last + 2] + n <= PBULK_DATA_MAX) {
     if (t->qn + n > ESP_ROOM)
       return false;
     memcpy(t->q + t->qn, b, n);
@@ -315,61 +317,55 @@ bool pbulk_esp_send(pbulk_esp_t *t, uint16_t key, const uint8_t *b, int n, bool 
     return true;
   }
   // a HELLO goes ahead of the unsent messages, a restarted panel ignores everything before one
-  int at = key == K_HELLO ? sent_bytes(t) : t->qn;
-  if (t->qn + 3 + n > ESP_ROOM)
+  int at = flags & PBULK_FIRST ? sent_bytes(t) : t->qn, len = PBULK_MSG_HEAD + n;
+  if (t->qn + len > ESP_ROOM)
     return false;
-  memmove(t->q + at + 3 + n, t->q + at, t->qn - at);
-  t->last = at == t->qn ? (int16_t) at : t->last >= at ? (int16_t) (t->last + 3 + n) : t->last;
-  put16(t->q + at, key);
+  memmove(t->q + at + len, t->q + at, t->qn - at);
+  t->last = at == t->qn ? (int16_t) at : t->last >= at ? (int16_t) (t->last + len) : t->last;
+  plink_put16(t->q + at, key);
   t->q[at + 2] = (uint8_t) n;
-  memcpy(t->q + at + 3, b, n);
-  t->qn = (uint16_t) (t->qn + 3 + n);
+  memcpy(t->q + at + PBULK_MSG_HEAD, b, n);
+  t->qn = (uint16_t) (t->qn + len);
   return true;
 }
 
 void pbulk_esp_drop_unsent(pbulk_esp_t *t, bool (*keep)(uint16_t key)) {
   int at = 0, o = 0, sent = sent_bytes(t);
   t->last = -1;
-  while (at + 3 <= t->qn) {
-    int len = 3 + t->q[at + 2];
-    if (at < sent || keep(get16(t->q + at))) {
-      memmove(t->q + o, t->q + at, len);
+  for (int j; (j = msg_next(t->q, t->qn, at)) >= 0; at = j)
+    if (at < sent || keep(plink_get16(t->q + at))) {
+      memmove(t->q + o, t->q + at, j - at);
       t->last = (int16_t) o;
-      o += len;
+      o += j - at;
     }
-    at += len;
-  }
   t->qn = (uint16_t) o;
 }
 
 // Splits the DATA message at `at` in two: `part` bytes, then the rest
 static void split(pbulk_esp_t *t, int at, int part) {
-  int cut = at + 3 + part;
-  memmove(t->q + cut + 3, t->q + cut, t->qn - cut);
+  int cut = at + PBULK_MSG_HEAD + part;
+  memmove(t->q + cut + PBULK_MSG_HEAD, t->q + cut, t->qn - cut);
   t->q[cut] = t->q[at];
   t->q[cut + 1] = t->q[at + 1];
   t->q[cut + 2] = (uint8_t) (t->q[at + 2] - part);
   t->q[at + 2] = (uint8_t) part;
-  t->qn += 3;
+  t->qn += PBULK_MSG_HEAD;
   if (t->last == at)
     t->last = (int16_t) cut;
   else if (t->last > at)
-    t->last += 3;
+    t->last += PBULK_MSG_HEAD;
 }
 
 // Bytes from the front of the queue that fit in max: whole messages, DATA split on a 4-byte boundary
 static int fill(pbulk_esp_t *t, int max) {
   int at = 0;
-  while (at < t->qn) {
-    int whole = 3 + t->q[at + 2];
-    if (at + whole <= max) {
-      at += whole;
+  for (int j; (j = msg_next(t->q, t->qn, at)) >= 0; at = j) {
+    if (j <= max)
       continue;
-    }
-    int part = (max - at - 3) & ~3;
-    if (get16(t->q + at) == PBULK_DATA_KEY && part >= 4 && t->qn + 3 <= PBULK_ESP_BUF) {
+    int part = (max - at - PBULK_MSG_HEAD) & ~3;
+    if (plink_get16(t->q + at) == PBULK_DATA_KEY && part >= 4 && t->qn + PBULK_MSG_HEAD <= PBULK_ESP_BUF) {
       split(t, at, part);
-      at += 3 + part;
+      at += PBULK_MSG_HEAD + part;
     }
     break;
   }
@@ -379,23 +375,23 @@ static int fill(pbulk_esp_t *t, int max) {
 // The panel has our messages before `next`: drop them
 static void drop(pbulk_esp_t *t, uint16_t next) {
   int have = diff(next, t->num), at = 0;
-  while (have > 0 && at < t->qn) {
-    uint16_t key = get16(t->q + at);
+  for (int j; have > 0 && (j = msg_next(t->q, t->qn, at)) >= 0; at = j) {
+    uint16_t key = plink_get16(t->q + at);
     int len = t->q[at + 2], c = count(key, len);
     if (c <= have) {
-      at += 3 + len;
       have -= c;
       t->num = (uint16_t) (t->num + c);
       continue;
     }
     // it has part of a DATA message: cut that part off the front
-    memmove(t->q + at + 3, t->q + at + 3 + have * 4, t->qn - (at + 3 + have * 4));
+    int from = at + PBULK_MSG_HEAD;
+    memmove(t->q + from, t->q + from + have * 4, t->qn - (from + have * 4));
     t->q[at + 2] = (uint8_t) (len - have * 4);
     t->qn -= (uint16_t) (have * 4);
     if (t->last > at)
       t->last -= (int16_t) (have * 4);
     t->num = (uint16_t) (t->num + have);
-    have = 0;
+    break;
   }
   memmove(t->q, t->q + at, t->qn - at);
   t->qn -= (uint16_t) at;
@@ -411,6 +407,8 @@ void pbulk_esp_no_answer(pbulk_esp_t *t) {
   if (t->margin_us < 2000)
     t->margin_us += PBULK_MARGIN_US;
 }
+
+void pbulk_esp_retry(pbulk_esp_t *t) { t->refused = t->no_gaps = false; }
 
 int pbulk_esp_window(pbulk_esp_t *t, uint32_t left_us, uint8_t *out) {
   pbulk_esp_no_answer(t);
@@ -428,8 +426,8 @@ int pbulk_esp_window(pbulk_esp_t *t, uint32_t left_us, uint8_t *out) {
   }
   int theirs = t->want < PBULK_ANSWER_MAX ? t->want : PBULK_ANSWER_MAX;
   int fit = over - (theirs < over ? theirs : over);
-  int head = t->qn ? 3 + t->q[2] : 0;  // else a message that can't be split could wait behind theirs forever
-  if (head > fit && head <= over && get16(t->q) != PBULK_DATA_KEY)
+  int head = msg_next(t->q, t->qn, 0);  // else a message that can't be split could wait behind theirs forever
+  if (head > fit && head <= over && plink_get16(t->q) != PBULK_DATA_KEY)
     fit = head;
   if (fit > PBULK_MAX)
     fit = PBULK_MAX;
@@ -445,14 +443,13 @@ int pbulk_esp_window(pbulk_esp_t *t, uint32_t left_us, uint8_t *out) {
   out[1] = PBULK_FC_SEND;
   out[PBULK_N] = (uint8_t) n;
   out[PBULK_PANEL] = t->panel;
-  put16(out + PBULK_ESESS, t->session);
-  put16(out + PBULK_NUM, t->num);
-  put16(out + PBULK_PSESS, t->psess);
-  put16(out + PBULK_PNEXT, t->pnext);
+  plink_put16(out + PBULK_ESESS, t->session);
+  plink_put16(out + PBULK_NUM, t->num);
+  plink_put16(out + PBULK_PSESS, t->psess);
+  plink_put16(out + PBULK_PNEXT, t->pnext);
   memcpy(out + PBULK_PAYLOAD, t->q, n);
-  put_crc(out, PBULK_PAYLOAD + n);
   t->sent = true;
-  return PBULK_FRAME(n);
+  return pbus_put_crc(out, PBULK_PAYLOAD + n);
 }
 
 uint32_t pbulk_esp_gap_left(const pbulk_esp_t *t, pbus_gaps_t *g, uint32_t now_us) {
@@ -473,8 +470,8 @@ void pbulk_esp_took(pbulk_esp_t *t, int32_t over_us) {
 
 void pbulk_esp_answer(pbulk_esp_t *t, const uint8_t *a, int n,
                       void (*f)(void *u, uint16_t key, const uint8_t *b, int len), void *u) {
-  if (pbulk_frame_len(a, n) != n || a[1] != PBULK_FC_ANSWER || !pbus_crc_ok(a, n) ||
-      get16(a + PBULK_A_ESESS) != t->session || !t->sent)
+  if (n < 3 || pbulk_frame_len(a, n) != n || a[1] != PBULK_FC_ANSWER || !pbus_crc_ok(a, n) ||
+      plink_get16(a + PBULK_A_ESESS) != t->session || !t->sent)
     return;
   t->sent = false;
   t->answered++;
@@ -492,7 +489,8 @@ void pbulk_esp_answer(pbulk_esp_t *t, const uint8_t *a, int n,
   }
   if (st == PB_BUSY)
     t->busy++;
-  uint16_t enext = get16(a + PBULK_A_ENEXT), pnum = get16(a + PBULK_A_PNUM);
+  uint16_t enext = plink_get16(a + PBULK_A_ENEXT), pnum = plink_get16(a + PBULK_A_PNUM),
+           psess = plink_get16(a + PBULK_A_PSESS);
   int have = diff(enext, t->num);
   if (have > diff(t->unsent, t->num)) {  // it wants what we never sent, so it heard an earlier session of ours
     t->session = new_session(t->session);
@@ -502,21 +500,13 @@ void pbulk_esp_answer(pbulk_esp_t *t, const uint8_t *a, int n,
     drop(t, enext);
   }
   t->want = a[PBULK_A_WANT];
-  if (!t->heard ||
-      get16(a + PBULK_A_PSESS) != t->psess) {  // the panel restarted, start from this answer's first message
-    t->heard = true;
-    t->psess = get16(a + PBULK_A_PSESS);
+  if (psess != t->psess) {  // the panel restarted or we hadn't heard it, start from this answer's first message
+    t->psess = psess;
     t->pnext = pnum;
   }
-  // It shouldn't send past what we have. If it does three times running, resync to what it sends.
-  if (a[PBULK_N] && diff(pnum, t->pnext) > 0 && ++t->ahead >= 3) {
-    t->pnext = pnum;
-    t->resyncs++;
-  }
-  if (diff(pnum, t->pnext) <= 0)
-    t->ahead = 0;
+  follow(pnum, a[PBULK_N], &t->pnext, &t->ahead, &t->resyncs);
   uint8_t mine[PBULK_ANSWER_MAX];
-  int k = pbulk_skip(a + PBULK_A_PAYLOAD, a[PBULK_N], pnum, &t->pnext, mine);
+  int k = skip(a + PBULK_A_PAYLOAD, a[PBULK_N], pnum, &t->pnext, mine);
   if (k > 0) {
     t->got++;
     pbulk_parse(mine, k, f, u);

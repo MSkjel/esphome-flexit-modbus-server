@@ -9,13 +9,11 @@
 #include <string>
 #include "animation.h"
 #include "items.h"
-
-// True while update.h has the panel in its bootloader. Weak, the harness builds without update.h.
-extern "C" bool flexit_panel_in_bootloader() __attribute__((weak));
 #include "panel_link.h"
 #include "picture.h"
 #include "plink.h"
 #include "plink_icons.h"
+#include "settings.h"
 
 namespace flexit::panel {
 
@@ -32,9 +30,9 @@ struct Value {
   const char *id;
   uint16_t key;
   int32_t min, max;
-  uint16_t flags, cx60, scale;
+  uint16_t flags, cx60;
 };
-#define VALUE(id, key, field, lo, hi, fl, reg, sc) {#id, key, lo, hi, fl, reg, sc},
+#define VALUE(id, key, lo, hi, fl, reg) {#id, key, lo, hi, fl, reg},
 static const Value VALUES[] = {PLINK_VALUES(VALUE)};
 #undef VALUE
 
@@ -50,14 +48,15 @@ inline std::string note;
 inline bool note_queued;     // it's in the link's queue
 inline uint16_t note_psess;  // the panel's session at its last hello, the one the note is for
 
-// Registers the CX60 has written since we started, and those still to go to the panel, see hello()
+// Registers the CX60 has written since we started, and those still to go to the panel, see after_hello()
 inline std::bitset<0x200> seen, resend;
 
+// loop() sends it
 inline void notify(const std::string &message, const std::string &icon_name, const std::string &level) {
   int lv = level == "alarm" ? NOTE_ALARM : level == "warning" ? NOTE_WARNING : NOTE_INFO;
   note = {(char) icon(icon_name.empty() ? "info" : icon_name), (char) lv};
   note += cut(message, PLINK_TEXT_MAX);
-  note_queued = link::connected && link::send(K_NOTIFY, (const uint8_t *) note.data(), (int) note.size());
+  note_queued = false;
 }
 
 inline void show_view(const std::string &view) {
@@ -69,29 +68,39 @@ inline void show_view(const std::string &view) {
   }
 }
 
-// panel_set, by the setting's lower-case id. The panel doesn't echo what we set, so it's handled here as if the
-// panel had reported it. The LEDs only go by their selects, which hello() sends again.
-inline void set(const std::string &setting, int value) {
+// One of the panel's own settings, VF_PANEL in plink_values.h. The panel doesn't echo what we set, so it's handled
+// here as if the panel had reported it.
+inline void set(uint16_t key, int value) {
   for (auto &v : VALUES)
-    if ((v.flags & VF_LINK_W) && !(v.flags & (VF_CX60 | VF_ESP)) && v.key != K_LEDS && lower(v.id) == setting) {
+    if (v.key == key && (v.flags & VF_PANEL) == VF_PANEL) {
       if (value < v.min || value > v.max) {
-        ESP_LOGW("panel", "%s: %d to %d, not %d", setting.c_str(), (int) v.min, (int) v.max, value);
+        ESP_LOGW("panel", "%s: %d to %d, not %d", lower(v.id).c_str(), (int) v.min, (int) v.max, value);
         return;
       }
-      link::send(v.key, (uint32_t) value);
-      auto it = handlers.find(v.key);
+      link::send(key, (uint32_t) value);
+      auto it = handlers.find(key);
       if (it != handlers.end())
         it->second((uint32_t) value);
+      return;
+    }
+  ESP_LOGW("panel", "No panel setting 0x%03X", key);
+}
+
+// panel_set, by the setting's lower-case id
+inline void set(const std::string &setting, int value) {
+  for (auto &v : VALUES)
+    if ((v.flags & VF_PANEL) == VF_PANEL && lower(v.id) == setting) {
+      set(v.key, value);
       return;
     }
   ESP_LOGW("panel", "No panel setting called '%s'", setting.c_str());
 }
 
-// Local time in seconds since 2000-01-01, as the panel and the CS60 count
+// Local time in seconds since PLINK_EPOCH, as the panel and the CX60 count
 inline void send_time() {
   ESPTime t = id(flexit_panel_time).now();
   if (t.is_valid())
-    link::send(K_TIME, (uint32_t) (t.timestamp + ESPTime::timezone_offset() - 946684800));
+    link::send(K_TIME, (uint32_t) (t.timestamp + ESPTime::timezone_offset() - PLINK_EPOCH));
 }
 
 // 2 bits per LED from the lowest: alarm, filter, OK. The selects' options are in LED_* order.
@@ -101,11 +110,11 @@ inline void send_leds() {
                                  id(panel_led_ok).active_index().value_or(0) << 4));
 }
 
-// After the panel's hello. A panel that started on its own (asked) may have missed what the CX60 sent while it
-// was away, so every register it has written since we started goes again. The rest we only have from flash, and
-// the panel's copy may be newer. Not when the panel only answered our hello: it has them.
-inline void hello(bool asked) {
-  if (asked)
+// After the panel's hello. A panel that started may have missed what the CX60 sent while it was away, so every
+// register it has written since we started goes again. The rest we only have from flash, and the panel's copy may
+// be newer. Not when the panel only answered our hello: it has them.
+inline void after_hello(bool panel_started) {
+  if (panel_started)
     resend = seen;
   send_leds();
   send_time();
@@ -114,7 +123,7 @@ inline void hello(bool asked) {
   anim::restarted();
 }
 
-// The panel started or answered our hello. Unsent values follow our HELLO, hello() sends the rest again.
+// The panel started or answered our hello. Unsent values follow our HELLO, after_hello() sends the rest again.
 inline void got_hello(uint32_t v) {
   unsigned version = v >> 16;
   link::forget();
@@ -129,21 +138,19 @@ inline void got_hello(uint32_t v) {
     return;
   }
   ESP_LOGI("panel", "Panel says hello");
-  hello(v & HELLO_ASK);
+  settings::hello(v & HELLO_FRESH);
+  after_hello(v & HELLO_ASK);
 }
-
-// The panel's language from before a restart, so the items' texts go out in it straight away
-inline void restore_language() { language = (uint8_t) id(panel_language); }
 
 // A few at a time, like the items. Not the status block, which comes every ~110 ms anyway, nor the clock, which
 // send_time() covers.
 inline void send_registers() {
   for (uint16_t r = 0; r < resend.size() && resend.any() && link::waiting() < link::BACKLOG; r++) {
-    if (!resend[r] || (r >= 0x0BE && r <= 0x112) || r == 0x094 || r == 0x095) {
+    if (!resend[r] || (r >= PBUS_STATUS_FIRST && r <= PBUS_STATUS_LAST) || r == R_CLOCK_HI || r == R_CLOCK_LO) {
       resend.reset(r);
       continue;
     }
-    uint16_t v = id(server).read_holding_register((flexit_modbus_server::HoldingRegisterIndex) r);
+    uint16_t v = id(server).read_holding_register(r);
     if (!link::send(K_CX60_REG, (uint32_t) r << 16 | v))
       return;
     resend.reset(r);
@@ -153,7 +160,7 @@ inline void send_registers() {
 // panel_address: the bus address of the panel to link with
 inline void setup(uint8_t panel_address) {
   link::setup(panel_address);
-  restore_language();
+  language = (uint8_t) id(panel_language);  // from before a restart, so the items' texts go out in it straight away
   id(server).add_on_register_callback([](uint16_t reg, uint16_t) {
     if (reg < seen.size())
       seen.set(reg);
@@ -171,6 +178,7 @@ inline void setup(uint8_t panel_address) {
     anim::ack(v);
   };
   h[K_ANIM_GONE] = anim::gone;
+  h[K_SETTINGS] = settings::got;
   for (int i = 0; i < N_ITEMS; i++)
     h[K_ITEM_VALUE + i] = [i](uint32_t v) { item_set(i, v); };
   h[K_ITEM_HELP] = item_help;
@@ -198,40 +206,38 @@ inline void setup(uint8_t panel_address) {
   h[K_NIGHT] = [](uint32_t v) { id(panel_night).publish_state(v != 0); };
   h[K_KEY_LOCK] = [](uint32_t v) { id(panel_key_lock).publish_state(v != 0); };
 
-  // The CS60 only takes these from the lowest panel address, which is us, so the panel asks us to write them.
+  // The CX60 only takes these from the lowest panel address, which is us, so the panel asks us to write them.
   for (auto &v : VALUES)
     if (v.flags & VF_MASTER) {
-      uint16_t reg = v.cx60, scale = v.scale;
-      h[v.key] = [reg, scale](uint32_t x) {
+      uint16_t reg = v.cx60;
+      h[v.key] = [reg](uint32_t x) {
         ESP_LOGI("panel", "Panel sets 0x%03X to %d", reg, (int) (int16_t) x);
-        id(server).send_cmd((flexit_modbus_server::HoldingRegisterIndex) reg, (uint16_t) (x * scale));
+        id(server).send_cmd(reg, (uint16_t) x);
       };
     }
 
-  // The panel answers with its hello and settings, and hello() sends ours.
+  // The panel answers with its hello and settings, and after_hello() sends ours.
   link::send(K_HELLO, (uint32_t) PLINK_VERSION << 16 | HELLO_ASK);
 }
 
-// Every 20 ms
-inline void loop() {
-  static int last_hour = -1;  // local hour when the time was last sent
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Waddress"  // update.h is always there on the ESP
-  bool flashing = flexit_panel_in_bootloader && flexit_panel_in_bootloader();
-#pragma GCC diagnostic pop
+// The panel counts as connected while it answers, has our link version and isn't being flashed
+inline void track_connection() {
+  bool flashing = id(server).updating();
   bool connected = link::online() && compatible && !flashing;
-  if (connected != link::connected) {
-    link::connected = connected;
-    if (connected) {
-      ESP_LOGI("panel", "Panel connected");
-    } else if (flashing) {
-      ESP_LOGI("panel", "Panel is in its bootloader");
-    } else {
-      ESP_LOGW("panel", "Panel went quiet");
-    }
+  if (connected == link::connected)
+    return;
+  link::connected = connected;
+  if (connected) {
+    ESP_LOGI("panel", "Panel connected");
+  } else if (flashing) {
+    ESP_LOGI("panel", "Panel is away while it's flashed");
+  } else {
+    ESP_LOGW("panel", "Panel went quiet");
   }
+}
 
+// What the panel sent, to its handlers
+inline void dispatch() {
   auto in = std::move(link::in);
   link::in.clear();
   for (auto &m : in) {
@@ -248,15 +254,26 @@ inline void loop() {
       ESP_LOGV("panel", "Nothing here for 0x%03X = %u", m.first, (unsigned) m.second);
     }
   }
+}
 
-  // The note, once the panel's there, until it has it
-  if (connected && !note.empty()) {
-    if (!note_queued && link::room() >= 3 + note.size())
-      note_queued = link::send(K_NOTIFY, (const uint8_t *) note.data(), (int) note.size());
-    else if (note_queued && !link::queued(K_NOTIFY) && link::tx.psess == note_psess)
-      note.clear();
-  }
+// The note, until the panel has it
+inline void send_note() {
+  if (note.empty())
+    return;
+  if (!note_queued && link::fits(note.size()))
+    note_queued = link::send(K_NOTIFY, (const uint8_t *) note.data(), (int) note.size());
+  else if (note_queued && !link::queued(K_NOTIFY) && link::tx.psess == note_psess)
+    note.clear();
+}
 
+// Every 20 ms
+inline void loop() {
+  static int last_hour = -1;  // local hour when the time was last sent
+  track_connection();
+  dispatch();
+  bool connected = link::connected;
+  if (connected)
+    send_note();
   // Each new local hour, so a DST change shows right away.
   ESPTime t = id(flexit_panel_time).now();
   if (connected && t.is_valid() && t.hour != last_hour) {
@@ -265,6 +282,7 @@ inline void loop() {
   }
   link::log_stats();
   if (connected) {
+    settings::loop();
     send_registers();
     items_loop();
   }

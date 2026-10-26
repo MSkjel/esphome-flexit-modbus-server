@@ -1,11 +1,11 @@
 # One of your text sensors on the panel, read-only, on the smart home or comfort page and as a dashboard tile if
-# you pick it. The panel has room for 15 bytes of it, longer texts are cut.
+# you pick it. Longer texts are cut, see docs/panel.md#how-long-texts-can-be.
 #   - path: packages/panel/text.yaml
 #     vars: {entity: washer_state, label: Washer|Vaskemaskin, icon: washer}
 # name, label, help, icon, page, view and menu work as in sensor.yaml. A state like "Washing|Vasker" shows the
 # part for the panel's language.
 defaults:
-  name: ""
+  name: ${entity}
   icon: circle
   help: ""
   page: smart_home
@@ -16,7 +16,7 @@ esphome:
   on_boot:
     - then:
         - lambda: |-
-            static int i = flexit::panel::Item(std::string("${name}").empty() ? "${entity}" : "${name}", ITEM_TEXT)
+            static int i = flexit::panel::Item("${name}", ITEM_TEXT)
                                .label(R"~(${label})~")
                                .help(R"~(${help})~")
                                .icon("${icon}")
@@ -24,6 +24,4 @@ esphome:
                                .view(${view})
                                .menu(${menu})
                                .add();
-            id(${entity}).add_on_state_callback([](const std::string &s) { flexit::panel::item_value_text(i, s); });
-            if (id(${entity}).has_state())
-              flexit::panel::item_value_text(i, id(${entity}).state);
+            flexit::panel::follow(i, id(${entity}));
