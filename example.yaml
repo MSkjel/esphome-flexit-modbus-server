@@ -19,7 +19,7 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  fast_connect: true             # needed if powered from the CS60
+  fast_connect: true             # needed if powered from the CX60
 
 substitutions:
   # XIAO RS485 board pins, change these for your hardware
