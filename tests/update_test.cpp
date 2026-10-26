@@ -1,7 +1,7 @@
-// The panel updater on a PC: the download, the FC4 reply matcher, the stream's name, what each panel gets, and a
-// panel left in its bootloader.
+// The panel updater on a PC: the download, the FC4 reply matcher, the stream's name, what each panel gets, a panel
+// left in its bootloader, the reset after a failure and millis() wrapping round.
 //   g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stubs -Ipackages/code
-//     tests/update_test.cpp packages/code/panel/pbus.c -o update_test
+//     tests/update_test.cpp packages/code/panel/update.cpp packages/code/panel/pbus.c -o update_test
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -13,7 +13,9 @@
 #include "check.h"
 #include "esphome/core/application.h"
 #include "esphome/core/helpers.h"
-#define USE_ESP32
+#include "panel/plink_values.h"
+#include "panel/update.h"
+using namespace flexit::panel::update;
 
 namespace esphome {
 static uint32_t now_ms;
@@ -22,20 +24,22 @@ uint32_t micros() { return now_ms * 1000; }
 }  // namespace esphome
 using namespace esphome;
 
-// The component, as much as update.h uses. Frames sent go to tx.
-struct Server {
+// The component and settings.h, as much as update.cpp uses. Frames sent go to tx.
+static bool settings_asked, settings_in = true, settings_back;
+struct Server : Hooks {
   std::vector<std::vector<uint8_t>> tx;
   bool updating = false;
   uint8_t own = 1;
-  void send_frame(uint8_t *f, size_t n) { tx.emplace_back(f, f + n); }
-  void expect_reply(uint8_t, uint8_t, size_t) {}
-  uint8_t server_address() const { return own; }
-  void set_updating(bool u) { updating = u; }
-  uint32_t quiet_min_us() { return 100000; }
-  bool is_own_frame() const { return false; }
-  template<typename F> void add_on_status_callback(F) {}
-  template<typename F> void add_on_read_callback(F) {}
-  template<typename F> void add_on_frame_callback(F) {}
+  uint32_t quiet_us = 100000;  // since the last frame on the bus
+  void send_frame(uint8_t *f, size_t n) override { tx.emplace_back(f, f + n); }
+  void expect_reply(uint8_t, uint8_t, size_t) override {}
+  uint8_t server_address() override { return own; }
+  void set_updating(bool u) override { updating = u; }
+  uint32_t quiet_min_us() override { return quiet_us; }
+  bool is_own_frame() override { return false; }
+  void save_settings() override { settings_asked = true; }
+  bool settings_saved() override { return settings_in; }
+  void settings_flashed() override { settings_back = true; }
 } server;
 
 // the staged stream, written and read back through the partition API
@@ -60,17 +64,6 @@ esp_err_t esp_partition_write(const esp_partition_t *, size_t off, const void *s
   writes.push_back(len);
   return ESP_OK;
 }
-
-#include "panel/update.h"
-using namespace flexit::panel::update;
-
-// settings.h, as much as update.h uses
-static bool settings_asked, settings_in = true, settings_back;
-namespace flexit::panel::settings {
-void save() { settings_asked = true; }
-bool saved() { return settings_in; }
-void flashed() { settings_back = true; }
-}  // namespace flexit::panel::settings
 
 // [addr 04 08 ir0..ir3 crc]
 static std::vector<uint8_t> fc4(uint8_t addr, uint16_t ir0, uint16_t ir1, uint16_t ir2, uint16_t ir3) {
@@ -161,6 +154,7 @@ static void probe(const std::string &name, std::vector<std::vector<uint8_t>> ans
 }
 
 int main() {
+  hooks = &server;
   on_status = [](const std::string &s) { last_status = s; };
 
   // the download: a block, then a tail padded to 16, with two read timeouts in the middle
@@ -392,6 +386,46 @@ int main() {
           (odd[1] == FC ? "The panel dropped out of the update" : "Lost the panel's answer at a bad moment") +
               std::string(". Nothing's broken, just try again"));
   }
+
+  // a failure right after the CX60 sent: the loader's reset waits for a quiet bus, like every request
+  server.tx.clear();
+  server.updating = F.bl_seen = true;
+  F.awaiting = false;
+  enter_phase(PIECE_CONFIRM);
+  pump();
+  server.quiet_us = 0;
+  const auto busy = frame({BL_ADDR, FC | 0x80, EXC_BUSY});
+  on_frame(busy.data(), busy.size());
+  pump();
+  CHECK(F.phase == ABORT && resets() == 0 && server.updating);
+  server.quiet_us = 100000;
+  pump();
+  CHECK(F.phase == FAIL && resets() == 1 && !server.updating &&
+        last_status == "Lost the panel's answer at a bad moment. Nothing's broken, just try again");
+
+  // millis() wrapping round while the loader restarts after its reset: the kick still waits CLEAN_MS
+  server.tx.clear();
+  server.updating = true;
+  now_ms = UINT32_MAX - 1000;
+  F.phase = IDLE;
+  F.start_ms = now_ms;
+  F.app_addr = 3;
+  F.awaiting = false;
+  enter_phase(CLEAN);
+  pump();
+  CHECK(F.phase == ENTER && resets() == 1 && server.tx.size() == 1);
+  now_ms += 100;
+  pump();
+  CHECK(F.phase == ENTER && server.tx.size() == 1);
+  now_ms += CLEAN_MS;  // past the wrap
+  pump();
+  CHECK(F.phase == WAIT_BL && server.tx.size() == 2 && server.tx[1] == std::vector<uint8_t>({3, FC, SUB_ARM, 0}));
+  pump();
+  CHECK(server.tx.size() == 2);  // the first poll FIRST_POLL_MS after the kick
+  now_ms += FIRST_POLL_MS;
+  pump();
+  CHECK(server.tx.size() == 3 && server.tx[2][2] == SUB_STATUS);
+  server.updating = false;
 
   // a panel left in its bootloader by a failed flash: found by its status, reset and armed with no kick
   auto arm = [] {

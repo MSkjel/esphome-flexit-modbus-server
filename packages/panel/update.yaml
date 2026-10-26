@@ -92,10 +92,5 @@ esphome:
     - priority: 500
       then:
         - lambda: |-
-            flexit::panel::handlers[K_BUS_ADDR] = [](uint32_t v) {  // the address the panel reports
-              if (v >= 1 && v <= 247)
-                flexit::panel::update::panel_addr = (uint8_t) v;
-            };
-            flexit::panel::update::on_status = [](const std::string &s) { id(panel_firmware_update).publish_state(s); };
-            flexit::panel::update::on_progress = [](int pct) { id(panel_firmware_progress).publish_state(pct); };
-            flexit::panel::update::setup();
+            flexit::panel::update::setup([](const std::string &s) { id(panel_firmware_update).publish_state(s); },
+                                         [](int pct) { id(panel_firmware_progress).publish_state(pct); });

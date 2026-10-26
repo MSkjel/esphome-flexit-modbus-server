@@ -19,13 +19,8 @@ esphome:
     - then:
         - lambda: |-
             static int i = flexit::panel::Item("${name}", ITEM_TOGGLE)
-                               .label(R"~(${label})~")
-                               .help(R"~(${help})~")
+                               .vars(R"~(${label})~", R"~(${help})~", "${icon}", "${page}", ${view}, ${menu})
                                .states(R"~(${on_text})~", R"~(${off_text})~")
-                               .icon("${icon}")
-                               .page("${page}")
-                               .view(${view})
-                               .menu(${menu})
                                .read_only()
                                .add();
             flexit::panel::follow(i, id(${entity}));

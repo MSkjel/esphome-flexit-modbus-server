@@ -40,9 +40,7 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
     turn_on_action:
-      - lambda: |-
-          if (flexit::panel::anim::sources.count("${name}"))  // before on_boot it is shown from there
-            flexit::panel::anim::show("${name}");
+      - lambda: flexit::panel::anim::switched_on("${name}");
     turn_off_action:
       - lambda: flexit::panel::anim::clear("${name}");
 
@@ -52,5 +50,3 @@ esphome:
       then:
         - lambda: |-
             flexit::panel::anim::add_gif("${name}", id(panel_animation_${name}), id(panel_anim_${name}), ${frame_ms}, ${x}, ${y}, ${scale}, ${drift_x}, ${drift_y}, ${fade_ms});
-            if (id(panel_anim_${name}).state)
-              flexit::panel::anim::show("${name}");

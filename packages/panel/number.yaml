@@ -19,18 +19,10 @@ esphome:
         - lambda: |-
             auto &t = id(${entity}).traits;
             static int i = flexit::panel::Item("${name}", ITEM_NUMBER)
-                               .label(R"~(${label})~")
-                               .unit(std::string(R"~(${unit})~").empty()
-                                         ? id(${entity}).get_unit_of_measurement_ref().str()
-                                         : R"~(${unit})~")
-                               .help(R"~(${help})~")
-                               .icon("${icon}")
-                               .decimals(std::string("${decimals}").empty() ? flexit::panel::decimals_of(t.get_step())
-                                                                        : atoi("${decimals}"))
+                               .vars(R"~(${label})~", R"~(${help})~", "${icon}", "${page}", ${view}, ${menu})
+                               .unit_or(R"~(${unit})~", id(${entity}))
+                               .decimals_or("${decimals}", flexit::panel::decimals_of(t.get_step()))
                                .range(t.get_min_value(), t.get_max_value(), t.get_step())
-                               .page("${page}")
-                               .view(${view})
-                               .menu(${menu})
                                .on_set([](float v) { id(${entity}).make_call().set_value(v).perform(); })
                                .add();
             flexit::panel::follow(i, id(${entity}));

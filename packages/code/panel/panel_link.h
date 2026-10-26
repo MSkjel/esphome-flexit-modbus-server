@@ -12,10 +12,10 @@
 namespace flexit::panel::link {
 
 // Max bytes queued before items, pictures and animations wait, so values and notes don't wait long behind them
-static constexpr unsigned BACKLOG = 512;
-static constexpr uint32_t SILENT_MS = 30000;     // the panel normally answers every cycle, this long without it's gone
-static constexpr uint32_t ASK_AGAIN_MS = 60000;  // after a refusal started
-static constexpr uint32_t STATS_MS = 60000;      // between the link's stats in the log
+inline constexpr unsigned BACKLOG = 512;
+inline constexpr uint32_t SILENT_MS = 30000;     // the panel normally answers every cycle, this long without it's gone
+inline constexpr uint32_t ASK_AGAIN_MS = 60000;  // after a refusal started
+inline constexpr uint32_t STATS_MS = 60000;      // between the link's stats in the log
 
 inline pbulk_esp_t tx;                                 // outgoing message queue and link state
 inline pbus_gaps_t gaps;                               // tracks the gaps after the CX60's polls
@@ -25,16 +25,17 @@ inline std::vector<std::pair<uint16_t, uint32_t>> in;  // from the panel, for pa
 inline uint32_t log_ms, gap_frames;
 inline uint32_t sent_us;  // micros() when our last frame was out
 // An answer starts within PBUS_TURN_US of our frame. Nothing on the way well after that, so none is coming.
-static constexpr uint32_t NO_ANSWER_US = PBUS_TURN_US + 1000;
+inline constexpr uint32_t NO_ANSWER_US = PBUS_TURN_US + 1000;
 
 // The panel refuses the link, or frames in the gaps after polls, while the CX60 doesn't keep to its timing. We ask
 // again a minute after it started, and it lets us back in once the CX60 has kept to it for a while. Each is logged
 // once when it starts and once when it ends.
-inline struct {
+struct Refusal {
   uint32_t ms;      // when the last one started
   bool link, gaps;  // logged as started, not yet as ended
   bool in_gap;      // the last frame went in a gap after a poll
-} refusal;
+};
+inline Refusal refusal;
 
 inline void log_refusals(bool was_refused, bool was_no_gaps, bool answered) {
   auto &r = refusal;
@@ -79,7 +80,7 @@ inline void send_window(uint32_t left_us, bool in_gap) {
 
 // Status callback, in the quiet after the CX60's status broadcast
 inline void window() {
-  if (id(server).updating())  // update.h is flashing the panel and has the bus
+  if (id(server).updating())  // update.cpp is flashing the panel and has the bus
     return;
   if ((tx.refused || tx.no_gaps) && millis() - refusal.ms > ASK_AGAIN_MS) {
     ESP_LOGD("panel", "Asking the panel again");

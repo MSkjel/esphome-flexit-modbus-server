@@ -1,6 +1,7 @@
 // Items are the ESP's own entities on the panel. packages/panel/ adds them at boot and the panel gets them all
 // after each hello, as the link has room. Messages are K_ITEM_* in plink_keys.h.
 #pragma once
+#include <strings.h>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -9,9 +10,9 @@
 #include <string>
 #include <vector>
 #include "panel_link.h"
-#include "picture.h"
 #include "plink.h"
 #include "plink_icons.h"
+#include "util.h"
 
 namespace flexit::panel {
 
@@ -22,22 +23,22 @@ inline std::string lower(const char *s) {
   return r;
 }
 
-// Index of the id whose name in lower case matches, or -1
+// Index of name in ids, in any case, or -1
 template<size_t N> int find(const char *const (&ids)[N], const std::string &name) {
   for (size_t i = 0; i < N; i++)
-    if (lower(ids[i]) == name)
+    if (!strcasecmp(ids[i], name.c_str()))
       return (int) i;
   return -1;
 }
 
 #define ID_NAME(id, ...) #id,
-static const char *const ICON_IDS[] = {PLINK_ICONS(ID_NAME)};
+inline constexpr const char *ICON_IDS[] = {PLINK_ICONS(ID_NAME)};
 #undef ID_NAME
 
-inline int icon(const std::string &name) {
+inline uint8_t icon(const std::string &name) {
   int i = find(ICON_IDS, name);
   if (i >= 0)
-    return i;
+    return (uint8_t) i;
   ESP_LOGW("panel", "No icon called '%s'", name.c_str());
   return ICN_CIRCLE;
 }
@@ -104,6 +105,16 @@ class Item {
     dec_ = std::clamp(d, 0, 3);
     return *this;
   }
+  // The vars every packages/panel/ item has
+  Item &vars(const std::string &label, const std::string &help, const std::string &icon, const std::string &page,
+             bool view, bool menu) {
+    return this->label(label).help(help).icon(icon).page(page).view(view).menu(menu);
+  }
+  // The unit and decimals vars. "" is the entity's own unit, or d decimals.
+  template<typename Entity> Item &unit_or(const std::string &s, Entity &&entity) {
+    return unit(s.empty() ? std::string(ptr_of(entity)->get_unit_of_measurement_ref().str()) : s);
+  }
+  Item &decimals_or(const std::string &s, int d) { return decimals(s.empty() ? d : atoi(s.c_str())); }
   // In the entity's units. Range and step for a number, ends of the gauge and bar for a sensor.
   Item &range(float min, float max, float step = 1) {
     min_ = min;
@@ -150,6 +161,7 @@ class Item {
 
   std::string name_, label_, unit_, help_, icon_ = "circle", on_, off_, text_;
   uint8_t type_, flags_ = ITEMF_VIEW | ITEMF_MENU;
+  uint8_t icon_id_ = ICN_CIRCLE;  // icon_ as add() found it
   int dec_ = 0;
   float min_ = 0, max_ = 1, step_ = 1, level_[4] = {};
   std::function<void(float)> set_;
@@ -232,6 +244,7 @@ inline int Item::add() {
     return -1;
   }
   make_id();
+  icon_id_ = panel::icon(icon_);
   if (type_ == ITEM_SENSOR || type_ == ITEM_TEXT)
     flags_ |= ITEMF_RO;
   warn_cut("label", label_, ITEM_LABEL_LEN - 1);
@@ -251,7 +264,7 @@ inline Item *at(int i) { return i >= 0 && i < (int) items.size() ? &items[i] : n
 // Layout at K_ITEM_DEF in plink_keys.h
 inline bool send_def(int i) {
   const Item &it = items[i];
-  uint8_t d[ITEM_DEF_LEN] = {it.type_, it.flags_, (uint8_t) icon(it.icon_), (uint8_t) it.dec_};
+  uint8_t d[ITEM_DEF_LEN] = {it.type_, it.flags_, it.icon_id_, (uint8_t) it.dec_};
   plink_put16(d + ITEM_DEF_STEP, (uint16_t) std::min<int32_t>(65535, std::max<int32_t>(1, it.scaled(it.step_))));
   plink_put16(d + ITEM_DEF_ID, it.id_);
   plink_put32(d + ITEM_DEF_MIN, (uint32_t) it.scaled(it.min_));
@@ -324,10 +337,20 @@ inline void item_value(int i, const std::string &both) {
 
 // The entity's state on item i, now and as it changes. id() is a pointer in ESPHome's lambdas.
 template<typename Entity> void follow(int i, Entity &&entity) {
-  auto *e = picture::ptr_of(entity);
+  auto *e = ptr_of(entity);
   e->add_on_state_callback([i](const auto &v) { item_value(i, v); });
   if (e->has_state())
     item_value(i, e->state);
+}
+
+// ha_switch.yaml: toggle item i on while text_sensor, a Home Assistant entity's state, is on_state. A dash while
+// there's no state.
+template<typename TextSensor> void follow_state(int i, TextSensor &&text_sensor, const std::string &on_state) {
+  item_value(i, NAN);
+  ptr_of(text_sensor)->add_on_state_callback([i, on_state](const std::string &s) {
+    bool unknown = s.empty() || s == "unavailable" || s == "unknown";
+    item_value(i, unknown ? NAN : s == on_state);
+  });
 }
 
 // met.h uses these to name the weather item after the weather
@@ -344,6 +367,10 @@ inline void item_icon(int i, const std::string &name) {
   if (!it || it->icon_ == name)
     return;
   it->icon_ = name;
+  uint8_t id = icon(name);
+  if (id == it->icon_id_)
+    return;
+  it->icon_id_ = id;
   it->need_ |= NEED_DEF;
 }
 

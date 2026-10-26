@@ -49,13 +49,8 @@ esphome:
     - then:
         - lambda: |-
             static int i = flexit::panel::Item("${name}", ITEM_TOGGLE)
-                               .label(R"~(${label})~")
-                               .help(R"~(${help})~")
+                               .vars(R"~(${label})~", R"~(${help})~", "${icon}", "${page}", ${view}, ${menu})
                                .states(R"~(${on_text})~", R"~(${off_text})~")
-                               .icon("${icon}")
-                               .page("${page}")
-                               .view(${view})
-                               .menu(${menu})
                                .echo_ms(15000)  // a lock can take a while, and may say "locking" first
                                .on_set([](float v) {
                                  if (v)
@@ -64,8 +59,4 @@ esphome:
                                    id(ha_${name}).turn_off();
                                })
                                .add();
-            flexit::panel::item_value(i, NAN);  // a dash, a panel change goes back to it until HA has a state
-            id(ha_${name}_state).add_on_state_callback([](const std::string &s) {
-              bool unknown = s.empty() || s == "unavailable" || s == "unknown";
-              flexit::panel::item_value(i, unknown ? NAN : s == "${on_state}");
-            });
+            flexit::panel::follow_state(i, id(ha_${name}_state), "${on_state}");
