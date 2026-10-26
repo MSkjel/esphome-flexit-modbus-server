@@ -58,3 +58,6 @@ packages:
     file: ../packages/panel/met.yaml
     vars: {latitude: "59.9139", longitude: "10.7522"}
   panel_update: !include ../packages/panel/update.yaml
+  panel_camera: !include
+    file: ../packages/panel/camera.yaml
+    vars: {component_source: ../esphome/components}  # this checkout's, not GitHub's

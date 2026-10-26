@@ -101,6 +101,7 @@ struct State {
   Zip zip;
 };
 inline State S;
+inline void (*on_shown)() = nullptr;  // what the panel shows changed, for snapshot.h's camera
 
 inline void status(const std::string &s) { status(id(panel_picture_status), s); }
 
@@ -203,6 +204,8 @@ inline bool ask() {
   reset();
   if (S.want.empty()) {
     S.shown = Pic();
+    if (on_shown)
+      on_shown();
     status("None");
     return false;
   }
@@ -458,6 +461,8 @@ inline void now_shown() {
   S.made = Pic();
   S.phase = IDLE;
   S.t.tries = 0;
+  if (on_shown)
+    on_shown();
   status("Shown: " + S.name + what(S.shown));
 }
 

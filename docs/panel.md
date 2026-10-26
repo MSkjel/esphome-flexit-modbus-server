@@ -64,6 +64,7 @@ started. The rest of the panel's settings are in its own menu and [`panel_set`](
 | `panel/sensor.yaml`, `binary_sensor.yaml`, `text.yaml`, `switch.yaml`, `number.yaml`, `button.yaml` | One of the ESP's own entities on the panel |
 | `panel/fireplace.yaml`, `humidity_boost.yaml`, `co2.yaml`, `summer_cooling.yaml` | That package on the panel's comfort page |
 | `panel/picture.yaml`, `online_picture.yaml`, `ha_picture.yaml`, `animation.yaml`, `met.yaml` | Screensaver pictures |
+| `panel/camera.yaml` | The screensaver picture as a camera in Home Assistant |
 | `panel/update.yaml` | Flashes the panel's firmware from Home Assistant |
 
 ## Your own things on the panel
@@ -266,7 +267,13 @@ picks which one. The panel's own menu has the clock styles that go over it.
         vars: {name: flame, file: animations/flame.gif, resize: 48x48, x: 256, y: 16}
       - path: packages/panel/met.yaml              # the weather where you are, named "weather"
         vars: {latitude: "59.9139", longitude: "10.7522", scene: coast}
+      - packages/panel/camera.yaml                 # the picture as a camera in Home Assistant
 ```
+
+`camera.yaml` gives Home Assistant a `Panel Picture` camera with the picture the panel shows, without the clock
+and the animations the panel draws over it, black with none. It's made when Home Assistant asks for it: a JPEG
+picture goes as it is, a 16-colour one like the weather is encoded first. That takes RAM only while someone looks,
+up to 24 KB, freed again 30 s after, and waits while a picture is being made or sent. ESPHome has one camera per ESP.
 
 A picture is fitted to the screen and converted on the ESP to 16 colours, or to a JPEG when it has more, and sent
 in the gaps on the bus: a 320x240 drawing takes a few seconds, a photo half a minute. Only the rows that changed go
