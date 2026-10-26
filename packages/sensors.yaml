@@ -1,6 +1,19 @@
 # Temperatures, heating/cooling/rotor %, max timer, runtime counters and alarms.
 # Needs core.yaml
 
+# ESPHome skips top-level keys that start with a dot
+.air_temperature: &air_temperature
+  platform: template
+  update_interval: 60s
+  device_class: temperature
+  unit_of_measurement: "°C"
+  filters:
+    - delta: 0.2
+.runtime: &runtime
+  platform: template
+  update_interval: 60s
+  unit_of_measurement: "h"
+
 sensor:
   - platform: template
     id: setpoint_air_temperature
@@ -10,35 +23,20 @@ sensor:
     unit_of_measurement: "°C"
     lambda: return id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_SETPOINT);
 
-  - platform: template
+  - <<: *air_temperature
     id: supply_air_temperature
     name: "Supply Air Temperature"
-    update_interval: 60s
-    device_class: temperature
-    unit_of_measurement: "°C"
     lambda: return id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_SUPPLY_AIR);
-    filters:
-      - delta: 0.2
 
-  - platform: template
+  - <<: *air_temperature
     id: extract_air_temperature
     name: "Extract Air Temperature"
-    update_interval: 60s
-    device_class: temperature
-    unit_of_measurement: "°C"
     lambda: return id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_EXTRACT_AIR);
-    filters:
-      - delta: 0.2
 
-  - platform: template
+  - <<: *air_temperature
     id: outdoor_air_temperature
     name: "Outdoor Air Temperature"
-    update_interval: 60s
-    device_class: temperature
-    unit_of_measurement: "°C"
     lambda: return id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_OUTDOOR_AIR);
-    filters:
-      - delta: 0.2
 
   - platform: template
     id: return_water_temperature
@@ -90,60 +88,44 @@ sensor:
       );
       return (seconds + 59) / 60;
 
-  - platform: template
+  - <<: *runtime
     id: runtime
     name: "Runtime"
-    update_interval: 60s
-    unit_of_measurement: "h"
     lambda: return id(server)->read_holding_register_hours(flexit_modbus_server::REG_RUNTIME_HIGH);
 
-  - platform: template
+  - <<: *runtime
     id: runtime_normal
     name: "Runtime Normal"
-    update_interval: 60s
-    unit_of_measurement: "h"
     lambda: return id(server)->read_holding_register_hours(flexit_modbus_server::REG_RUNTIME_NORMAL_HIGH);
 
-  - platform: template
+  - <<: *runtime
     id: runtime_stop
     name: "Runtime Stop"
-    update_interval: 60s
-    unit_of_measurement: "h"
     lambda: return id(server)->read_holding_register_hours(flexit_modbus_server::REG_RUNTIME_STOP_HIGH);
 
-  - platform: template
+  - <<: *runtime
     id: runtime_min
     name: "Runtime Min"
-    update_interval: 60s
-    unit_of_measurement: "h"
     lambda: return id(server)->read_holding_register_hours(flexit_modbus_server::REG_RUNTIME_MIN_HIGH);
 
-  - platform: template
+  - <<: *runtime
     id: runtime_max
     name: "Runtime Max"
-    update_interval: 60s
-    unit_of_measurement: "h"
     lambda: return id(server)->read_holding_register_hours(flexit_modbus_server::REG_RUNTIME_MAX_HIGH);
 
-  - platform: template
+  - <<: *runtime
     id: runtime_rotor
     name: "Runtime Rotor"
-    update_interval: 60s
-    unit_of_measurement: "h"
     lambda: return id(server)->read_holding_register_hours(flexit_modbus_server::REG_RUNTIME_ROTOR_HIGH);
 
-  - platform: template
+  - <<: *runtime
     id: runtime_heater
     name: "Runtime Heater"
-    update_interval: 60s
-    unit_of_measurement: "h"
     lambda: return id(server)->read_holding_register_hours(flexit_modbus_server::REG_RUNTIME_HEATER_HIGH);
 
-  - platform: template
+  - <<: *runtime
     id: runtime_filter
     name: "Runtime Filter"
-    update_interval: 60s
-    unit_of_measurement: "h"
     lambda: return id(server)->read_holding_register_hours(flexit_modbus_server::REG_RUNTIME_FILTER_HIGH);
 
 binary_sensor:

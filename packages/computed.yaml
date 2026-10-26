@@ -73,7 +73,7 @@ sensor:
     update_interval: 60s
     lambda: |-
       uint16_t interval = id(server)->read_holding_register(flexit_modbus_server::REG_CMD_DAYS_FILTER_CHANGE_INTERVAL);
-      if (interval == 0) return {};  // 0 = not synced from the CS60 yet
+      if (interval == 0) return {};  // 0 = not synced from the CX60 yet
       float used = id(server)->read_holding_register_hours(flexit_modbus_server::REG_RUNTIME_FILTER_HIGH) / 24.0f;
       return std::max(interval - used, 0.0f);
 
@@ -86,7 +86,7 @@ binary_sensor:
     lambda: |-
       for (int reg = flexit_modbus_server::REG_ALARM_SENSOR_SUPPLY_FAULTY;
            reg <= flexit_modbus_server::REG_ALARM_FILTER_CHANGE; reg++) {
-        if (id(server)->read_holding_register((flexit_modbus_server::HoldingRegisterIndex) reg) != 0) {
+        if (id(server)->read_holding_register(reg) != 0) {
           return true;
         }
       }

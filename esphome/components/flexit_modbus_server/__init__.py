@@ -1,13 +1,14 @@
 import logging
 import os
 import re
+from pathlib import Path
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
 from esphome.const import CONF_ADDRESS, CONF_ID, CONF_INVERTED, CONF_UART_ID
 from esphome.core import CORE
-from esphome.helpers import fnv1_hash
+from esphome.helpers import copy_file_if_changed, fnv1_hash
 
 from esphome import pins
 from esphome.components import uart
@@ -23,14 +24,15 @@ CONF_TCP_BRIDGE_MAX_CLIENTS = "tcp_bridge_max_clients"
 CONF_RESTORE_FROM_FLASH = "restore_from_flash"  # esp8266's
 
 flexit_modbus_server_ns = cg.esphome_ns.namespace("flexit_modbus_server")
-FlexitModbusDeviceComponent = flexit_modbus_server_ns.class_(
-    "FlexitModbusServer", cg.Component
-)
+FlexitModbusServer = flexit_modbus_server_ns.class_("FlexitModbusServer", cg.Component)
 
 DEPENDENCIES = ["uart"]
 AUTO_LOAD = ["socket"]  # the TCP bridge
 
 LIBRARY_REPOSITORY = "https://github.com/MSkjel/ESP-ModbusRTUServer.git"
+
+# The bus code the panel firmware shares, which this repo ships for the panel packages
+PBUS_DIR = Path(__file__).resolve().parents[3] / "packages" / "code" / "panel"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,8 +61,8 @@ def _consume_sockets(config):
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
-            cv.GenerateID(): cv.declare_id(FlexitModbusDeviceComponent),
-            # The CS60 only polls 1-3, and something answering at 254 sends it to its bootloader
+            cv.GenerateID(): cv.declare_id(FlexitModbusServer),
+            # The CX60 only polls 1-3, and something answering at 254 sends it to its bootloader
             cv.Required(CONF_ADDRESS): cv.int_range(min=1, max=3),
             # "none" so the pin can be turned off from a substitution
             cv.Optional(CONF_TX_ENABLE_PIN): cv.Any(
@@ -148,6 +150,10 @@ async def to_code(config):
 
     if config[CONF_TCP_BRIDGE_ENABLED]:
         cg.add_define("USE_FLEXIT_TCP_BRIDGE")
+
+    # Where the panel package's includes put it too, so a build with both has one copy
+    for name in ("pbus.h", "pbus.c"):
+        copy_file_if_changed(PBUS_DIR / name, CORE.relative_src_path("panel", name))
 
     uart_parent = await cg.get_variable(config[CONF_UART_ID])
     server = cg.new_Pvariable(config[CONF_ID])

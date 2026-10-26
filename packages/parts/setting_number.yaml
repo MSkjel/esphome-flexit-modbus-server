@@ -1,5 +1,5 @@
-# One of the CS60's settings as a number in HA, disabled until you enable it. Used by advanced.yaml and
-# fan_speeds.yaml.
+# One of the CX60's settings as a number in HA, disabled until you enable it. Used by advanced.yaml,
+# fan_speeds.yaml and controls.yaml.
 #   - file: parts/setting_number.yaml
 #     vars: {id: start_delay_1, name: Start Delay 1, register: REG_CMD_START_DELAY_1, min: 0, max: 255, unit: s}
 # The register holds the value x scale, as a signed 16-bit number.
@@ -7,7 +7,7 @@ defaults:
   step: "1"
   unit: ""
   scale: "1"
-  zero_unknown: "false"  # true when 0 means the CS60 hasn't sent it yet
+  zero_unknown: "false"  # true when 0 means the CX60 hasn't sent it yet
   category: config       # "" for none
 
 number:

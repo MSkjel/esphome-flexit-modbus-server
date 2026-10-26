@@ -1,4 +1,4 @@
-# One of the CS60's settings as a select in HA, disabled until you enable it. Used by advanced.yaml.
+# One of the CX60's settings as a select in HA, disabled until you enable it. Used by advanced.yaml.
 #   - file: parts/setting_select.yaml
 #     vars: {id: home_away_speed, name: Home Away Speed, register: REG_CMD_HOME_AWAY_SPEED, first: 1,
 #            options: [Min, Normal, Max]}

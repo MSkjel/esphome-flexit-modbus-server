@@ -5,6 +5,16 @@ esphome:
   includes:
     - code/controls.h
 
+packages:
+  temperature_supply_min: !include
+    file: parts/setting_number.yaml
+    vars: {id: temperature_supply_min, name: Temperature Supply Min, register: REG_CMD_TEMPERATURE_SUPPLY_MIN,
+           min: 5, max: 25, step: 0.5, scale: 10, zero_unknown: "true", category: ""}
+  temperature_supply_max: !include
+    file: parts/setting_number.yaml
+    vars: {id: temperature_supply_max, name: Temperature Supply Max, register: REG_CMD_TEMPERATURE_SUPPLY_MAX,
+           min: 15, max: 45, step: 0.5, scale: 10, zero_unknown: "true", category: ""}
+
 interval:
   # Runs the highest mode asked for, see code/controls.h. Packages ask with flexit::controls::request().
   - interval: 2s
@@ -17,21 +27,19 @@ switch:
     name: "Heater"
     restore_mode: DISABLED
     lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_STATUS_HEATER);"
-    # The CS60 ORs the heater flags of the panels present, so on sets our own and off clears all three
+    # The CX60 ORs the heater flags of the panels present, so on sets our own and off clears all three
     turn_on_action:
-      - lambda: |-
-          auto own = flexit_modbus_server::REG_CMD_HEATER + id(server)->server_address() - 1;
-          id(server)->send_cmd((flexit_modbus_server::HoldingRegisterIndex) own, 1);
+      - lambda: id(server)->send_cmd(flexit_modbus_server::REG_CMD_HEATER_PANEL1 + id(server)->server_address() - 1, 1);
     turn_off_action:
       - lambda: |-
-          for (int r = flexit_modbus_server::REG_CMD_HEATER; r <= flexit_modbus_server::REG_CMD_HEATER_PANEL3; r++)
-            id(server)->send_cmd((flexit_modbus_server::HoldingRegisterIndex) r, 0);
+          for (int r = flexit_modbus_server::REG_CMD_HEATER_PANEL1; r <= flexit_modbus_server::REG_CMD_HEATER_PANEL3; r++)
+            id(server)->send_cmd(r, 0);
 
   - platform: template
     id: supply_air_control
     name: "Supply Air Control"
     restore_mode: DISABLED
-    # The CS60 takes anything but 0 as supply air
+    # The CX60 takes anything but 0 as supply air
     lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_AIR_CONTROL) != 0;"
     turn_on_action:
       - lambda: id(server)->send_cmd(flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_AIR_CONTROL, 1);
@@ -91,38 +99,6 @@ number:
       return v;
     set_action:
       lambda: id(server)->send_cmd(flexit_modbus_server::REG_CMD_MINUTES_MAX_TIMER, x);
-
-  - platform: template
-    id: temperature_supply_min
-    name: "Temperature Supply Min"
-    max_value: 25
-    min_value: 5
-    step: 0.5
-    disabled_by_default: True
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      uint16_t v = id(server)->read_holding_register(flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_MIN);
-      if (v == 0) return {};  // 0 = not synced from the CS60 yet
-      return static_cast<int16_t>(v) / 10.0f;
-    set_action:
-      lambda: id(server)->send_cmd(flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_MIN, x * 10);
-
-  - platform: template
-    id: temperature_supply_max
-    name: "Temperature Supply Max"
-    max_value: 45
-    min_value: 15
-    step: 0.5
-    disabled_by_default: True
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      uint16_t v = id(server)->read_holding_register(flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_MAX);
-      if (v == 0) return {};  // 0 = not synced from the CS60 yet
-      return static_cast<int16_t>(v) / 10.0f;
-    set_action:
-      lambda: id(server)->send_cmd(flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_MAX, x * 10);
 
   - platform: template
     id: filter_change_interval

@@ -1,4 +1,4 @@
-# One of the CS60's on/off settings as a switch in HA, disabled until you enable it. Used by advanced.yaml.
+# One of the CX60's on/off settings as a switch in HA, disabled until you enable it. Used by advanced.yaml.
 #   - file: parts/setting_switch.yaml
 #     vars: {id: cooling_enabled, name: Cooling Enabled, register: REG_CMD_COOLING_ENABLE}
 switch:

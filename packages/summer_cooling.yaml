@@ -1,29 +1,20 @@
 # Summer cooling. Runs max when it's too warm inside and cooler outside.
 # Too warm is also measured against the setpoint, and it never runs while the heater is on.
-# The CS60 still holds the supply air at its setpoint, so a lower setpoint cools more.
-# This is done on the ESP, the CS60 doesn't have it.
+# The CX60 still holds the supply air at its setpoint, so a lower setpoint cools more.
+# This is done on the ESP, the CX60 doesn't have it.
 # Needs core.yaml and controls.yaml
 
 esphome:
   includes:
     - code/summer_cooling.h
 
-globals:
-  - id: summer_cooling_active
-    type: bool
-    restore_value: no
-    initial_value: 'false'
-
-  - id: summer_cooling_start_ms
-    type: uint32_t
-    restore_value: no
-    initial_value: '0'
-
-    # False after somebody changed the mode during cooling, until there is no reason to cool anymore
-  - id: summer_cooling_armed
-    type: bool
-    restore_value: no
-    initial_value: 'true'
+# ESPHome skips top-level keys that start with a dot
+.config_number: &config_number
+  platform: template
+  entity_category: config
+  optimistic: true
+  restore_value: true
+  mode: BOX
 
 switch:
   - platform: template
@@ -35,64 +26,48 @@ switch:
 
 number:
   # Cool when the extract air is warmer than this
-  - platform: template
+  - <<: *config_number
     name: "Summer Cooling Above"
     id: summer_cooling_above
-    entity_category: config
     unit_of_measurement: "°C"
     device_class: temperature
     min_value: 18
     max_value: 30
     step: 0.5
     initial_value: 24
-    optimistic: True
-    restore_value: True
-    mode: BOX
 
   # and also this much warmer than the setpoint, so it doesn't cool a house the unit is trying to heat
-  - platform: template
+  - <<: *config_number
     name: "Summer Cooling Above Setpoint"
     id: summer_cooling_above_setpoint
-    entity_category: config
     unit_of_measurement: "°C"
     min_value: 0
     max_value: 10
     step: 0.5
     initial_value: 1
-    optimistic: True
-    restore_value: True
-    mode: BOX
 
   # and the outdoor air is at least this much colder than the extract air
-  - platform: template
+  - <<: *config_number
     name: "Summer Cooling Min Difference"
     id: summer_cooling_min_difference
-    entity_category: config
     unit_of_measurement: "°C"
     min_value: 1
     max_value: 10
     step: 0.5
     initial_value: 2
-    optimistic: True
-    restore_value: True
-    mode: BOX
 
   # Never below this outdoor temperature. Keeps it from running in winter
   # when a wood stove has made the house warm.
-  - platform: template
+  - <<: *config_number
     name: "Summer Cooling Min Outdoor"
     id: summer_cooling_min_outdoor
-    entity_category: config
     unit_of_measurement: "°C"
     device_class: temperature
     min_value: 0
     max_value: 25
     step: 1
     initial_value: 12
-    optimistic: True
-    restore_value: True
     disabled_by_default: True
-    mode: BOX
 
 binary_sensor:
   - platform: template
@@ -100,7 +75,7 @@ binary_sensor:
     id: summer_cooling_running
     device_class: running
     icon: "mdi:snowflake"
-    lambda: return id(summer_cooling_active);
+    lambda: return flexit::summer_cooling::boost.active;
 
 interval:
   - interval: 30s
