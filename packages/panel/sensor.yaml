@@ -1,10 +1,10 @@
 # One of your sensors on the panel, on the smart home or comfort page and as a dashboard tile if you pick it.
 #   - path: packages/panel/sensor.yaml
 #     vars: {entity: living_room_temperature, label: Living room|Stue, icon: thermo}
-# label and help are "English|Norsk", the panel shows the part for its language: up to 19 bytes of label, 78 of
-# help and 7 of unit.
+# label and help are "English|Norsk", the panel shows the part for its language. How much of each text fits:
+# docs/panel.md#how-long-texts-can-be.
 defaults:
-  name: ""          # the item's name on the panel link, the entity's id if empty. The panel keeps tiles by it
+  name: ${entity}   # the item's name on the panel link. The panel keeps tiles by it
   unit: ""          # the sensor's own if empty
   decimals: ""      # the sensor's accuracy_decimals if empty
   icon: circle      # an id from code/panel/plink_icons.h, in lower case
@@ -21,23 +21,12 @@ esphome:
   on_boot:
     - then:
         - lambda: |-
-            static int i = flexit::panel::Item(std::string("${name}").empty() ? "${entity}" : "${name}", ITEM_SENSOR)
-                               .label(R"~(${label})~")
-                               .unit(std::string(R"~(${unit})~").empty()
-                                         ? id(${entity}).get_unit_of_measurement_ref().str()
-                                         : R"~(${unit})~")
-                               .help(R"~(${help})~")
-                               .icon("${icon}")
-                               .decimals(std::string("${decimals}").empty()
-                                             ? std::max(0, (int) id(${entity}).get_accuracy_decimals())
-                                             : atoi("${decimals}"))
-                               .page("${page}")
-                               .view(${view})
-                               .menu(${menu})
+            static int i = flexit::panel::Item("${name}", ITEM_SENSOR)
+                               .vars(R"~(${label})~", R"~(${help})~", "${icon}", "${page}", ${view}, ${menu})
+                               .unit_or(R"~(${unit})~", id(${entity}))
+                               .decimals_or("${decimals}", id(${entity}).get_accuracy_decimals())
                                .trend(${trend})
                                .levels("${levels}")
                                .range(${min}, ${max})
                                .add();
-            id(${entity}).add_on_state_callback([](float v) { flexit::panel::item_value(i, v); });
-            if (id(${entity}).has_state())
-              flexit::panel::item_value(i, id(${entity}).state);
+            flexit::panel::follow(i, id(${entity}));

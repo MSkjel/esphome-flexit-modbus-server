@@ -3,7 +3,7 @@
 # Proportional turns the normal fan speeds up the further over the target it is.
 # PI keeps turning them up until the CO2 is back at the target.
 # The last two are for EC fans only.
-# This is done on the ESP, the CS60 doesn't have it.
+# This is done on the ESP, the CX60 doesn't have it.
 # Needs core.yaml, controls.yaml and your own CO2 sensor, with its id in flexit_co2_sensor
 substitutions:
   flexit_co2_sensor: co2
@@ -14,6 +14,33 @@ esphome:
   on_boot:
     - then:
         - lambda: id(server).add_on_setting_callback(flexit::co2::setting);
+
+packages:
+  # The level to keep the CO2 at. Under this the CO2 control does nothing.
+  co2_target: !include
+    file: parts/config_number.yaml
+    vars: {id: co2_target, name: CO2 Target, unit: ppm, icon: "mdi:target", min: 400, max: 1500, step: 50,
+           initial: 800}
+  # How far over the target is "high". Stepped goes to max there, proportional has
+  # added the full fan increase there, and both fan modes go from min to normal there.
+  co2_band: !include
+    file: parts/config_number.yaml
+    vars: {id: co2_band, name: CO2 Band, unit: ppm, min: 50, max: 1500, step: 50, initial: 400, disabled: "true"}
+  # Proportional and PI. The most that is added to the normal fan speeds.
+  co2_max_fan_increase: !include
+    file: parts/config_number.yaml
+    vars: {id: co2_max_fan_increase, name: CO2 Max Fan Increase, unit: "%", icon: "mdi:fan-plus", min: 5, max: 60,
+           step: 5, initial: 30}
+  # PI only. Fan % added for every 100 ppm over the target.
+  co2_pi_gain: !include
+    file: parts/config_number.yaml
+    vars: {id: co2_pi_gain, name: CO2 PI Gain, unit: "%", min: 1, max: 30, step: 0.5, initial: 5, disabled: "true"}
+  # PI only. How long it takes the integral part to add as much as the gain does.
+  # Longer is calmer. Too short and the fans go up and down.
+  co2_pi_integral_time: !include
+    file: parts/config_number.yaml
+    vars: {id: co2_pi_integral_time, name: CO2 PI Integral Time, unit: min, min: 5, max: 240, step: 5, initial: 30,
+           disabled: "true"}
 
 select:
   - platform: template
@@ -29,84 +56,6 @@ select:
       - "Proportional"
       - "PI"
 
-number:
-  # The level to keep the CO2 at. Under this the CO2 control does nothing.
-  - platform: template
-    name: "CO2 Target"
-    id: co2_target
-    entity_category: config
-    unit_of_measurement: "ppm"
-    icon: "mdi:target"
-    min_value: 400
-    max_value: 1500
-    step: 50
-    initial_value: 800
-    optimistic: True
-    restore_value: True
-    mode: BOX
-
-  # How far over the target is "high". Stepped goes to max there, proportional has
-  # added the full fan increase there, and both fan modes go from min to normal there.
-  - platform: template
-    name: "CO2 Band"
-    id: co2_band
-    entity_category: config
-    unit_of_measurement: "ppm"
-    min_value: 50
-    max_value: 1500
-    step: 50
-    initial_value: 400
-    optimistic: True
-    restore_value: True
-    disabled_by_default: True
-    mode: BOX
-
-  # Proportional and PI. The most that is added to the normal fan speeds.
-  - platform: template
-    name: "CO2 Max Fan Increase"
-    id: co2_max_fan_increase
-    entity_category: config
-    unit_of_measurement: "%"
-    icon: "mdi:fan-plus"
-    min_value: 5
-    max_value: 60
-    step: 5
-    initial_value: 30
-    optimistic: True
-    restore_value: True
-    mode: BOX
-
-  # PI only. Fan % added for every 100 ppm over the target.
-  - platform: template
-    name: "CO2 PI Gain"
-    id: co2_pi_gain
-    entity_category: config
-    unit_of_measurement: "%"
-    min_value: 1
-    max_value: 30
-    step: 0.5
-    initial_value: 5
-    optimistic: True
-    restore_value: True
-    disabled_by_default: True
-    mode: BOX
-
-  # PI only. How long it takes the integral part to add as much as the gain does.
-  # Longer is calmer. Too short and the fans go up and down.
-  - platform: template
-    name: "CO2 PI Integral Time"
-    id: co2_pi_integral_time
-    entity_category: config
-    unit_of_measurement: "min"
-    min_value: 5
-    max_value: 240
-    step: 5
-    initial_value: 30
-    optimistic: True
-    restore_value: True
-    disabled_by_default: True
-    mode: BOX
-
 sensor:
   # What proportional or PI has added to the normal fan speeds right now. Graph it against the CO2 when tuning.
   - platform: template
@@ -119,7 +68,7 @@ sensor:
     accuracy_decimals: 0
     update_interval: 30s
     lambda: |-
-      return flexit::co2::fans_up ? std::max(flexit::co2::added, 0) : 0;
+      return flexit::co2::state.fans_up ? std::max(flexit::co2::state.added, 0) : 0;
 
 binary_sensor:
   - platform: template
@@ -127,7 +76,7 @@ binary_sensor:
     id: co2_control_active
     device_class: running
     icon: "mdi:molecule-co2"
-    lambda: return flexit::co2::boost_active || flexit::co2::fans_up;
+    lambda: return flexit::co2::state.boost.active || flexit::co2::state.fans_up;
 
 interval:
   - interval: 30s

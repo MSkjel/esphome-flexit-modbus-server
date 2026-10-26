@@ -4,7 +4,7 @@
 #     vars: {entity: hot_water_target, label: Hot water|Varmtvann, icon: water}
 # name, label, help, icon, page, view and menu work as in sensor.yaml, and so do unit and decimals if you set them
 defaults:
-  name: ""
+  name: ${entity}
   unit: ""
   decimals: ""
   icon: circle
@@ -18,21 +18,11 @@ esphome:
     - then:
         - lambda: |-
             auto &t = id(${entity}).traits;
-            static int i = flexit::panel::Item(std::string("${name}").empty() ? "${entity}" : "${name}", ITEM_NUMBER)
-                               .label(R"~(${label})~")
-                               .unit(std::string(R"~(${unit})~").empty()
-                                         ? id(${entity}).get_unit_of_measurement_ref().str()
-                                         : R"~(${unit})~")
-                               .help(R"~(${help})~")
-                               .icon("${icon}")
-                               .decimals(std::string("${decimals}").empty() ? flexit::panel::decimals_of(t.get_step())
-                                                                        : atoi("${decimals}"))
+            static int i = flexit::panel::Item("${name}", ITEM_NUMBER)
+                               .vars(R"~(${label})~", R"~(${help})~", "${icon}", "${page}", ${view}, ${menu})
+                               .unit_or(R"~(${unit})~", id(${entity}))
+                               .decimals_or("${decimals}", flexit::panel::decimals_of(t.get_step()))
                                .range(t.get_min_value(), t.get_max_value(), t.get_step())
-                               .page("${page}")
-                               .view(${view})
-                               .menu(${menu})
                                .on_set([](float v) { id(${entity}).make_call().set_value(v).perform(); })
                                .add();
-            id(${entity}).add_on_state_callback([](float v) { flexit::panel::item_value(i, v); });
-            if (id(${entity}).has_state())
-              flexit::panel::item_value(i, id(${entity}).state);
+            flexit::panel::follow(i, id(${entity}));

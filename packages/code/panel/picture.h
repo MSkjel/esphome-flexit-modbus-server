@@ -1,38 +1,30 @@
-// Screensaver pictures from picture.yaml, online_picture.yaml and met.h. They go to the panel as 16 colours with
-// each row packed on its own, or as a JPEG at the best quality that fits the panel's 14 KB.
+// Screensaver pictures from picture.yaml, picture_online.h and met.h. They go to the panel as 16 colours with each
+// row packed on its own, or as a JPEG at the best quality that fits the panel's 14 KB.
 #pragma once
 #include <algorithm>
-#include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <map>
-#include <memory>
 #include <string>
 #include <vector>
 #include "panel_link.h"
-#include "pdeflate.h"
-#include "pjpeg.h"
+#include "picture_jpeg.h"
+#include "picture_plan.h"
 #include "plink.h"
-
-namespace flexit::panel::anim {
-bool sending();  // in animation.h, true while an animation is being sent
-}
+#include "quant.h"
+#include "rgb.h"
+#include "transfer.h"
+#include "util.h"
 
 namespace flexit::panel::picture {
 
-// The panel takes one picture or animation at a time. Each transfer gets a new id to match the acks.
-inline uint8_t transfer_ids;
-
-static constexpr uint32_t POOL = PIC_POOL;  // the panel's picture memory
-static constexpr uint32_t SLICE_US = 5000;  // max conversion time per loop, so the main loop keeps running
-static constexpr uint32_t ACK_MS = 10000;   // the panel answers END within a second or so
-static constexpr int SCREEN_W = 320, SCREEN_H = 240;
-// RAM to make a picture: counting colours (the counts, the bins, the colour table), then a JPEG (the one being
-// tried, its lines, the best so far). The peak is a JPEG with the 16-colour version still kept.
-static constexpr uint32_t COUNT_RAM = 4096 * 4 + 4096 * 2 + 4096, JPEG_RAM = POOL + SCREEN_W * 8 * 4 + POOL,
-                          MAKE_RAM = POOL + SCREEN_W + JPEG_RAM;
+inline constexpr uint32_t POOL = PIC_POOL;  // the panel's picture memory
+// RAM for a JPEG try and its source lines, and to make a picture: the peak is a JPEG with the 16-colour version kept
+inline constexpr uint32_t JPEG_RAM = POOL + PIC_MAX_W * 8 * 3, MAKE_RAM = POOL + PIC_MAX_W + JPEG_RAM;
+static_assert(Transfer::CHUNK <= Zip::MAX, "a chunk of pieces fits Zip's buffer");
 
 enum Encoding { AUTO, PALETTE, JPEG };
 
@@ -41,6 +33,10 @@ struct Source {
   std::function<bool(int &w, int &h)> size;  // false while it isn't ready, like an online one still downloading
   std::function<uint32_t(int, int)> pixel;   // 0xRRGGBB
   std::function<void()> done;                // optional, its pixels aren't needed now
+  // Optional, for a source with its own 16 colours at the screen's size, like met.h's: pal, and row(y, idx) with
+  // row y as indexes into it. Then nothing is counted or mapped.
+  const uint32_t *pal = nullptr;
+  std::function<void(int y, uint8_t *idx)> row;
   Encoding encoding = AUTO;
   int quality = 0;  // highest JPEG quality 1..100, 0 = the best that fits
 };
@@ -53,10 +49,6 @@ inline int quality_of(const std::string &s) {
   int q = atoi(s.c_str());
   return q < 1 ? 0 : std::min(q, 100);
 }
-
-// id() is a pointer in ESPHome's lambdas and a reference in the sim's harness
-template<typename T> T *ptr_of(T *p) { return p; }
-template<typename T> T *ptr_of(T &r) { return &r; }
 
 // An ESPHome image's pixels as 0xRRGGBB
 template<typename Img> std::function<uint32_t(int, int)> pixels_of(Img *img) {
@@ -81,167 +73,36 @@ template<typename Img> void add_image(const std::string &name, Img &&image, cons
   add(name, s);
 }
 
-// A picture from a URL (online_picture.yaml). Downloaded when it's shown, every `every` after that while it's
-// shown, and its pixels are freed once it's converted. A failed download is tried again 30 s later, then twice as
-// long each time up to 30 min, since each try holds up the main loop until the server answers or http_request
-// times out. Before a download fits() asks the server about the file, hanging up after the headers.
-struct Online {
-  std::string url;
-  // the file's HTTP status (0 = no answer), size (0 = unknown) and Content-Type
-  std::function<int(const std::string &url, size_t &size, std::string &type)> head;
-  std::function<bool()> busy;   // a download still runs
-  std::function<bool()> fetch;  // starts the download, true if it did
-  std::string format;           // the yaml's, upper case: JPEG, JPG, PNG, BMP or AUTO
-  uint32_t pixels = 0;          // the decoded picture's bytes at the yaml's resize
-  // What online_image keeps between downloads: its buffer, buffer_size until a JPEG grows it, and its decoder
-  // ('J', 'P' or 'B'). next becomes kept once a download that passed fits() starts.
-  struct Kept {
-    size_t buffer = 4096;
-    char decoder = 0;
-  } kept, next;
-  uint32_t every = 0;         // ms between downloads while shown, 0 = only when shown
-  uint32_t fetched = 0;       // when the last one started
-  uint32_t at = 0, wait = 0;  // when to try again after a failure, and the wait after that one
-};
-inline std::map<std::string, std::shared_ptr<Online>> online;
-
-// "30s", "10min", "1.5h", "1d" as ESPHome writes them. 0 = never, also for anything else.
-inline uint32_t interval_ms(const char *s) {
-  static const struct {
-    const char *unit;
-    double ms;
-  } units[] = {{"ms", 1},        {"milliseconds", 1}, {"s", 1e3},       {"sec", 1e3},  {"seconds", 1e3}, {"min", 6e4},
-               {"minutes", 6e4}, {"h", 3.6e6},        {"hours", 3.6e6}, {"d", 8.64e7}, {"days", 8.64e7}};
-  char *end;
-  double n = strtod(s, &end);
-  while (*end == ' ')
-    end++;
-  for (const auto &u : units)
-    if (end != s && !strcmp(end, u.unit))
-      return n > 0 ? (uint32_t) std::min(n * u.ms, 4e9) : 0;
-  if (strcmp(s, "never"))
-    ESP_LOGE("panel", "update_interval '%s' isn't a time like 10min, so it's only downloaded when shown", s);
-  return 0;
-}
-
-inline bool download(const std::string &name, Online &o);  // below, it needs S
-
-template<typename Img>
-void add_online_image(const std::string &name, Img &&image, const char *url, const char *every, const char *format,
-                      const char *resize, const char *encoding, const char *quality,
-                      std::function<int(const std::string &, size_t &, std::string &)> head) {
-  auto *img = ptr_of(image);
-  auto o = std::make_shared<Online>();
-  o->url = url;
-  o->every = interval_ms(every);
-  for (const char *c = format; *c; c++)
-    o->format += (char) toupper((unsigned char) *c);
-  int rw = 0, rh = 0;
-  if (sscanf(resize, "%dx%d", &rw, &rh) == 2 && rw > 0 && rh > 0)
-    o->pixels = (uint32_t) rw * rh * 2;  // RGB565
-  o->head = std::move(head);
-  o->busy = [img]() { return img->is_decoding(); };
-  o->fetch = [img]() {
-    img->update();
-    return img->is_decoding();
-  };
-  online[name] = o;
-  Source s;
-  s.size = [img, o, name](int &w, int &h) {  // starts the download if there's nothing yet, we get asked again
-    w = img->get_width();
-    h = img->get_height();
-    if (img->is_decoding())
-      return false;
-    if (w > 0 && h > 0) {
-      o->wait = 0;
-      return true;
-    }
-    if (!o->wait || (int32_t) (millis() - o->at) >= 0)
-      download(name, *o);
-    return false;
-  };
-  s.pixel = pixels_of(img);
-  s.done = [img]() {
-    if (!img->is_decoding())  // a new download keeps its buffer
-      img->release();
-  };
-  s.encoding = encoding_of(encoding);
-  s.quality = quality_of(quality);
-  add(name, s);
-}
-
-// The URL changed, like ha_picture.yaml's token. The next look at the picture downloads it again right away.
-template<typename Img> void online_url(const std::string &name, Img &&image, const std::string &url) {
-  auto it = online.find(name);
-  if (it == online.end())
-    return;
-  ptr_of(image)->set_url(url);
-  it->second->url = url;
-  it->second->wait = 0;
-}
-
-// A converted picture. pal and rows are only for 16 colours.
-struct Pic {
-  std::string name;
-  uint8_t format = PIC_PALETTE;
-  uint16_t w = 0, h = 0;
-  int quality = 0;  // JPEG only
-  uint32_t pal[16] = {};
-  std::vector<uint8_t> data;
-  std::vector<uint16_t> rows;  // offset of each row in data, plus the end
-  double err = 0;              // mean squared error per pixel, Y + Cb + Cr
-};
-
-struct Job {  // one transfer, the whole picture or rows y..y+count-1, with or without the palette
-  bool full, pal;
-  uint16_t y, count;
-};
-
-struct Zip {  // a 16-colour piece's bytes as pzip pieces against what the panel holds
-  pzip_t z;
-  std::vector<uint16_t> table;  // while sending, if there's the RAM
-  uint8_t buf[64 + PZIP_MAX];
-  unsigned n;    // bytes in buf, not sent yet
-  uint16_t row;  // like_row()'s row
-};
-
 // start(), count() and map() for 16 colours and jpeg() for the JPEG as needed, choose(), plan(), then send()
 enum Phase { IDLE, START, COUNT, MAP, JPEG_TRY, CHOOSE, PLAN, SEND };
 
-inline struct {
+struct State {
   std::string want;     // the picture asked for, "" = none
   bool redo = true;     // want is new or its picture changed. True at first so the status gets published
   std::string waiting;  // why the wanted one isn't ready, for the status
+  bool away = false;    // the status says it's waiting for the panel
   // shown is what the panel has once it's sent. made is the 16-colour version or the one being sent, jpeg the JPEG.
   Pic shown, made, jpeg;
   std::string name;  // the picture being made or sent
   const Source *src = nullptr;
   // sw, sh is the source size, fw, fh fitted to the screen
-  int phase = IDLE, y = 0, sw = 0, sh = 0, fw = 0, fh = 0, tries = 0;
-  int colours = 0;     // colours in the picture at 4 bits a channel, 17 = more than 16
-  bool fits = false;   // the 16-colour version fits the panel
-  int lo = 0, hi = 0;  // JPEG quality, lo = best that fits so far (0 = none yet), hi = highest that may fit
-  pjpeg_t enc;         // the JPEG being tried
-  std::vector<uint8_t> buf;
-  std::vector<uint32_t> lines;  // the 8 source lines the encoder is on
-  int line = 0;                 // how many of them are filled
-  bool head = false, ended = false;
+  int phase = IDLE, y = 0, sw = 0, sh = 0, fw = 0, fh = 0;
+  int colours = 0;            // colours in the picture at 4 bits a channel, 17 = more than 16
+  bool palette_fits = false;  // the 16-colour version fits the panel
+  bool kept = false;          // made.pal is the panel's, kept so only the changed rows go
+  Sums sums;                  // while mapping
+  Search search;
+  Transfer t;                                          // the piece being sent
   bool to_clear = false;                               // K_PIC_CLEAR still to send
-  uint8_t id = 0;                                      // transfer id of the piece being sent, to match the acks
-  uint32_t retry_at = 0, pos = 0, start = 0, len = 0;  // start, len = the piece in made.data, pos = bytes sent
-  uint32_t end_ms = 0;                                 // see no_answer()
+  uint32_t retry_at = 0, piece_at = 0, piece_len = 0;  // the piece's bytes in made.data
   std::vector<uint32_t> hist;                          // pixel count per colour, at 4 bits per channel
   std::vector<Job> jobs;
   std::vector<uint8_t> lut;  // colour at 4 bits per channel -> palette index, while mapping
   Zip zip;
-} S;
+};
+inline State S;
 
-template<typename T> void drop(std::vector<T> &v) { std::vector<T>().swap(v); }  // empty, with its RAM freed
-
-inline void status(const std::string &s) {
-  if (id(panel_picture_status).state != s)
-    id(panel_picture_status).publish_state(s);
-}
+inline void status(const std::string &s) { status(id(panel_picture_status), s); }
 
 // The Panel Picture select's set_action. An online picture is downloaded again. "None" or "" is none.
 inline void picked(const std::string &name) {
@@ -281,49 +142,6 @@ inline void changed(const std::string &name) {
     it->second.done();
 }
 
-// online_picture.yaml's on_error. A shown picture stays until the next refresh, else size() tries again later.
-inline void failed(const std::string &name) {
-  if (name != S.want || (S.phase == IDLE && !S.redo && !S.shown.data.empty()))
-    return;
-  S.waiting = "couldn't download it, trying again later";
-  if (S.phase == IDLE)
-    S.redo = true;
-}
-
-inline uint32_t dist(uint32_t a, uint32_t b) {
-  int dr = (int) (a >> 16) - (int) (b >> 16), dg = (int) (a >> 8 & 255) - (int) (b >> 8 & 255),
-      db = (int) (a & 255) - (int) (b & 255);
-  return (uint32_t) (2 * dr * dr + 4 * dg * dg + 3 * db * db);
-}
-
-// 0xRRGGBB at 4 bits per channel, the bins of the colour counts, and back
-inline uint16_t bin(uint32_t c) { return (uint16_t) ((c >> 20 & 15) << 8 | (c >> 12 & 15) << 4 | (c >> 4 & 15)); }
-inline uint32_t bin_rgb(int bin) {
-  return (uint32_t) ((bin >> 8) * 17) << 16 | (uint32_t) ((bin >> 4 & 15) * 17) << 8 | (uint32_t) ((bin & 15) * 17);
-}
-
-inline int nearest(uint32_t c, const uint32_t *pal, int colours = 16) {
-  int best = 0;
-  uint32_t bd = UINT32_MAX;
-  for (int i = 0; i < colours; i++) {
-    uint32_t d = dist(c, pal[i]);
-    if (d < bd) {
-      bd = d;
-      best = i;
-    }
-  }
-  return best;
-}
-
-// squared difference in Y, Cb and Cr, same units as pjpeg's error
-inline float ycc_dist(uint32_t a, uint32_t b) {
-  float dr = (float) (a >> 16) - (float) (b >> 16), dg = (float) (a >> 8 & 255) - (float) (b >> 8 & 255),
-        db = (float) (a & 255) - (float) (b & 255);
-  float y = 0.299f * dr + 0.587f * dg + 0.114f * db, cb = -0.168736f * dr - 0.331264f * dg + 0.5f * db,
-        cr = 0.5f * dr - 0.418688f * dg - 0.081312f * db;
-  return y * y + cb * cb + cr * cr;
-}
-
 // Pixel as sent, with the source fitted to the screen. Smaller sources are blown up smoothly.
 inline uint32_t px(int x, int y) {
   if (S.fw <= S.sw)
@@ -348,23 +166,16 @@ inline void pack(const uint8_t *row, size_t n, std::vector<uint8_t> &data) {
   data.resize(at + plink_pack_row(row, (unsigned) n, data.data() + at));
 }
 
-// Whether the ESP has `bytes` free with some to spare, `block` of it in one piece
-inline bool has_ram(size_t bytes, size_t block) {
-  RAMAllocator<uint8_t> ram;
-  return ram.get_free_heap_size() >= bytes + 8192 && ram.get_max_free_block_size() >= block;
-}
-
 // Drops what was made for the last request
 inline void reset() {
   S.made = Pic();
   S.jpeg = Pic();
   drop(S.hist);
   drop(S.lut);
-  drop(S.buf);
-  drop(S.lines);
+  S.search.drop();
   drop(S.zip.table);
   S.jobs.clear();
-  S.head = S.ended = false;
+  S.t.head = false;
   S.phase = IDLE;
 }
 
@@ -382,8 +193,11 @@ inline bool ask() {
   if (!S.redo)
     return true;
   S.redo = false;
-  if (S.phase == SEND)
-    S.shown = Pic();  // some pieces may be in, so the panel's picture is neither the old nor the new one
+  S.away = false;
+  // The pieces the panel has applied are in shown. One on its way is dropped once another comes, unless it's whole
+  // and the panel has dropped its picture for it, or its END went and it may be in.
+  if (S.phase == SEND && S.t.head && (S.t.ended || S.jobs.front().full))
+    S.shown = Pic();
   if (S.src && S.name != S.want && S.src->done)
     S.src->done();  // the one being made isn't wanted now
   reset();
@@ -401,13 +215,16 @@ inline bool ask() {
   if (S.name != S.want)
     S.waiting = "waiting for it";  // the same one keeps its reason
   S.name = S.want;
-  S.tries = 0;
+  S.t.tries = 0;
   S.retry_at = millis();
   S.phase = START;
   return true;
 }
 
 inline bool jpeg_start();
+
+// The source gives its own 16 colours, see Source
+inline bool own() { return S.src->row && S.src->encoding != JPEG && S.fw == S.sw && S.fh == S.sh; }
 
 // False while it isn't ready, like an online picture still downloading
 inline bool start() {
@@ -419,97 +236,45 @@ inline bool start() {
     return false;
   }
   // fitted to the screen, keeping its shape
-  if (S.sw * SCREEN_H >= S.sh * SCREEN_W) {
-    S.fw = SCREEN_W;
-    S.fh = std::max(1, S.sh * SCREEN_W / S.sw);
+  if (S.sw * PIC_MAX_H >= S.sh * PIC_MAX_W) {
+    S.fw = PIC_MAX_W;
+    S.fh = std::max(1, S.sh * PIC_MAX_W / S.sw);
   } else {
-    S.fh = SCREEN_H;
-    S.fw = std::max(1, S.sw * SCREEN_H / S.sh);
+    S.fh = PIC_MAX_H;
+    S.fw = std::max(1, S.sw * PIC_MAX_H / S.sh);
   }
   // Without exceptions a failed allocation restarts the ESP, so each step checks for room first
-  if (S.src->encoding != JPEG && !has_ram(COUNT_RAM, 4096 * 4))
+  size_t need = own() ? POOL + PIC_MAX_W : COUNT_RAM;  // its own colours only need the room for its rows
+  if (S.src->encoding != JPEG && !has_ram(need, own() ? need : BINS * 4))
     return no_ram();
-  S.fits = false;
+  S.palette_fits = false;
   S.made.w = (uint16_t) S.fw;
   S.made.h = (uint16_t) S.fh;
   status("Making " + S.name);
   if (S.src->encoding == JPEG)
     return jpeg_start();
-  S.hist.assign(4096, 0);
-  S.lut.resize(4096);
+  if (own()) {  // nothing to count, and its colours are exact
+    memcpy(S.made.pal, S.src->pal, sizeof S.made.pal);
+    S.colours = 16;
+    S.kept = true;
+    S.sums = Sums();
+    S.made.data.reserve(POOL + PIC_MAX_W);
+    S.made.rows.push_back(0);
+    S.y = 0;
+    S.phase = MAP;
+    return true;
+  }
+  S.hist.assign(BINS, 0);
+  S.lut.resize(BINS);
   S.y = 0;
   S.phase = COUNT;
   return true;
 }
 
-// Median cut down to `colours` colours, max 16, from a 4-bit-per-channel histogram. Keeps splitting the box with
-// the biggest spread times pixel count at its median. bins gets the colours that occur. Returns how many it made.
-inline int median_cut(const std::vector<uint32_t> &hist, int colours, uint32_t *pal, std::vector<uint16_t> &bins) {
-  bins.clear();
-  for (int i = 0; i < 4096; i++)
-    if (hist[i])
-      bins.push_back((uint16_t) i);
-  std::vector<std::pair<size_t, size_t>> boxes{{0, bins.size()}};
-  auto ch = [](int bin, int c) { return bin >> (8 - 4 * c) & 15; };
-  while ((int) boxes.size() < colours) {
-    int best = -1, best_c = 0;
-    uint64_t best_score = 0;
-    for (size_t i = 0; i < boxes.size(); i++) {
-      if (boxes[i].second - boxes[i].first < 2)
-        continue;
-      int lo[3] = {15, 15, 15}, hi[3] = {0, 0, 0};
-      uint64_t n = 0;
-      for (size_t k = boxes[i].first; k < boxes[i].second; k++) {
-        for (int c = 0; c < 3; c++) {
-          lo[c] = std::min(lo[c], ch(bins[k], c));
-          hi[c] = std::max(hi[c], ch(bins[k], c));
-        }
-        n += hist[bins[k]];
-      }
-      int c = hi[0] - lo[0] >= hi[1] - lo[1] && hi[0] - lo[0] >= hi[2] - lo[2] ? 0
-              : hi[1] - lo[1] >= hi[2] - lo[2]                                 ? 1
-                                                                               : 2;
-      uint64_t score = n * (uint64_t) (hi[c] - lo[c]);
-      if (score > best_score) {
-        best_score = score;
-        best = (int) i;
-        best_c = c;
-      }
-    }
-    if (best < 0)
-      break;
-    size_t a = boxes[best].first, b = boxes[best].second;
-    std::sort(bins.begin() + a, bins.begin() + b,
-              [&](uint16_t p, uint16_t q) { return ch(p, best_c) < ch(q, best_c); });
-    uint64_t n = 0, acc = 0;
-    for (size_t k = a; k < b; k++)
-      n += hist[bins[k]];
-    size_t mid = a;
-    while (mid < b - 1 && acc + hist[bins[mid]] <= n / 2)
-      acc += hist[bins[mid++]];
-    if (mid == a)
-      mid = a + 1;
-    boxes[best] = {a, mid};
-    boxes.push_back({mid, b});
-  }
-  for (size_t i = 0; i < boxes.size(); i++) {
-    uint64_t r = 0, g = 0, b = 0, n = 0;
-    for (size_t k = boxes[i].first; k < boxes[i].second; k++) {
-      uint32_t c = bin_rgb(bins[k]), cnt = hist[bins[k]];
-      r += (c >> 16) * cnt;
-      g += (c >> 8 & 255) * cnt;
-      b += (c & 255) * cnt;
-      n += cnt;
-    }
-    if (n)
-      pal[i] = (uint32_t) (r / n) << 16 | (uint32_t) (g / n) << 8 | (uint32_t) (b / n);
-  }
-  return (int) boxes.size();
-}
-
-// Builds the histogram a slice at a time, then picks the 16 colours
-inline void count(uint32_t t0) {
-  for (; S.y < S.made.h && micros() - t0 < SLICE_US; S.y++)
+// The histogram a slice at a time, then the 16 colours. The panel's palette stays if it's nearly as good, so only
+// the changed rows go.
+inline void count(uint32_t deadline_us) {
+  for (; S.y < S.made.h && before(deadline_us); S.y++)
     for (int x = 0; x < S.made.w; x++)
       S.hist[bin(px(x, S.y))]++;
   if (S.y < S.made.h)
@@ -518,50 +283,54 @@ inline void count(uint32_t t0) {
   uint32_t pal[16] = {};
   median_cut(S.hist, 16, pal, bins);
   S.colours = (int) std::min<size_t>(bins.size(), 17);
-  uint64_t total = 0;
-  for (uint16_t bn : bins)
-    total += S.hist[bn];
-  // Keep the panel's palette if it's nearly as good, so only the changed rows need to go
-  const uint32_t *use = pal;
-  if (S.shown.format == PIC_PALETTE && S.shown.w == S.made.w && S.shown.h == S.made.h && total) {
-    uint64_t e_new = 0, e_old = 0;
-    for (uint16_t bn : bins) {
-      uint32_t c = bin_rgb(bn);
-      e_new += (uint64_t) dist(c, pal[nearest(c, pal)]) * S.hist[bn];
-      e_old += (uint64_t) dist(c, S.shown.pal[nearest(c, S.shown.pal)]) * S.hist[bn];
-    }
-    if (e_old <= e_new + e_new / 4 + total * 30)
-      use = S.shown.pal;
-  }
-  memcpy(S.made.pal, use, sizeof S.made.pal);
-  for (int i = 0; i < 4096; i++)
-    S.lut[i] = (uint8_t) nearest(bin_rgb(i), S.made.pal);
+  S.kept = S.shown.format == PIC_PALETTE && S.shown.w == S.made.w && S.shown.h == S.made.h &&
+           nearly_as_good(S.shown.pal, pal, S.hist, bins);
+  memcpy(S.made.pal, S.kept ? S.shown.pal : pal, sizeof S.made.pal);
+  fill_lut(S.lut, S.hist, S.made.pal, 16);
   drop(S.hist);
-  S.made.data.reserve(POOL + SCREEN_W);  // all it needs, past POOL it's a JPEG anyway
+  S.sums = Sums();
+  S.made.data.reserve(POOL + PIC_MAX_W);  // all it needs, past POOL it's a JPEG anyway
   S.made.rows.push_back(0);
   S.y = 0;
   S.phase = MAP;
 }
 
-// The 16-colour version, packed row by row while adding up the error
-inline void map(uint32_t t0) {
+// The 16-colour version, packed row by row while adding up what its colours and error need
+inline void map(uint32_t deadline_us) {
   const int w = S.made.w;
-  std::vector<uint8_t> idx((size_t) w + 1, 0), row(((size_t) w + 1) / 2);
-  for (; S.y < S.made.h && micros() - t0 < SLICE_US; S.y++) {
-    for (int x = 0; x < w; x++) {
-      uint32_t c = px(x, S.y);
+  uint8_t idx[PIC_MAX_W + 1] = {}, row[(PIC_MAX_W + 1) / 2];
+  const size_t row_n = ((size_t) w + 1) / 2;
+  bool mine = own();
+  for (; S.y < S.made.h && before(deadline_us); S.y++) {
+    uint32_t sq[6] = {};  // the row's, 320 * 255 * 255 at most
+    if (mine)
+      S.src->row(S.y, idx);
+    for (int x = 0; x < w && !mine; x++) {
+      uint32_t c = px(x, S.y), r = c >> 16, g = c >> 8 & 255, b = c & 255;
       uint8_t i = S.lut[bin(c)];
       idx[x] = i;
-      S.made.err += ycc_dist(c, S.made.pal[i]);
+      uint32_t *s = S.sums.sum[i];
+      s[0] += r;
+      s[1] += g;
+      s[2] += b;
+      s[3]++;
+      sq[0] += r * r;
+      sq[1] += g * g;
+      sq[2] += b * b;
+      sq[3] += r * g;
+      sq[4] += r * b;
+      sq[5] += g * b;
     }
-    for (size_t k = 0; k < row.size(); k++)
+    for (int k = 0; k < 6; k++)
+      S.sums.sq[k] += sq[k];
+    for (size_t k = 0; k < row_n; k++)
       row[k] = (uint8_t) (idx[2 * k] << 4 | idx[2 * k + 1]);
-    pack(row.data(), row.size(), S.made.data);
+    pack(row, row_n, S.made.data);
     S.made.rows.push_back((uint16_t) S.made.data.size());
     if (S.made.data.size() > POOL) {  // doesn't fit, a JPEG then
       drop(S.made.data);
       drop(S.lut);
-      S.fits = false;
+      S.palette_fits = false;
       if (S.src->encoding == PALETTE) {
         ESP_LOGW("panel", "Picture %s: too detailed for 16 colours in %u bytes, sending a JPEG", S.name.c_str(),
                  (unsigned) POOL);
@@ -573,84 +342,82 @@ inline void map(uint32_t t0) {
   if (S.y < S.made.h)
     return;
   drop(S.lut);
-  S.made.err /= (double) S.made.w * S.made.h;
-  S.fits = true;
+  if (!S.kept)  // the panel's palette stays as it is
+    S.sums.means(S.made.pal);
+  S.made.err = S.sums.err(S.made.pal) / ((double) S.made.w * S.made.h);
+  S.palette_fits = true;
   if (S.src->encoding == PALETTE || S.colours <= 16)
     S.phase = CHOOSE;
   else
     jpeg_start();
 }
 
-// The JPEG. Tries qualities until it has the best that fits.
-inline void jpeg_try(int q) {
-  int w = (S.fw + 15) & ~15, h = (S.fh + 7) & ~7;
-  S.buf.resize(POOL);
-  pjpeg_begin(&S.enc, w, h, q, S.buf.data(), POOL);
-  S.lines.assign((size_t) w * 8, 0);
-  S.line = 0;
+// Pixel of the JPEG, black around the picture. A bigger source is averaged over up to 3x3 of the pixels each one
+// covers, as the nearest ones make a photo grainy. 16 colours keep the nearest, which keeps flat colours flat.
+inline uint32_t jpx(int x, int y) {
+  x -= S.search.ox;
+  y -= S.search.oy;
+  if (x < 0 || y < 0 || x >= S.fw || y >= S.fh)
+    return 0;
+  if (S.fw >= S.sw)
+    return px(x, y);
+  int x0 = x * S.sw / S.fw, y0 = y * S.sh / S.fh, w = (x + 1) * S.sw / S.fw - x0, h = (y + 1) * S.sh / S.fh - y0,
+      nx = std::min(w, 3), ny = std::min(h, 3);
+  uint32_t r = 0, g = 0, b = 0, n = (uint32_t) (nx * ny);
+  for (int j = 0; j < ny; j++)
+    for (int i = 0; i < nx; i++) {
+      uint32_t c = S.src->pixel(x0 + (2 * i + 1) * w / (2 * nx), y0 + (2 * j + 1) * h / (2 * ny));
+      r += c >> 16;
+      g += c >> 8 & 255;
+      b += c & 255;
+    }
+  return (r + n / 2) / n << 16 | (g + n / 2) / n << 8 | (b + n / 2) / n;
 }
 
-// Without the RAM for a JPEG it's the 16-colour version if that fits, else false
+// No RAM for a JPEG: the 16-colour version if it fits, else false. One the panel has as a JPEG starts at its quality.
 inline bool jpeg_start() {
   if (!has_ram(JPEG_RAM, POOL)) {
-    if (!S.fits)
+    if (!S.palette_fits)
       return no_ram();
     ESP_LOGW("panel", "Picture %s: no RAM for a JPEG, sending 16 colours", S.name.c_str());
     S.phase = CHOOSE;
     return true;
   }
-  S.lo = 0;
-  S.hi = S.src->quality ? S.src->quality : 95;
-  S.jpeg.data.reserve(POOL);
-  jpeg_try((S.lo + S.hi + 1) / 2);
+  bool again = S.shown.name == S.name && S.shown.format == PIC_JPEG;
+  S.jpeg.data.resize(POOL);
+  S.search.start(S.fw, S.fh, S.src->quality ? S.src->quality : TOP_QUALITY, again ? S.shown.quality : 0,
+                 S.jpeg.data.data());
   S.phase = JPEG_TRY;
   return true;
 }
 
-// A source line or an MCU at a time, so the loop gets back to the bus within about SLICE_US
-inline void jpeg(uint32_t t0) {
-  pjpeg_t &e = S.enc;
+// A source line or an MCU at a time until deadline_us. Done once the best quality that fits is in jpeg.data.
+inline void jpeg(uint32_t deadline_us) {
+  Search &js = S.search;
   bool more = true;
-  while (more && micros() - t0 < SLICE_US) {
-    if (S.line < 8) {  // the next source line for this row of MCUs, black past the picture's edge
-      int y = e.row * 8 + S.line;
-      for (int x = 0; x < e.w; x++)
-        S.lines[(size_t) S.line * e.w + x] = x < S.fw && y < S.fh ? px(x, y) : 0;
-      S.line++;
-      continue;
-    }
-    more = pjpeg_mcu(&e, [](void *, int x, int y) { return S.lines[(size_t) (y % 8) * S.enc.w + x]; }, nullptr);
-    if (!e.col)
-      S.line = 0;  // on to the next row
-  }
-  if (more)
+  while (more && before(deadline_us))
+    more = js.step(jpx);
+  if (more || js.next())
     return;
-  int q = (int) (((uint32_t) S.lo + S.hi + 1) / 2);
-  uint32_t n = pjpeg_end(&e);
-  if (n) {  // fits, the best so far
-    S.lo = q;
+  if (js.best) {
     S.jpeg.format = PIC_JPEG;
-    S.jpeg.w = e.w;
-    S.jpeg.h = e.h;
-    S.jpeg.quality = q;
-    S.jpeg.err = pjpeg_mse(&e);
-    S.jpeg.data.assign(S.buf.begin(), S.buf.begin() + n);
+    S.jpeg.w = js.enc.w;
+    S.jpeg.h = js.enc.h;
+    S.jpeg.quality = js.best;
+    S.jpeg.err = js.err();
+    S.jpeg.data.resize(js.enc.o[0].len);
   } else {
-    S.hi = q - 1;
+    S.jpeg = Pic();
   }
-  if (S.lo < S.hi) {
-    jpeg_try((S.lo + S.hi + 1) / 2);
-    return;
-  }
-  drop(S.buf);
-  drop(S.lines);
+  js.drop();
   S.phase = CHOOSE;
 }
 
 // 16 colours if it fits and was asked for or isn't clearly worse, else the JPEG. 16 colours is sharp, so it still
 // wins with up to twice the JPEG's error.
 inline bool choose() {
-  bool palette = S.fits && (S.src->encoding == PALETTE || S.colours <= 16 || !S.jpeg.w || S.made.err <= 2 * S.jpeg.err);
+  bool palette =
+      S.palette_fits && (S.src->encoding == PALETTE || S.colours <= 16 || !S.jpeg.w || S.made.err <= 2 * S.jpeg.err);
   if (S.src->done)
     S.src->done();
   if (!palette && !S.jpeg.w) {
@@ -665,8 +432,8 @@ inline bool choose() {
   S.made.data.shrink_to_fit();
   S.made.rows.shrink_to_fit();
   if (S.made.format == PIC_JPEG) {
-    ESP_LOGI("panel", "Picture %s: %ux%u as a JPEG at quality %d, %u bytes", S.name.c_str(), S.made.w, S.made.h,
-             S.made.quality, (unsigned) S.made.data.size());
+    ESP_LOGI("panel", "Picture %s: %ux%u as a JPEG at quality %d (%d encodes), %u bytes", S.name.c_str(), S.made.w,
+             S.made.h, S.made.quality, S.search.encodes, (unsigned) S.made.data.size());
   } else {
     ESP_LOGI("panel", "Picture %s: %ux%u in 16 colours, %u bytes", S.name.c_str(), S.made.w, S.made.h,
              (unsigned) S.made.data.size());
@@ -690,60 +457,20 @@ inline void now_shown() {
   S.shown = std::move(S.made);
   S.made = Pic();
   S.phase = IDLE;
-  S.tries = 0;
+  S.t.tries = 0;
   status("Shown: " + S.name + what(S.shown));
 }
 
 // The whole picture, or only the changed rows in pieces. False if nothing has to go.
 inline bool plan() {
   S.jobs.clear();
-  S.head = S.ended = false;
-  Pic &made = S.made, &shown = S.shown;
+  const Pic &made = S.made, &shown = S.shown;
   bool same = shown.name == made.name && shown.format == made.format && shown.w == made.w && shown.h == made.h;
-  if (made.format == PIC_JPEG) {
-    if (!same || shown.data != made.data)  // a JPEG goes whole, and not at all if it's the same
-      S.jobs.push_back({true, true, 0, made.h});
-  } else if (!same) {
-    S.jobs.push_back({true, true, 0, made.h});
-  } else {
-    auto differs = [&](int r) {
-      size_t a = made.rows[r + 1] - made.rows[r], b = shown.rows[r + 1] - shown.rows[r];
-      return a != b || memcmp(made.data.data() + made.rows[r], shown.data.data() + shown.rows[r], a) != 0;
-    };
-    // The panel keeps a piece behind the picture in its memory until it's applied, so it has to fit there.
-    // size is the panel's picture with the earlier pieces applied. Unchanged rows up to GAP between changed ones go
-    // along: deflated against the panel's picture they cost a few bytes, another piece a round trip.
-    static constexpr int GAP = 16;
-    uint32_t bytes = 0, size = shown.data.size();
-    bool fits = true;
-    for (int r = 0; r < made.h;) {
-      if (!differs(r)) {
-        r++;
-        continue;
-      }
-      int s = r, end = r;  // end: past the last changed row in this piece
-      for (; r < made.h && r - end < GAP && size + (made.rows[r + 1] - made.rows[s]) <= POOL; r++)
-        if (differs(r))
-          end = r + 1;
-      r = end;
-      fits = end > s;
-      if (!fits)
-        break;  // not even one row fits, send the whole picture
-      S.jobs.push_back({false, false, (uint16_t) s, (uint16_t) (end - s)});
-      bytes += made.rows[end] - made.rows[s];
-      size += (made.rows[end] - made.rows[s]) - (shown.rows[end] - shown.rows[s]);
-    }
-    if (memcmp(made.pal, shown.pal, sizeof made.pal)) {
-      if (S.jobs.empty())
-        S.jobs.push_back({false, true, 0, 0});  // only the colours changed
-      else
-        S.jobs[0].pal = true;
-    }
-    if (!fits) {
-      S.jobs.clear();
-      S.jobs.push_back({true, true, 0, made.h});
-    }
+  if (same && made.format != PIC_JPEG) {
+    [[maybe_unused]] uint32_t bytes = patches(made, shown, S.jobs);  // only logged, unused when ESP_LOGI compiles out
     ESP_LOGI("panel", "Picture %s: %u pieces, %u bytes", S.name.c_str(), (unsigned) S.jobs.size(), (unsigned) bytes);
+  } else if (!same || shown.data != made.data) {  // a JPEG goes whole, and not at all if it's the same
+    S.jobs.push_back({true, true, 0, made.h});
   }
   if (S.jobs.empty()) {
     now_shown();
@@ -754,29 +481,28 @@ inline bool plan() {
   return true;
 }
 
-inline void applied(const Job &j);
-
 // The panel's K_PIC_ACK = status << 24 | id << 16 | bytes received, from panel.h
 inline void ack(uint32_t a) {
   uint8_t st = a >> 24;
-  uint32_t n = a & 0xFFFF;
-  if (S.phase != SEND || !S.head || (a >> 16 & 0xFF) != S.id)
+  if (S.phase != SEND || !S.t.answers(a))
     return;                  // for the animation or an earlier piece
   if (st == PIC_PROGRESS) {  // another KiB
-    if (S.len)
-      status("Sending " + S.name + ": " + std::to_string(std::min<uint32_t>(99, n * 100 / S.len)) + " %");
+    if (S.piece_len)
+      status(progress(S.name, a, S.piece_len));
   } else if (st == PIC_DONE) {  // piece applied
     Job j = S.jobs.front();
     S.jobs.erase(S.jobs.begin());
-    S.head = S.ended = false;
-    if (S.jobs.empty())
+    S.t.head = false;
+    if (S.jobs.empty()) {
       now_shown();
-    else
-      applied(j);
+    } else {
+      apply(S.shown, S.made, j);
+    }
   } else if (st == PIC_NO_ROOM || st == PIC_NO_PICTURE) {  // piece didn't fit or the panel restarted, send it all
     S.shown = Pic();
+    S.t.head = false;
     S.phase = PLAN;
-  } else if (st != PIC_TOO_BIG && ++S.tries <= 2) {  // retry with the whole picture
+  } else if (S.t.refused(st, !S.jobs.front().full)) {
     ESP_LOGW("panel", "Picture %s: the panel refused a piece (%d), sending all of it", S.name.c_str(), st);
     S.shown = Pic();
     S.phase = PLAN;
@@ -796,228 +522,55 @@ inline void restarted() {
     S.phase = PLAN;
   }
   S.shown = Pic();
-  S.tries = 0;
+  S.t.reset();
 }
 
-inline void put16(uint8_t *b, unsigned v) {
-  b[0] = (uint8_t) v;
-  b[1] = (uint8_t) (v >> 8);
-}
-
-inline void put32(uint8_t *b, uint32_t v) {
-  put16(b, v & 0xFFFF);
-  put16(b + 2, v >> 16);
-}
-
-inline void put_palette(uint8_t *b, const uint32_t *pal) {
-  for (int i = 0; i < 16; i++, b += 3) {
-    b[0] = (uint8_t) (pal[i] >> 16);
-    b[1] = (uint8_t) (pal[i] >> 8);
-    b[2] = (uint8_t) pal[i];
+// The next piece's header, and for 16 colours pzip set up to pack its rows
+inline void begin_piece() {
+  const Pic &made = S.made;
+  const Job &j = S.jobs.front();
+  bool jpeg = made.format == PIC_JPEG;
+  S.piece_at = jpeg ? 0 : made.rows[j.y];
+  S.piece_len = jpeg ? (uint32_t) made.data.size() : made.rows[j.y + j.count] - S.piece_at;
+  S.t.open(made.data.data() + S.piece_at, S.piece_len);
+  uint8_t h[PIC_BEGIN_HEAD + PIC_PAL_LEN];
+  if (j.full) {  // BEGIN, the palette for 16 colours
+    int n = plink_pic_begin(h, S.t.id, made.format, made.w, made.h, S.piece_len, jpeg ? nullptr : made.pal);
+    link::send(K_PIC_BEGIN, h, n);
+  } else {  // PATCH, the palette if it changed
+    link::send(K_PIC_PATCH, h, plink_pic_patch(h, S.t.id, j.y, j.count, S.piece_len, j.pal ? made.pal : nullptr));
   }
+  if (jpeg)
+    return;
+  if (S.zip.table.empty() && has_ram(PZIP_TABLE * 2, PZIP_TABLE * 2))
+    S.zip.table.resize(PZIP_TABLE);
+  S.zip.begin(made, S.shown, j, S.piece_at, S.piece_len);
 }
 
-// After a picture's or animation's END: true once the panel has had ACK_MS on a working link and hasn't answered.
-// since is when END went, or the link last wasn't working.
-inline bool no_answer(bool ended, uint32_t &since) {
-  if (!ended || !link::connected || link::tx.refused) {
-    since = millis();
-    return false;
-  }
-  return millis() - since > ACK_MS;
-}
-
-// After a picture's or animation's header: data[pos..len) as DATA while the link has room, then END with the CRC
-// A transfer's DATA as the link has room, then END with the CRC of data. next(b, max) gives up to max more bytes
-// of what goes, fewer only at the end.
-template<typename Next> void send_data(const uint8_t *data, uint32_t len, bool &ended, Next next) {
-  uint32_t t0 = micros();
-  while (!ended && link::waiting() < link::BACKLOG && link::room() >= 80 && micros() - t0 < SLICE_US) {
-    uint8_t b[64] = {};  // DATA must be a multiple of 4 bytes, so the last chunk is padded
-    unsigned n = next(b, sizeof b);
-    if (n)
-      link::send(K_PIC_DATA, b, (int) (n + 3) & ~3);
-    if (n < sizeof b) {
-      link::send(K_PIC_END, plink_crc32(0, data, len));
-      ended = true;
-    }
-  }
-}
-
-// For send_data: data as it is, from pos on
-inline auto raw(const uint8_t *data, uint32_t len, uint32_t &pos) {
-  return [data, len, &pos](uint8_t *b, unsigned max) {
-    unsigned k = std::min<uint32_t>(max, len - pos);
-    memcpy(b, data + pos, k);
-    pos += k;
-    return k;
-  };
-}
-
-// For send_data: S.zip's pieces
-inline unsigned pieces(uint8_t *b, unsigned max) {
-  Zip &z = S.zip;
-  for (unsigned k; z.n < max && (k = pzip(&z.z, z.buf + z.n));)
-    z.n += k;
-  unsigned k = std::min(z.n, max);
-  memcpy(b, z.buf, k);
-  memmove(z.buf, z.buf + k, z.n - k);
-  z.n -= k;
-  return k;
-}
-
-// pzip's like() for a patch: the same place in the row it replaces on the panel
-inline int32_t like_row(void *, uint32_t i) {
-  const Pic &m = S.made, &p = S.shown;
-  while (S.zip.row + 1u < m.h && m.rows[S.zip.row + 1] <= S.start + i)
-    S.zip.row++;
-  uint32_t at = p.rows[S.zip.row] + (S.start + i - m.rows[S.zip.row]);
-  return at < p.rows[S.zip.row + 1] ? (int32_t) at : -1;
-}
-
-// The panel spliced the patch into its picture, so shown does too and the next one matches what it has
-inline void applied(const Job &j) {
-  Pic &p = S.shown;
-  const Pic &m = S.made;
-  uint32_t a = p.rows[j.y], b = p.rows[j.y + j.count];
-  int32_t delta = (int32_t) (m.rows[j.y + j.count] - m.rows[j.y]) - (int32_t) (b - a);
-  p.data.erase(p.data.begin() + a, p.data.begin() + b);
-  p.data.insert(p.data.begin() + a, m.data.begin() + m.rows[j.y], m.data.begin() + m.rows[j.y + j.count]);
-  for (unsigned r = j.y + 1u; r <= j.y + j.count; r++)
-    p.rows[r] = (uint16_t) (a + m.rows[r] - m.rows[j.y]);
-  for (unsigned r = j.y + j.count + 1u; r <= p.h; r++)
-    p.rows[r] = (uint16_t) (p.rows[r] + delta);
-  if (j.pal)
-    memcpy(p.pal, m.pal, sizeof p.pal);
-}
-
-// The next piece's header, then its data as the link has room. Done when the panel acks it.
-inline void send() {
+// The next piece's header, then its data as the link has room until deadline_us. Done when the panel acks it.
+inline void send(uint32_t deadline_us) {
   if (S.phase != SEND || S.jobs.empty())
     return;
-  if (no_answer(S.head && S.ended, S.end_ms)) {  // the panel lost the piece or its answer
-    S.shown = Pic();
-    if (++S.tries <= 2) {
-      ESP_LOGW("panel", "Picture %s: no answer from the panel, sending all of it again", S.name.c_str());
-      S.phase = PLAN;
-    } else {
-      status(S.name + ": the panel didn't answer");
-      reset();
-    }
+  Transfer::Pumped p =
+      S.made.format == PIC_JPEG
+          ? S.t.pump(deadline_us, begin_piece)
+          : S.t.pump(deadline_us, begin_piece, [](uint8_t *b, unsigned max) { return S.zip.next(b, max); });
+  if (p == Transfer::GOING)
     return;
+  S.shown = Pic();  // the panel lost the piece or its answer
+  if (p == Transfer::AGAIN) {
+    ESP_LOGW("panel", "Picture %s: no answer from the panel, sending all of it again", S.name.c_str());
+    S.phase = PLAN;
+  } else {
+    status(S.name + ": the panel didn't answer");
+    reset();
   }
-  if (!link::connected)
-    return;
-  const Pic &made = S.made;
-  Job &j = S.jobs.front();
-  if (!S.head) {
-    if (link::waiting() > link::BACKLOG || anim::sending())
-      return;  // let the animation finish first
-    bool jpeg = made.format == PIC_JPEG;
-    S.start = jpeg ? 0 : made.rows[j.y];
-    S.len = jpeg ? (uint32_t) made.data.size() : made.rows[j.y + j.count] - S.start;
-    S.pos = 0;
-    S.id = ++transfer_ids;
-    uint8_t h[58] = {S.id};
-    if (j.full) {  // BEGIN: format, w, h, len, the palette for 16 colours
-      h[1] = made.format;
-      put16(h + 2, made.w);
-      put16(h + 4, made.h);
-      put32(h + 6, S.len);
-      put_palette(h + 10, made.pal);
-      link::send(K_PIC_BEGIN, h, jpeg ? 10 : 58);
-    } else {  // PATCH: y, count, len, the palette if it changed
-      put16(h + 1, j.y);
-      put16(h + 3, j.count);
-      put32(h + 5, S.len);
-      put_palette(h + 9, made.pal);
-      link::send(K_PIC_PATCH, h, j.pal ? 57 : 9);
-    }
-    S.head = true;
-    if (!jpeg) {  // a whole one only matches itself, a patch the panel's picture too
-      if (S.zip.table.empty() && has_ram(PZIP_TABLE * 2, PZIP_TABLE * 2))
-        S.zip.table.resize(PZIP_TABLE);
-      S.zip.z = {j.full ? nullptr : S.shown.data.data(),
-                 j.full ? 0 : (uint32_t) S.shown.data.size(),
-                 made.data.data() + S.start,
-                 S.len,
-                 0,
-                 S.zip.table.empty() ? nullptr : S.zip.table.data(),
-                 0,
-                 j.full ? nullptr : like_row,
-                 nullptr};
-      S.zip.n = 0;
-      S.zip.row = j.y;
-    }
-  }
-  if (made.format == PIC_JPEG)
-    send_data(made.data.data(), S.len, S.ended, raw(made.data.data(), S.len, S.pos));
-  else
-    send_data(made.data.data() + S.start, S.len, S.ended, pieces);
 }
 
-inline bool sending() { return S.phase == SEND && S.head; }
-
-// Whether the ESP has the RAM to download, decode and make an online picture. online_image keeps a JPEG whole
-// in a buffer it only grows, PNG and BMP stream through it. A new decoder: JPEG 17 KB, PNG 44 KB in one piece.
-inline bool fits(const std::string &name, Online &o) {
-  size_t n = 0;
-  std::string type, why, ram;  // ram: what the ESP has, for the log
-  int code = o.head(o.url, n, type);
-  for (auto &c : type)
-    c = (char) tolower((unsigned char) c);
-  auto is = [&](const char *f, const char *t) {
-    return o.format == f || (o.format == "AUTO" && type.find(t) != std::string::npos);
-  };
-  char kind = is("JPEG", "jpeg") || is("JPG", "jpg") ? 'J' : is("PNG", "png") ? 'P' : 'B';
-  bool jpeg = kind == 'J';
-  size_t dec = kind == o.kept.decoder || kind == 'B' ? 0 : jpeg ? 17 * 1024 : 44 * 1024;  // a new decoder
-  size_t grow = jpeg && n > o.kept.buffer ? n : 0, need = grow + dec + o.pixels + MAKE_RAM;
-  if (code != 200) {
-    why = code > 0 ? "the server says " + std::to_string(code) + ", trying again later"
-                   : "couldn't reach the server, trying again later";
-  } else if (jpeg && !n) {
-    why = "the server doesn't say how big it is, which a JPEG needs";
-  } else if (!has_ram(need, std::max({grow, dec, (size_t) o.pixels}))) {
-    RAMAllocator<uint8_t> a;
-    why = "too big for the ESP, it needs " + std::to_string(need / 1024) + " KB of RAM";
-    ram = ". It has " + std::to_string(a.get_free_heap_size() / 1024) + " KB free, " +
-          std::to_string(a.get_max_free_block_size() / 1024) + " KB in one piece";
-  }
-  if (why.empty()) {
-    o.next = {std::max(o.kept.buffer, grow), kind};
-    return true;
-  }
-  ESP_LOGW("panel", "Picture %s: %s%s", name.c_str(), why.c_str(), ram.c_str());
-  if (name == S.want)
-    S.waiting = why;
-  return false;
-}
-
-// Starts a download if it fits, false if not. The wait before size() tries again doubles until one comes.
-inline bool download(const std::string &name, Online &o) {
-  o.fetched = millis();
-  if (o.busy())  // the last one still runs, no need to ask the server
-    return true;
-  o.wait = o.wait ? std::min<uint32_t>(2 * o.wait, 30 * 60000) : 30000;
-  o.at = millis() + o.wait;
-  if (!fits(name, o))
-    return false;
-  if (name == S.want)
-    S.waiting = "waiting for it";
-  if (o.fetch())
-    o.kept = o.next;  // online_image grows its buffer and makes the decoder for it
-  return true;
-}
-
-// every 20 ms
-inline void loop() {
-  if (S.to_clear && !anim::sending())
+// Every 20 ms, until deadline_us, with picture_online.h's refresh() first
+inline void loop(uint32_t deadline_us) {
+  if (S.to_clear && !S.t.blocked())
     S.to_clear = !link::send(K_PIC_CLEAR, 0);
-  auto o = online.find(S.want);  // the shown online picture downloads again every `every`, if it still fits
-  if (link::connected && o != online.end() && o->second->every && S.phase == IDLE && !S.redo &&
-      millis() - o->second->fetched >= o->second->every && !download(S.want, *o->second))
-    status(S.want + ": " + S.waiting);
   if (!ask())
     return;
   if (!link::connected) {  // nothing is made or downloaded without the panel
@@ -1027,11 +580,13 @@ inline void loop() {
       reset();
       S.redo = true;
     }
-    if (S.phase == START)
+    if (S.phase == START && !S.away) {
       status(S.name + ": waiting for the panel");
+      S.away = true;
+    }
     return;
   }
-  uint32_t t0 = micros();
+  S.away = false;
   if (S.phase == START && !start())
     return;
   if (S.phase >= COUNT && S.phase <= JPEG_TRY) {  // an online picture being downloaded again changes under us
@@ -1041,23 +596,28 @@ inline void loop() {
       return;
     }
   }
-  if (S.phase == COUNT) {
-    count(t0);
-    return;
+  switch (S.phase) {
+    case COUNT:
+      count(deadline_us);
+      break;
+    case MAP:
+      map(deadline_us);
+      break;
+    case JPEG_TRY:
+      jpeg(deadline_us);
+      break;
+    case CHOOSE:
+      if (!choose())
+        break;
+      [[fallthrough]];
+    case PLAN:
+      if (!plan())
+        break;
+      [[fallthrough]];
+    case SEND:
+      send(deadline_us);
+      break;
   }
-  if (S.phase == MAP) {
-    map(t0);
-    return;
-  }
-  if (S.phase == JPEG_TRY) {
-    jpeg(t0);
-    return;
-  }
-  if (S.phase == CHOOSE && !choose())
-    return;
-  if (S.phase == PLAN && !plan())
-    return;
-  send();
 }
 
 }  // namespace flexit::panel::picture

@@ -1,6 +1,8 @@
-// Raw deflate, see pdeflate.h. pinflate works like zlib's puff.c, slow but small, decoding a bit at a time and
-// checking every read and write. pdeflate makes one block, LZ77 with hash chains and one step of lazy matching,
-// then stored, fixed or own Huffman codes, whichever is smallest.
+// Raw deflate, see pdeflate.h. pinflate is small and checks every read and write: it takes the bits from a word,
+// reverses the next 15 so a code's first bit is on top, and finds the code's length by where that falls between
+// the lengths' limits. pdeflate makes one block, LZ77 with hash chains and one step of lazy matching, then stored,
+// fixed or own Huffman codes, whichever is smallest.
+// Copied into esphome-flexit-modbus-server by make -C sim esp_sync, edit it here.
 #include "pdeflate.h"
 #include <stdbool.h>
 #include <stdlib.h>
@@ -22,148 +24,203 @@ static const uint8_t CLORDER[19] = {16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12,
 static uint32_t at(uint32_t i, unsigned width, unsigned stride) { return i / width * stride + i % width; }
 
 // ---------------------------------------------------------------- inflate
+#define R2(n) n, n + 2 * 64, n + 1 * 64, n + 3 * 64
+#define R4(n) R2(n), R2(n + 2 * 16), R2(n + 1 * 16), R2(n + 3 * 16)
+#define R6(n) R4(n), R4(n + 2 * 4), R4(n + 1 * 4), R4(n + 3 * 4)
+static const uint8_t REV[256] = {R6(0), R6(2), R6(1), R6(3)};  // each byte with its bits the other way round
+
 typedef struct {
-  const uint8_t *in;
-  uint32_t n, pos;
-  uint32_t bits;  // bits read but not used yet, nbits of them, at the bottom
-  int nbits;
-  bool short_;  // the data ended early
-  uint8_t *out;
-  unsigned width, stride;
+  uint16_t limit[17];  // codes up to l bits, filled out to 15 bits, are below limit[l]. limit[16] stops the search
+  int16_t offs[16];    // a code of l bits is symbol[offs[l] + code]
+  uint8_t start[16];   // the shortest code that starts with each 4 bits, where the search starts
+  const uint16_t *symbol;
+} huff_t;
+
+// The fixed codes. Literals and lengths: 7 bits for 256-279, 8 for 0-143 and 280-287, 9 for 144-255. Distances: 5
+// bits, the symbol is the code, from the 0-143 run.
+#define S4(n) n, n + 1, n + 2, n + 3
+#define S16(n) S4(n), S4(n + 4), S4(n + 8), S4(n + 12)
+static const uint16_t FIX_SYM[288] = {S16(256), S4(272),  S4(276),  S16(0),   S16(16),  S16(32),  S16(48),
+                                      S16(64),  S16(80),  S16(96),  S16(112), S16(128), S4(280),  S4(284),
+                                      S16(144), S16(160), S16(176), S16(192), S16(208), S16(224), S16(240)};
+static const huff_t FIX_LIT = {
+    {0, 0, 0, 0, 0, 0, 0, 24 << 8, 200 << 7, 32768, 32768, 32768, 32768, 32768, 32768, 32768, 32768},
+    {0, 0, 0, 0, 0, 0, 0, 0, -24, -224},
+    {7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9},
+    FIX_SYM};
+static const huff_t FIX_DIST = {{0, 0, 0, 0, 0, 30 << 10, 30 << 10, 30 << 10, 30 << 10, 30 << 10, 30 << 10, 30 << 10,
+                                 30 << 10, 30 << 10, 30 << 10, 30 << 10, 32768},
+                                {0},
+                                {5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5},
+                                FIX_SYM + 24};
+
+typedef struct {
+  const uint8_t *in, *start, *end;
+  uint32_t bits;             // bits read but not used yet, nbits of them, at the bottom
+  int nbits, pad;            // pad: how many of those are the zeros past the end
+  bool short_;               // the data ended early
+  uint8_t *out, *o;          // o: where the next byte goes, when out isn't NULL
+  unsigned width, skip;      // bytes per row, stride - width
+  unsigned col;              // o's column
+  bool flat;                 // rows one after the other, no gaps
   uint32_t len, done, hist;  // bytes to make, bytes made, bytes before out that matches may reach
 } inf_t;
 
-typedef struct {
-  int16_t count[16];  // codes of each length
-  int16_t *symbol;    // the symbols in code order
-} huff_t;
-
-static unsigned getbits(inf_t *s, int need) {
-  while (s->nbits < need) {
-    if (s->pos == s->n) {
-      s->short_ = true;
-      return 0;
-    }
-    s->bits |= (uint32_t) s->in[s->pos++] << s->nbits;
-    s->nbits += 8;
+static inline void fill(inf_t *s) {  // at least 25 bits
+  for (; s->nbits <= 24; s->nbits += 8) {
+    if (s->in < s->end)
+      s->bits |= (uint32_t) *s->in++ << s->nbits;
+    else
+      s->pad += 8;
   }
+}
+
+static inline void drop(inf_t *s, int n) {
+  s->bits >>= n;
+  s->nbits -= n;
+  s->short_ |= s->nbits < s->pad;
+}
+
+static inline unsigned getbits(inf_t *s, int need) {  // up to 16
+  if (s->nbits < need)
+    fill(s);
   unsigned v = s->bits & ((1u << need) - 1);
-  s->bits >>= need;
-  s->nbits -= need;
+  drop(s, need);
   return v;
 }
 
-// Builds h from n code lengths. < 0 = too many codes, 0 = complete, > 0 = some left over.
-static int build(huff_t *h, const uint8_t *lens, int n) {
-  memset(h->count, 0, sizeof h->count);
+// Builds h from n code lengths, its symbols into sym. < 0 = too many codes, 0 = complete, > 0 = some left over.
+static int build(huff_t *h, uint16_t *sym, const uint8_t *lens, int n) {
+  int16_t count[16] = {0}, offs[16];
   for (int i = 0; i < n; i++)
-    h->count[lens[i]]++;
-  if (h->count[0] == n)
-    return 0;  // no codes: nothing will decode
-  int left = 1;
+    count[lens[i]]++;
+  int left = 1, first = 0, index = 0;
   for (int l = 1; l < 16; l++) {
-    left = (left << 1) - h->count[l];
+    left = (left << 1) - count[l];
     if (left < 0)
       return left;
+    h->offs[l] = (int16_t) (index - first);
+    offs[l] = (int16_t) index;
+    index += count[l];
+    first += count[l];
+    h->limit[l] = (uint16_t) (first << (15 - l));
+    first <<= 1;
   }
-  int16_t offs[16];
-  offs[1] = 0;
-  for (int l = 1; l < 15; l++)
-    offs[l + 1] = (int16_t) (offs[l] + h->count[l]);
+  h->limit[16] = 32768;
+  for (int p = 0, l = 1; p < 16; h->start[p++] = (uint8_t) l)
+    while ((unsigned) p << 11 >= h->limit[l])
+      l++;
   for (int i = 0; i < n; i++)
     if (lens[i])
-      h->symbol[offs[lens[i]]++] = (int16_t) i;
-  return left;
+      sym[offs[lens[i]]++] = (uint16_t) i;
+  h->symbol = sym;
+  return count[0] == n ? 0 : left;  // no codes: nothing will decode
 }
 
 // The next symbol, -1 if the bits aren't a code
-static int decode(inf_t *s, const huff_t *h) {
-  int code = 0, first = 0, index = 0;
-  for (int l = 1; l < 16; l++) {
-    code |= (int) getbits(s, 1);
-    int count = h->count[l];
-    if (code - count < first)
-      return h->symbol[index + code - first];
-    index += count;
-    first = (first + count) << 1;
-    code <<= 1;
+static inline int decode(inf_t *s, const huff_t *h) {
+  if (s->nbits < 15)
+    fill(s);
+  unsigned r = (unsigned) (REV[s->bits & 255] << 7 | REV[s->bits >> 8 & 255] >> 1), l = h->start[r >> 11];
+  while (r >= h->limit[l])
+    l++;
+  if (l > 15)
+    return -1;
+  drop(s, (int) l);
+  return h->symbol[h->offs[l] + (int) (r >> (15 - l))];
+}
+
+static inline void emit(inf_t *s, uint8_t b) {
+  *s->o++ = b;
+  if (++s->col == s->width) {
+    s->col = 0;
+    s->o += s->skip;
   }
-  return -1;
 }
 
 // The symbols of a block, up to its end code
-static bool codes(inf_t *s, const huff_t *lit, const huff_t *dist) {
+static bool codes(inf_t *z, const huff_t *lit, const huff_t *dist) {
+  inf_t t = *z, *s = &t;  // in registers while it lasts
+  bool ok = false;
   for (;;) {
     int sym = decode(s, lit);
     if (s->short_ || sym < 0)
-      return false;
-    if (sym == 256)
-      return true;
+      break;
     if (sym < 256) {
       if (s->done == s->len)
-        return false;
+        break;
       if (s->out)
-        s->out[at(s->done, s->width, s->stride)] = (uint8_t) sym;
+        emit(s, (uint8_t) sym);
       s->done++;
       continue;
     }
+    if (sym == 256) {
+      ok = true;
+      break;
+    }
     sym -= 257;
     if (sym >= 29)
-      return false;
+      break;
     uint32_t n = LBASE[sym] + getbits(s, LEXT[sym]);
     int d = decode(s, dist);
     if (s->short_ || d < 0 || d >= 30)
-      return false;
+      break;
     uint32_t back = DBASE[d] + getbits(s, DEXT[d]);
     if (s->short_ || back > s->done + s->hist || n > s->len - s->done)
-      return false;
-    if (s->out)
-      for (uint32_t i = s->done; i < s->done + n; i++)
-        s->out[at(i, s->width, s->stride)] =
-            i >= back ? s->out[at(i - back, s->width, s->stride)] : s->out[(int32_t) i - (int32_t) back];
+      break;
+    if (s->out && s->flat) {  // also into hist
+      for (uint8_t *o = s->o, *f = o - back, *e = o + n; o < e;)
+        *o++ = *f++;
+      s->o += n;
+    } else if (s->out) {
+      uint32_t j = s->done - back, fcol = j % s->width;
+      const uint8_t *f = s->out + j / s->width * (s->width + s->skip) + fcol;
+      for (uint32_t k = 0; k < n; k++) {
+        emit(s, *f++);
+        if (++fcol == s->width) {
+          fcol = 0;
+          f += s->skip;
+        }
+      }
+    }
     s->done += n;
   }
+  *z = t;
+  return ok;
 }
 
 static bool stored(inf_t *s) {
-  s->bits = 0;  // skip the rest of the byte
-  s->nbits = 0;
-  if (s->n - s->pos < 4)
+  s->in -= (s->nbits - s->pad) / 8;  // the rest of the byte is skipped, the bytes after it weren't used yet
+  s->bits = 0;
+  s->nbits = s->pad = 0;
+  if (s->end - s->in < 4)
     return false;
-  const uint8_t *p = s->in + s->pos;
+  const uint8_t *p = s->in;
   uint32_t n = p[0] | p[1] << 8;
   if ((uint32_t) (p[2] | p[3] << 8) != (~n & 0xFFFF))
     return false;
-  s->pos += 4;
-  if (s->n - s->pos < n || n > s->len - s->done)
+  s->in += 4;
+  if ((uint32_t) (s->end - s->in) < n || n > s->len - s->done)
     return false;
-  if (s->out)
+  if (s->out && s->flat) {
+    memcpy(s->o, s->in, n);
+    s->o += n;
+  } else if (s->out)
     for (uint32_t i = 0; i < n; i++)
-      s->out[at(s->done + i, s->width, s->stride)] = s->in[s->pos + i];
-  s->pos += n;
+      emit(s, s->in[i]);
+  s->in += n;
   s->done += n;
   return true;
 }
 
-static bool fixed(inf_t *s, huff_t *lit, huff_t *dist, uint8_t *lens) {
-  memset(lens, 8, 144);
-  memset(lens + 144, 9, 112);
-  memset(lens + 256, 7, 24);
-  memset(lens + 280, 8, 8);
-  build(lit, lens, 288);
-  memset(lens, 5, 30);
-  build(dist, lens, 30);
-  return codes(s, lit, dist);
-}
-
-static bool dynamic(inf_t *s, huff_t *lit, huff_t *dist, uint8_t *lens) {
+static bool dynamic(inf_t *s, huff_t *lit, huff_t *dist, uint16_t *lsym, uint16_t *dsym, uint8_t *lens) {
   int nlen = (int) getbits(s, 5) + 257, ndist = (int) getbits(s, 5) + 1, ncode = (int) getbits(s, 4) + 4;
   if (s->short_ || nlen > 286 || ndist > 30)
     return false;
   memset(lens, 0, 19);
   for (int i = 0; i < ncode; i++)
     lens[CLORDER[i]] = (uint8_t) getbits(s, 3);
-  if (s->short_ || build(lit, lens, 19) != 0)
+  if (s->short_ || build(lit, lsym, lens, 19) != 0)
     return false;  // the code length code has to be complete
   for (int i = 0; i < nlen + ndist;) {
     int sym = decode(s, lit);
@@ -190,43 +247,61 @@ static bool dynamic(inf_t *s, huff_t *lit, huff_t *dist, uint8_t *lens) {
   }
   if (!lens[256])
     return false;  // no end code
-  // An incomplete code is only OK as a single 1-bit code
-  int left = build(lit, lens, nlen);
-  if (left < 0 || (left > 0 && nlen != lit->count[0] + lit->count[1]))
+  // An incomplete code is only OK as a single 1-bit code, nothing longer after it
+  int left = build(lit, lsym, lens, nlen);
+  if (left < 0 || (left > 0 && lit->limit[15] != lit->limit[1]))
     return false;
-  left = build(dist, lens + nlen, ndist);
-  if (left < 0 || (left > 0 && ndist != dist->count[0] + dist->count[1]))
+  left = build(dist, dsym, lens + nlen, ndist);
+  if (left < 0 || (left > 0 && dist->limit[15] != dist->limit[1]))
     return false;
   return codes(s, lit, dist);
 }
 
 uint32_t pinflate(const uint8_t *in, uint32_t n, uint8_t *out, unsigned width, unsigned stride, uint32_t len,
                   uint32_t hist) {
-  int16_t lsym[288], dsym[30];
+  uint16_t lsym[288], dsym[30];
   uint8_t lens[288 + 32];
-  huff_t lit = {.symbol = lsym}, dist = {.symbol = dsym};
-  inf_t s = {.in = in, .n = n, .out = out, .width = width, .stride = stride, .len = len, .hist = hist};
-  if (!width || (hist && width != stride))
+  huff_t lit, dist;
+  inf_t s = {.in = in,
+             .start = in,
+             .end = in + n,
+             .out = out,
+             .o = out,
+             .width = width,
+             .skip = stride - width,
+             .flat = width == stride,
+             .len = len,
+             .hist = hist};
+  if (!width || stride < width || (hist && !s.flat))
     return 0;
+  if (s.flat)
+    s.width = UINT32_MAX;  // never wraps
   for (bool last = false; !last;) {
     last = getbits(&s, 1);
     unsigned type = getbits(&s, 2);
     if (s.short_)
       return 0;
     bool ok = type == 0   ? stored(&s)
-              : type == 1 ? fixed(&s, &lit, &dist, lens)
-              : type == 2 ? dynamic(&s, &lit, &dist, lens)
+              : type == 1 ? codes(&s, &FIX_LIT, &FIX_DIST)
+              : type == 2 ? dynamic(&s, &lit, &dist, lsym, dsym, lens)
                           : false;
     if (!ok)
       return 0;
   }
-  return s.done == len ? s.pos : 0;
+  return s.done == len ? (uint32_t) (s.in - s.start) - (uint32_t) (s.nbits - s.pad) / 8 : 0;
 }
 
 // ---------------------------------------------------------------- deflate
 #define HASH_BITS 12
 #define CHAIN 128  // most earlier places tried for a match
+// A token: a literal byte, or a match with the top bit set
 #define MATCH(len, dist) (0x80000000u | (uint32_t) ((len) - 3) << 16 | (uint32_t) ((dist) - 1))
+#define IS_MATCH(t) ((t) >> 31)
+#define MATCH_LEN(t) (((t) >> 16 & 0xFF) + 3)
+#define MATCH_DIST(t) (((t) & 0xFFFF) + 1)
+
+// Extra bits of the code length symbols: 16 repeats the length before, 17 and 18 are zeros
+static const uint8_t CLEXT[19] = {[16] = 2, [17] = 3, [18] = 7};
 
 typedef struct {
   const uint8_t *in;
@@ -236,9 +311,7 @@ typedef struct {
   uint32_t lf[286], df[30], cf[19];
   uint8_t llen[286], dlen[30], cllen[19], all[286 + 30];
   uint16_t lcode[286], dcode[30], clcode[19], cl[286 + 30];  // cl: the code length symbols, extra bits << 5
-  uint8_t fl[288], fd[30];                                   // the fixed codes
-  uint16_t flc[288], fdc[30];
-  uint32_t w[2 * 286];  // huffman(): node weights, parents, depths
+  uint32_t w[2 * 286];                                       // huffman(): node weights, parents, depths
   int16_t parent[2 * 286], sym[286];
   uint8_t depth[2 * 286];
 } enc_t;
@@ -249,6 +322,11 @@ typedef struct {
   int nbits;
 } wr_t;
 
+// The fixed codes, made on first use. The distances are all 5 bits.
+static uint8_t fix_len[288];
+static uint16_t fix_lit[288], fix_dist[30];
+static const uint8_t FIX_DLEN[30] = {[0 ... 29] = 5};
+
 // Adds n bits of v. Past cap it only counts them.
 static void put(wr_t *w, uint32_t v, int n) {
   w->bits |= v << w->nbits;
@@ -258,9 +336,21 @@ static void put(wr_t *w, uint32_t v, int n) {
       w->out[w->len] = (uint8_t) w->bits;
 }
 
-static unsigned hash3(const uint8_t *p) {
-  return ((uint32_t) p[0] << 16 | (uint32_t) p[1] << 8 | p[2]) * 2654435761u >> (32 - HASH_BITS);
+// b[0..n) as the last block, stored
+static void put_stored(wr_t *w, const uint8_t *b, uint32_t n) {
+  put(w, 1, 1);
+  put(w, 0, 2);
+  put(w, 0, (8 - w->nbits) & 7);
+  put(w, n, 16);
+  put(w, ~n & 0xFFFF, 16);
+  for (uint32_t i = 0; i < n; i++)
+    put(w, b[i], 8);
 }
+
+// Multiplicative hash of the 3 bytes in v, bits wide
+static unsigned hash(uint32_t v, int bits) { return v * 2654435761u >> (32 - bits); }
+
+static unsigned hash3(const uint8_t *p) { return hash((uint32_t) p[0] << 16 | (uint32_t) p[1] << 8 | p[2], HASH_BITS); }
 
 // The longest match for position p with what came before, 0 if none worth it. Its distance goes to *dist.
 static unsigned longest(enc_t *e, uint32_t p, uint32_t *dist) {
@@ -373,15 +463,27 @@ static void canonical(const uint8_t *len, int n, uint16_t *code) {
   }
 }
 
+// Makes the fixed codes once. Inline, as a call GCC -Os makes pzip and pdeflate slower.
+__attribute__((always_inline)) static inline void fixed(void) {
+  if (fix_len[0])
+    return;
+  memset(fix_len, 8, 144);
+  memset(fix_len + 144, 9, 112);
+  memset(fix_len + 256, 7, 24);
+  memset(fix_len + 280, 8, 8);
+  canonical(fix_len, 288, fix_lit);
+  canonical(FIX_DLEN, 30, fix_dist);
+}
+
 // Bits for the tokens and the end code with these codes
 static uint32_t cost(const uint32_t *tok, uint32_t nt, const uint8_t *llen, const uint8_t *dlen) {
   uint32_t bits = llen[256];
   for (uint32_t i = 0; i < nt; i++) {
-    if (!(tok[i] >> 31)) {
+    if (!IS_MATCH(tok[i])) {
       bits += llen[tok[i]];
       continue;
     }
-    int l = lcode((tok[i] >> 16 & 0xFF) + 3), d = dcode((tok[i] & 0xFFFF) + 1);
+    int l = lcode(MATCH_LEN(tok[i])), d = dcode(MATCH_DIST(tok[i]));
     bits += llen[257 + l] + LEXT[l] + dlen[d] + DEXT[d];
   }
   return bits;
@@ -390,11 +492,11 @@ static uint32_t cost(const uint32_t *tok, uint32_t nt, const uint8_t *llen, cons
 static void put_tokens(wr_t *w, const uint32_t *tok, uint32_t nt, const uint8_t *llen, const uint16_t *lc,
                        const uint8_t *dlen, const uint16_t *dc) {
   for (uint32_t i = 0; i < nt; i++) {
-    if (!(tok[i] >> 31)) {
+    if (!IS_MATCH(tok[i])) {
       put(w, lc[tok[i]], llen[tok[i]]);
       continue;
     }
-    unsigned len = (tok[i] >> 16 & 0xFF) + 3, dist = (tok[i] & 0xFFFF) + 1;
+    unsigned len = MATCH_LEN(tok[i]), dist = MATCH_DIST(tok[i]);
     int l = lcode(len), d = dcode(dist);
     put(w, lc[257 + l], llen[257 + l]);
     put(w, len - LBASE[l], LEXT[l]);
@@ -404,24 +506,11 @@ static void put_tokens(wr_t *w, const uint32_t *tok, uint32_t nt, const uint8_t 
   put(w, lc[256], llen[256]);
 }
 
-uint32_t pdeflate(const uint8_t *in, unsigned width, unsigned stride, uint32_t len, uint8_t *out, uint32_t cap) {
-  if (len > 65535 || (len && !width))
-    return 0;
-  enc_t *e = calloc(1, sizeof *e);
-  uint8_t *src = malloc(len + 1);
-  uint32_t *tok = malloc(4 * (size_t) len + 4);
-  uint16_t *prev = malloc(2 * (size_t) len + 2);
-  uint32_t result = 0;
-  if (!e || !src || !tok || !prev)
-    goto done;
-  e->prev = prev;
-  for (uint32_t i = 0; i < len; i++)
-    src[i] = in[at(i, width, stride)];
-  e->in = src;
-  e->n = len;
-
-  // LZ77, with a match put off by one byte if the next byte starts a longer one
-  uint32_t nt = 0, d = 0, d2 = 0;
+// LZ77 over e->in into tok, with a match put off by one byte if the next byte starts a longer one. Returns the
+// number of tokens.
+static uint32_t lz77(enc_t *e, uint32_t *tok) {
+  const uint8_t *src = e->in;
+  uint32_t len = e->n, nt = 0, d = 0, d2 = 0;
   unsigned l = longest(e, 0, &d);
   for (uint32_t p = 0; p < len;) {
     if (l) {
@@ -439,29 +528,18 @@ uint32_t pdeflate(const uint8_t *in, unsigned width, unsigned stride, uint32_t l
     }
     l = p < len ? longest(e, p, &d) : 0;
   }
+  return nt;
+}
 
-  // Own codes. Frequencies, lengths, then the lengths as code length symbols
-  e->lf[256] = 1;
-  for (uint32_t i = 0; i < nt; i++)
-    if (tok[i] >> 31) {
-      e->lf[257 + lcode((tok[i] >> 16 & 0xFF) + 3)]++;
-      e->df[dcode((tok[i] & 0xFFFF) + 1)]++;
-    } else {
-      e->lf[tok[i]]++;
-    }
-  huffman(e, e->lf, 286, 15, e->llen);
-  huffman(e, e->df, 30, 15, e->dlen);
-  int nlen = 286, ndist = 30, ncl = 0;
-  while (nlen > 257 && !e->llen[nlen - 1])
-    nlen--;
-  while (ndist > 1 && !e->dlen[ndist - 1])
-    ndist--;
+// The nlen + ndist code lengths as code length symbols into e->cl. Returns how many.
+// 16: the length before 3-6 more times, 17: 3-10 zeros, 18: 11-138 zeros
+static int rle(enc_t *e, int nlen, int ndist) {
+  int n = nlen + ndist, ncl = 0;
   memcpy(e->all, e->llen, (size_t) nlen);
   memcpy(e->all + nlen, e->dlen, (size_t) ndist);
-  // 16: the length before 3-6 more times, 17: 3-10 zeros, 18: 11-138 zeros
-  for (int i = 0; i < nlen + ndist;) {
+  for (int i = 0; i < n;) {
     int run = 1;
-    while (i + run < nlen + ndist && e->all[i + run] == e->all[i])
+    while (i + run < n && e->all[i + run] == e->all[i])
       run++;
     if (!e->all[i] && run >= 3) {
       run = run > 138 ? 138 : run;
@@ -475,6 +553,43 @@ uint32_t pdeflate(const uint8_t *in, unsigned width, unsigned stride, uint32_t l
       e->cl[ncl++] = e->all[i++];
     }
   }
+  return ncl;
+}
+
+uint32_t pdeflate(const uint8_t *in, unsigned width, unsigned stride, uint32_t len, uint8_t *out, uint32_t cap) {
+  if (len > 65535 || (len && !width))
+    return 0;
+  enc_t *e = calloc(1, sizeof *e);
+  uint8_t *src = malloc(len + 1);
+  uint32_t *tok = malloc(4 * (size_t) len + 4);
+  uint16_t *prev = malloc(2 * (size_t) len + 2);
+  uint32_t result = 0;
+  if (!e || !src || !tok || !prev)
+    goto done;
+  e->prev = prev;
+  for (uint32_t i = 0; i < len; i++)
+    src[i] = in[at(i, width, stride)];
+  e->in = src;
+  e->n = len;
+  uint32_t nt = lz77(e, tok);
+
+  // Own codes. Frequencies, lengths, then the lengths as code length symbols
+  e->lf[256] = 1;
+  for (uint32_t i = 0; i < nt; i++)
+    if (IS_MATCH(tok[i])) {
+      e->lf[257 + lcode(MATCH_LEN(tok[i]))]++;
+      e->df[dcode(MATCH_DIST(tok[i]))]++;
+    } else {
+      e->lf[tok[i]]++;
+    }
+  huffman(e, e->lf, 286, 15, e->llen);
+  huffman(e, e->df, 30, 15, e->dlen);
+  int nlen = 286, ndist = 30;
+  while (nlen > 257 && !e->llen[nlen - 1])
+    nlen--;
+  while (ndist > 1 && !e->dlen[ndist - 1])
+    ndist--;
+  int ncl = rle(e, nlen, ndist);
   for (int i = 0; i < ncl; i++)
     e->cf[e->cl[i] & 31]++;
   huffman(e, e->cf, 19, 7, e->cllen);
@@ -483,37 +598,18 @@ uint32_t pdeflate(const uint8_t *in, unsigned width, unsigned stride, uint32_t l
     nclen--;
 
   uint32_t dyn = 3 + 14 + 3 * (uint32_t) nclen + cost(tok, nt, e->llen, e->dlen);
-  for (int i = 0; i < ncl; i++) {
-    unsigned s = e->cl[i] & 31;
-    dyn += e->cllen[s] + (s == 16 ? 2 : s == 17 ? 3 : s == 18 ? 7 : 0);
-  }
-  memset(e->fl, 8, 144);
-  memset(e->fl + 144, 9, 112);
-  memset(e->fl + 256, 7, 24);
-  memset(e->fl + 280, 8, 8);
-  memset(e->fd, 5, 30);
-  uint32_t fix = 3 + cost(tok, nt, e->fl, e->fd), store = len + 5 * (len / 65535 + 1);
+  for (int i = 0; i < ncl; i++)
+    dyn += e->cllen[e->cl[i] & 31] + CLEXT[e->cl[i] & 31];
+  fixed();
+  uint32_t fix = 3 + cost(tok, nt, fix_len, FIX_DLEN), store = len + 5 * (len / 65535 + 1);
 
   wr_t w = {.out = out, .cap = cap};
   if (store <= (fix + 7) / 8 && store <= (dyn + 7) / 8) {
-    uint32_t i = 0;
-    do {
-      uint32_t k = len - i < 65535 ? len - i : 65535;
-      put(&w, i + k == len, 1);
-      put(&w, 0, 2);
-      put(&w, 0, (8 - w.nbits) & 7);
-      put(&w, k, 16);
-      put(&w, ~k & 0xFFFF, 16);
-      for (uint32_t j = 0; j < k; j++)
-        put(&w, src[i + j], 8);
-      i += k;
-    } while (i < len);
+    put_stored(&w, src, len);  // one block, len is under 64 KiB
   } else if (fix <= dyn) {
-    canonical(e->fl, 288, e->flc);
-    canonical(e->fd, 30, e->fdc);
     put(&w, 1, 1);
     put(&w, 1, 2);
-    put_tokens(&w, tok, nt, e->fl, e->flc, e->fd, e->fdc);
+    put_tokens(&w, tok, nt, fix_len, fix_lit, FIX_DLEN, fix_dist);
   } else {
     canonical(e->llen, 286, e->lcode);
     canonical(e->dlen, 30, e->dcode);
@@ -526,10 +622,10 @@ uint32_t pdeflate(const uint8_t *in, unsigned width, unsigned stride, uint32_t l
     for (int i = 0; i < nclen; i++)
       put(&w, e->cllen[CLORDER[i]], 3);
     for (int i = 0; i < ncl; i++) {
-      unsigned s = e->cl[i] & 31, x = e->cl[i] >> 5;
+      unsigned s = e->cl[i] & 31;
       put(&w, e->clcode[s], e->cllen[s]);
       if (s >= 16)
-        put(&w, x, s == 16 ? 2 : s == 17 ? 3 : 7);
+        put(&w, e->cl[i] >> 5, CLEXT[s]);
     }
     put_tokens(&w, tok, nt, e->llen, e->lcode, e->dlen, e->dcode);
   }
@@ -546,13 +642,10 @@ done:
 // ---------------------------------------------------------------- pieces
 #define PZIP_OUT 4096  // most a piece makes, so neither end takes long over one
 
-static uint8_t fix_len[288];  // the fixed codes, made on first use
-static uint16_t fix_lit[288], fix_dist[30];
-
 static uint8_t pz_at(const pzip_t *z, uint32_t v) { return v < z->nh ? z->hist[v] : z->data[v - z->nh]; }
 
 static unsigned pz_hash(const pzip_t *z, uint32_t v) {
-  return ((uint32_t) pz_at(z, v) << 16 | (uint32_t) pz_at(z, v + 1) << 8 | pz_at(z, v + 2)) * 2654435761u >> 21;
+  return hash((uint32_t) pz_at(z, v) << 16 | (uint32_t) pz_at(z, v + 1) << 8 | pz_at(z, v + 2), PZIP_HASH_BITS);
 }
 
 // Makes the match for the byte at v from the one at s longer than *best, up to max bytes
@@ -573,16 +666,7 @@ unsigned pzip(pzip_t *z, uint8_t *out) {
     return 0;
   if (z->table && !z->done && !z->ins)
     memset(z->table, 0, PZIP_TABLE * sizeof *z->table);
-  if (!fix_len[0]) {
-    uint8_t d[30];
-    memset(fix_len, 8, 144);
-    memset(fix_len + 144, 9, 112);
-    memset(fix_len + 256, 7, 24);
-    memset(fix_len + 280, 8, 8);
-    memset(d, 5, sizeof d);
-    canonical(fix_len, 288, fix_lit);
-    canonical(d, 30, fix_dist);
-  }
+  fixed();
   wr_t w = {.out = out + PZIP_HEAD, .cap = PZIP_MAX - PZIP_HEAD};
   uint32_t bits = 3 + 7, room = 8 * w.cap, i = z->done;  // the block head and the end code
   // hist goes into the table over the first pieces, top first, so no piece takes long. Without taking a place from
@@ -595,7 +679,7 @@ unsigned pzip(pzip_t *z, uint8_t *out) {
   put(&w, 1, 1);
   put(&w, 1, 2);
   while (i < z->n && i - z->done < PZIP_OUT) {  // greedy: the longest match if it costs less than its literals
-    uint32_t v = z->nh + i, dist = 0, lit = z->data[i] < 144 ? 8 : 9, cost = lit;
+    uint32_t v = z->nh + i, dist = 0, cost = fix_len[z->data[i]];
     unsigned max = z->n - i < 258 ? z->n - i : 258, len = 0;
     if (max >= 3) {  // the last place with the same 3 bytes, and where like() says
       len = 2;
@@ -610,7 +694,7 @@ unsigned pzip(pzip_t *z, uint8_t *out) {
     if (len >= 3) {
       uint32_t as_lit = 0, mbits = fix_len[257 + l] + LEXT[l] + 5u + DEXT[d];
       for (unsigned k = 0; k < len; k++)
-        as_lit += z->data[i + k] < 144 ? 8 : 9;
+        as_lit += fix_len[z->data[i + k]];
       if (mbits < as_lit)
         cost = mbits;
       else
@@ -629,7 +713,7 @@ unsigned pzip(pzip_t *z, uint8_t *out) {
       put(&w, dist - DBASE[d], DEXT[d]);
       i += len;
     } else {
-      put(&w, fix_lit[z->data[i]], lit);
+      put(&w, fix_lit[z->data[i]], fix_len[z->data[i]]);
       i++;
     }
   }
@@ -639,12 +723,7 @@ unsigned pzip(pzip_t *z, uint8_t *out) {
   if (raw > made) {  // stored carries more
     w = (wr_t) {.out = out + PZIP_HEAD, .cap = PZIP_MAX - PZIP_HEAD};
     made = raw;
-    put(&w, 1, 1);
-    put(&w, 0, 7);
-    put(&w, made, 16);
-    put(&w, ~made & 0xFFFF, 16);
-    for (uint32_t k = 0; k < made; k++)
-      put(&w, z->data[z->done + k], 8);
+    put_stored(&w, z->data + z->done, made);
   }
   out[0] = (uint8_t) w.len;
   out[1] = (uint8_t) made;

@@ -1,9 +1,11 @@
 // CX60 bus timing as the link sees it, shared by both ends. Works out when the link may send.
 //
-// The status broadcast is FC16 to address 0, registers 0xBE..0x112, 179 bytes. After it the CX60 stays quiet for
-// 20 ms from its start plus at least one 10 ms step, so 13.5 ms or more after it ends. The link uses that every
-// cycle, and the gaps after the CX60's polls when it has more to send. Everything has to be off the bus by the
-// deadline after the end of the status frame, or by the end of the gap.
+// The status broadcast is FC16 to address 0, every PBUS_CYCLE_US. After it the CX60 stays quiet for 20 ms from its
+// start plus at least one 10 ms step, so 13.5 ms or more after it ends. The link uses that every cycle, and the gaps
+// after the CX60's polls when it has more to send. Everything has to be off the bus by the deadline after the end of
+// the status frame, or by the end of the gap.
+//
+// Copied into esphome-flexit-modbus-server by make -C sim esp_sync, edit it here.
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
@@ -13,8 +15,16 @@ extern "C" {
 #endif
 
 #define PBUS_LINK_ADDR 0xF7  // address of the link frames, nothing else on the bus uses it
-#define PBUS_BYTE_US 87      // one byte at 115200 8N1
+#define PBUS_BYTE_NS 86806   // one byte at 115200 8N1, 86805.6 ns rounded up
+#define PBUS_BYTE_US 87
+#define PBUS_CYCLE_US 110000
+// The status broadcast's registers, length and first bytes
+#define PBUS_STATUS_FIRST 0x0BE
+#define PBUS_STATUS_LAST 0x112
 #define PBUS_STATUS_LEN 179
+extern const uint8_t PBUS_STATUS_HEAD[7];
+// The CX60 polls each panel's coils from 0 for its settings, and from PBUS_COUNTERS for its counters
+#define PBUS_COUNTERS 0x14C
 // Link deadline, counted from the end of the status frame. The CX60 is quiet for 13.5 ms after it, 14.0-14.5 ms
 // measured. The panel moves it out to PBUS_END_MAX_US, PBUS_END_MARGIN_US short of the shortest quiet time it
 // measured over PBUS_END_SURE status broadcasts, and tells the ESP in its answers in steps of PBUS_END_STEP_US.
@@ -38,6 +48,7 @@ extern "C" {
 
 uint16_t pbus_crc16(const uint8_t *p, int n);  // Modbus CRC
 bool pbus_crc_ok(const uint8_t *f, int n);
+int pbus_put_crc(uint8_t *f, int n);              // appends the CRC of f[n], returns n + 2
 bool pbus_is_status(const uint8_t *f, int n);     // the CX60's status broadcast? Caller checks the CRC
 bool pbus_is_cx60(const uint8_t *f, int n);       // f starts with a CX60 frame, not a server's reply. CRC checked
 int pbus_status_part(const uint8_t *buf, int n);  // length of an unfinished status frame at the end of buf, 0 = none
@@ -79,7 +90,7 @@ typedef struct {
   bool started, probing;            // seen a status broadcast, CX60 looking for panels this cycle
   uint32_t status_us;               // start of the last status broadcast
   uint8_t req;                      // address of the on-time poll waiting for its reply, 0 = none
-  bool counters;                    // the last poll reads the counters, coils from 0x14C. Else the settings
+  bool counters;                    // the last poll reads the counters, coils from PBUS_COUNTERS. Else the settings
   uint32_t req_us;                  // earliest start of the last poll
   uint32_t step_lo_us, step_hi_us;  // start of the last poll or status broadcast, earliest and latest
   bool step_ok;                     // and nothing else from the CX60 since

@@ -1,4 +1,5 @@
 // see pjpeg.h
+// Copied into esphome-flexit-modbus-server by make -C sim esp_sync, edit it here.
 #include "pjpeg.h"
 
 // The DCT's basis times 8192: C[u][x] = c(u) / 2 * cos((2x + 1)u pi / 16), c(0) = 1/sqrt(2), else 1. It's
@@ -76,36 +77,35 @@ static void make_codes(void) {
   }
 }
 
-static void byte(pjpeg_t *j, unsigned b) {
-  if (j->len < j->cap)
-    j->out[j->len] = (uint8_t) b;
-  else
-    j->full = true;
-  j->len++;
+// A byte of output o. Only o[0] is kept, as far as there's room
+static void byte(pjpeg_t *j, pjpeg_out_t *o, unsigned b) {
+  if (o == j->o && o->len < j->cap)
+    j->out[o->len] = (uint8_t) b;
+  o->len++;
 }
 
-static void word(pjpeg_t *j, unsigned w) {
-  byte(j, w >> 8);
-  byte(j, w & 255);
+static void word(pjpeg_t *j, unsigned w) {  // the headers, the others count them from o[0]
+  byte(j, j->o, w >> 8);
+  byte(j, j->o, w & 255);
 }
 
 // n bits of v into the entropy-coded data, a 0 after every FF byte
-static void put(pjpeg_t *j, unsigned v, int n) {
-  j->bits = j->bits << n | (v & ((1u << n) - 1));
-  j->nbits += n;
-  while (j->nbits >= 8) {
-    unsigned b = j->bits >> (j->nbits - 8) & 255;
-    byte(j, b);
+static void put(pjpeg_t *j, pjpeg_out_t *o, unsigned v, int n) {
+  o->bits = o->bits << n | (v & ((1u << n) - 1));
+  o->nbits += n;
+  while (o->nbits >= 8) {
+    unsigned b = o->bits >> (o->nbits - 8) & 255;
+    byte(j, o, b);
     if (b == 0xFF)
-      byte(j, 0);
-    j->nbits -= 8;
+      byte(j, o, 0);
+    o->nbits -= 8;
   }
-  j->bits &= (1u << j->nbits) - 1;
+  o->bits &= (1u << o->nbits) - 1;
 }
 
-static void flush(pjpeg_t *j) {  // the last byte padded with 1s
-  if (j->nbits)
-    put(j, 0x7F, 8 - j->nbits);
+static void flush(pjpeg_t *j, pjpeg_out_t *o) {  // the last byte padded with 1s
+  if (o->nbits)
+    put(j, o, 0x7F, 8 - o->nbits);
 }
 
 static int bit_length(int v) {
@@ -115,10 +115,47 @@ static int bit_length(int v) {
   return n;
 }
 
-static void put_value(pjpeg_t *j, int v, int n) { put(j, (unsigned) (v < 0 ? v - 1 : v), n); }
+static void put_value(pjpeg_t *j, pjpeg_out_t *o, int v, int n) { put(j, o, (unsigned) (v < 0 ? v - 1 : v), n); }
 
-// One 8x8 block of level-shifted samples in 16ths. comp is 0 Y, 1 Cb, 2 Cr. weight is how many pixels a sample
-// stands for.
+// One block's coefficients f quantized for output o, in zigzag order, and Huffman coded
+static void quantize(pjpeg_t *j, pjpeg_out_t *o, const int32_t *f, int comp, int weight) {
+  const uint8_t *q = o->q[comp ? 1 : 0];
+  int z[64];
+  uint32_t err = 0;
+  for (int k = 0; k < 64; k++) {
+    int n = ZIGZAG[k], d = q[n] * 16, v = f[n];
+    z[k] = v <= -d / 2 ? -((d / 2 - v) / d) : v >= d / 2 ? (v + d / 2) / d : 0;  // rounded half away from zero
+    int e = v - z[k] * d;
+    err += (uint32_t) (e * e);
+  }
+  if (o == j->o)
+    j->err += (uint64_t) err * weight;
+  int dc = comp ? DC_C : DC_Y, ac = comp ? AC_C : AC_Y;
+  int diff = z[0] - o->dc[comp], n = bit_length(diff);
+  o->dc[comp] = z[0];
+  put(j, o, code[dc][n], code_len[dc][n]);
+  if (n)
+    put_value(j, o, diff, n);
+  int run = 0;
+  for (int k = 1; k < 64; k++) {
+    if (!z[k]) {
+      run++;
+      continue;
+    }
+    for (; run > 15; run -= 16)
+      put(j, o, code[ac][0xF0], code_len[ac][0xF0]);  // 16 zeros
+    n = bit_length(z[k]);
+    int s = run << 4 | n;
+    put(j, o, code[ac][s], code_len[ac][s]);
+    put_value(j, o, z[k], n);
+    run = 0;
+  }
+  if (run)
+    put(j, o, code[ac][0], code_len[ac][0]);  // the rest are zeros
+}
+
+// One 8x8 block of level-shifted samples in 16ths, coded for each output. comp is 0 Y, 1 Cb, 2 Cr. weight is how
+// many pixels a sample stands for.
 static void block(pjpeg_t *j, const int32_t *in, int comp, int weight) {
   int32_t t[64], f[64];
   for (int y = 0; y < 8; y++)
@@ -135,91 +172,75 @@ static void block(pjpeg_t *j, const int32_t *in, int comp, int weight) {
         s += C[v][y] * t[y * 8 + u];         // under 2^31: 2.83 * 8192 * 46341 at most
       f[v * 8 + u] = (s + (1 << 15)) >> 16;  // in 16ths
     }
-  const uint8_t *q = j->q[comp ? 1 : 0];
-  int z[64];
-  for (int k = 0; k < 64; k++) {
-    int n = ZIGZAG[k], d = q[n] * 16, v = f[n];
-    z[k] = v < 0 ? -((d / 2 - v) / d) : (v + d / 2) / d;  // rounded half away from zero
-    int e = v - z[k] * d;
-    j->err += (uint32_t) (weight * e * e);
-  }
-  int dc = comp ? DC_C : DC_Y, ac = comp ? AC_C : AC_Y;
-  int diff = z[0] - j->dc[comp], n = bit_length(diff);
-  j->dc[comp] = z[0];
-  put(j, code[dc][n], code_len[dc][n]);
-  if (n)
-    put_value(j, diff, n);
-  int run = 0;
-  for (int k = 1; k < 64; k++) {
-    if (!z[k]) {
-      run++;
-      continue;
-    }
-    for (; run > 15; run -= 16)
-      put(j, code[ac][0xF0], code_len[ac][0xF0]);  // 16 zeros
-    n = bit_length(z[k]);
-    int s = run << 4 | n;
-    put(j, code[ac][s], code_len[ac][s]);
-    put_value(j, z[k], n);
-    run = 0;
-  }
-  if (run)
-    put(j, code[ac][0], code_len[ac][0]);  // the rest are zeros
+  for (pjpeg_out_t *o = j->o; o < j->o + j->n; o++)
+    quantize(j, o, f, comp, weight);
 }
 
-void pjpeg_begin(pjpeg_t *j, int w, int h, int quality, uint8_t *out, uint32_t cap) {
-  make_codes();
-  *j = (pjpeg_t) {.w = (uint16_t) w, .h = (uint16_t) h, .out = out, .cap = cap};
-  quality = quality < 1 ? 1 : quality > 100 ? 100 : quality;
+static void quantizers(pjpeg_out_t *o, int quality) {
+  o->quality = quality = quality < 1 ? 1 : quality > 100 ? 100 : quality;
   int scale = quality < 50 ? 5000 / quality : 200 - 2 * quality;  // as libjpeg does
   for (int t = 0; t < 2; t++)
     for (int k = 0; k < 64; k++) {
       int v = (QUANT[t][k] * scale + 50) / 100;
-      j->q[t][k] = (uint8_t) (v < 1 ? 1 : v > 255 ? 255 : v);
+      o->q[t][k] = (uint8_t) (v < 1 ? 1 : v > 255 ? 255 : v);
     }
+}
+
+void pjpeg_begin(pjpeg_t *j, int w, int h, int quality, uint8_t *out, uint32_t cap) {
+  make_codes();
+  *j = (pjpeg_t) {.w = (uint16_t) w, .h = (uint16_t) h, .out = out, .cap = cap, .n = 1};
+  quantizers(j->o, quality);
   word(j, 0xFFD8);  // SOI
   word(j, 0xFFDB);  // DQT: both tables, zigzag order
   word(j, 2 + 2 * 65);
   for (int t = 0; t < 2; t++) {
-    byte(j, (unsigned) t);
+    byte(j, j->o, (unsigned) t);
     for (int k = 0; k < 64; k++)
-      byte(j, j->q[t][ZIGZAG[k]]);
+      byte(j, j->o, j->o->q[t][ZIGZAG[k]]);
   }
   word(j, 0xFFC0);  // SOF0: 8 bits, h, w, Y at 2x1 with table 0, Cb and Cr at 1x1 with table 1
   word(j, 17);
-  byte(j, 8);
+  byte(j, j->o, 8);
   word(j, (unsigned) h);
   word(j, (unsigned) w);
-  byte(j, 3);
+  byte(j, j->o, 3);
   static const uint8_t COMPS[9] = {1, 0x21, 0, 2, 0x11, 1, 3, 0x11, 1};
   for (int i = 0; i < 9; i++)
-    byte(j, COMPS[i]);
+    byte(j, j->o, COMPS[i]);
   word(j, 0xFFC4);  // DHT: all four
   word(j, 2 + 4 * 17 + 2 * 12 + 2 * 162);
   static const uint8_t CLASS_ID[4] = {0x00, 0x10, 0x01, 0x11};
   for (int t = 0; t < 4; t++) {
-    byte(j, CLASS_ID[t]);
+    byte(j, j->o, CLASS_ID[t]);
     int n = 0;
     for (int i = 0; i < 16; i++) {
-      byte(j, HUFF_BITS[t][i]);
+      byte(j, j->o, HUFF_BITS[t][i]);
       n += HUFF_BITS[t][i];
     }
     for (int i = 0; i < n; i++)
-      byte(j, HUFF_SYMBOLS[t][i]);
+      byte(j, j->o, HUFF_SYMBOLS[t][i]);
   }
   word(j, 0xFFDD);  // DRI: one MCU row
   word(j, 4);
   word(j, (unsigned) w / 16);
   word(j, 0xFFDA);  // SOS: Y with tables 0, Cb and Cr with tables 1
   word(j, 12);
-  byte(j, 3);
+  byte(j, j->o, 3);
   static const uint8_t SCAN[9] = {1, 0x00, 2, 0x11, 3, 0x11, 0, 63, 0};
   for (int i = 0; i < 9; i++)
-    byte(j, SCAN[i]);
+    byte(j, j->o, SCAN[i]);
+}
+
+void pjpeg_also(pjpeg_t *j, int quality) {
+  if (j->n > PJPEG_ALSO)
+    return;
+  pjpeg_out_t *o = &j->o[j->n++];
+  quantizers(o, quality);
+  o->len = j->o[0].len;  // the same headers, other numbers in the DQT
 }
 
 bool pjpeg_mcu(pjpeg_t *j, pjpeg_pixel_t px, void *ctx) {
-  if (j->full || j->row * 8u >= j->h)
+  if (j->row * 8u >= j->h)
     return false;
   int x0 = j->col, y0 = j->row * 8;
   int32_t lum[2][64], cb[64], cr[64];  // level-shifted, in 16ths
@@ -246,26 +267,28 @@ bool pjpeg_mcu(pjpeg_t *j, pjpeg_pixel_t px, void *ctx) {
   block(j, lum[1], 0, 1);
   block(j, cb, 1, 2);
   block(j, cr, 2, 2);
-  if (j->full)
-    return false;
   j->col += 16;
   if (j->col < j->w)
     return true;
   j->col = 0;
   j->row++;
-  if (j->row * 8u < j->h) {  // RSTn after MCU row n, the next row starts fresh
-    flush(j);
-    byte(j, 0xFF);
-    byte(j, 0xD0 + (j->row - 1u) % 8);
-    j->dc[0] = j->dc[1] = j->dc[2] = 0;
-  }
-  return !j->full && j->row * 8u < j->h;
+  if (j->row * 8u < j->h)  // RSTn after MCU row n, the next row starts fresh
+    for (pjpeg_out_t *o = j->o; o < j->o + j->n; o++) {
+      flush(j, o);
+      byte(j, o, 0xFF);
+      byte(j, o, 0xD0 + (j->row - 1u) % 8);
+      o->dc[0] = o->dc[1] = o->dc[2] = 0;
+    }
+  return j->row * 8u < j->h;
 }
 
 uint32_t pjpeg_end(pjpeg_t *j) {
-  flush(j);
-  word(j, 0xFFD9);  // EOI
-  return j->full ? 0 : j->len;
+  for (pjpeg_out_t *o = j->o; o < j->o + j->n; o++) {
+    flush(j, o);
+    byte(j, o, 0xFF);  // EOI
+    byte(j, o, 0xD9);
+  }
+  return j->o[0].len;
 }
 
 double pjpeg_mse(const pjpeg_t *j) { return j->w && j->h ? (double) j->err / 256 / ((double) j->w * j->h) : 0; }

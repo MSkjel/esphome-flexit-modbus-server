@@ -3,7 +3,7 @@
 #     vars: {entity: open_garage, label: Garage door|Garasjeport, icon: door}
 # name, label, help, icon, page, view and menu work as in sensor.yaml
 defaults:
-  name: ""
+  name: ${entity}
   icon: circle
   help: ""
   page: smart_home
@@ -14,12 +14,7 @@ esphome:
   on_boot:
     - then:
         - lambda: |-
-            flexit::panel::Item(std::string("${name}").empty() ? "${entity}" : "${name}", ITEM_BUTTON)
-                .label(R"~(${label})~")
-                .help(R"~(${help})~")
-                .icon("${icon}")
-                .page("${page}")
-                .view(${view})
-                .menu(${menu})
+            flexit::panel::Item("${name}", ITEM_BUTTON)
+                .vars(R"~(${label})~", R"~(${help})~", "${icon}", "${page}", ${view}, ${menu})
                 .on_set([](float) { id(${entity}).press(); })
                 .add();

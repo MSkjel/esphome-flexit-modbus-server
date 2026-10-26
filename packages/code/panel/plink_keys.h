@@ -10,6 +10,8 @@
 //   0x100..0x11F  the screensaver picture
 //   0x120..0x13F  screensaver animations
 //   0x200..0x3FF  ESP items, 0x40 keys for each kind
+//
+// Copied into esphome-flexit-modbus-server by make -C sim esp_sync, edit it here.
 #pragma once
 
 // ---- The link
@@ -18,13 +20,25 @@
 // so a HELLO goes ahead of whatever hasn't gone out yet.
 #define K_HELLO 0x001
 #define HELLO_ASK 1
+#define HELLO_FRESH 2      // panel -> ESP: it started without saved settings, like after a flash
 #define K_TIME 0x002       // ESP -> panel: local time, seconds since 2000-01-01
 #define K_ACTION 0x003     // ESP -> panel: run action A_*. Panel -> ESP: the user ran it
 #define K_SHOW_VIEW 0x004  // ESP -> panel: show home view VIEW_*
 #define K_NOTIFY 0x005     // ESP -> panel: a notification with icon, level (NOTE_*) and text
+// K_TIME's 2000-01-01 in Unix seconds. The panel's clock counts as not set before it.
+#define PLINK_EPOCH 946684800u
 // ESP -> panel: reg << 16 | value, a CX60 register the ESP has seen since it started. It sends them all after the
 // panel's HELLO_ASK, and the panel takes them as if the CX60 sent them, so it has what changed while it was away.
+// Not the status broadcast's (pbus.h), which come every cycle, nor the clock, which K_TIME covers.
 #define K_CX60_REG 0x006
+#define R_CLOCK_HI 0x094  // the CX60's clock, local time in Unix seconds
+#define R_CLOCK_LO 0x095
+// The panel's own settings around a flash, which erases them. The ESP sends 0 to ask, and the panel answers with
+// SETTINGS_FORMAT, then each saved value as key << 16 | value, then SETTINGS_END << 16 | how many. The ESP sends
+// them back the same way when the panel says hello with HELLO_FRESH after it flashed it, and the panel restarts
+// with them. Unknown keys are left out, and a panel with another format takes none.
+#define K_SETTINGS 0x007
+#define SETTINGS_END 0xFFFF
 enum { NOTE_INFO, NOTE_WARNING, NOTE_ALARM };
 #define PLINK_TEXT_MAX 64  // max bytes of UTF-8 in a text
 
@@ -36,20 +50,28 @@ enum { NOTE_INFO, NOTE_WARNING, NOTE_ALARM };
 //                pieces, deflated against what the panel has.
 //   PIC_JPEG     baseline JPEG from pjpeg.h. Y at 2x1, a restart marker after every MCU row, width a multiple of
 //                16, height of 8. For photos, always sent whole.
-// A transfer is BEGIN or PATCH, then DATA up to len bytes, then END. The panel answers with PIC_ACKs and centers
-// pictures smaller than the screen.
-// BEGIN, a whole picture: id, format, w (2), h (2), len (4), then for PIC_PALETTE the palette (16 x RGB)
+// A transfer is BEGIN or PATCH, then DATA up to size bytes, then END. The panel answers with PIC_ACKs and centers
+// pictures smaller than the screen. Each message's field offsets follow it.
+// BEGIN, PATCH and ANIM_BEGIN start with the transfer's id, which its PIC_ACKs carry
+#define PIC_MSG_ID 0
+// BEGIN, a whole picture: id, format, w (2), h (2), size (4), then at PIC_BEGIN_HEAD for PIC_PALETTE the palette
+// (16 x RGB, plink_put_palette)
 enum { PIC_PALETTE, PIC_JPEG };
 #define K_PIC_BEGIN 0x100
-// PATCH, rows y..y+count-1 of the current 16-colour picture: id, y (2), count (2), len (4), then a new palette or
+enum { PIC_BEGIN_FORMAT = 1, PIC_BEGIN_W, PIC_BEGIN_H = 4, PIC_BEGIN_SIZE = 6, PIC_BEGIN_HEAD = 10 };
+#define PIC_PAL_LEN 48  // a palette
+// PATCH, rows y..y+count-1 of the current 16-colour picture: id, y (2), count (2), size (4), then a new palette or
 // none. With no rows only the palette changes.
 #define K_PIC_PATCH 0x101
-#define K_PIC_DATA 0x102   // the picture's bytes, a multiple of 4 for pbulk. Bytes past the end are ignored
-#define K_PIC_END 0x103    // plink_crc32 of the len bytes
+enum { PIC_PATCH_Y = 1, PIC_PATCH_COUNT = 3, PIC_PATCH_SIZE = 5, PIC_PATCH_HEAD = 9 };
+#define K_PIC_DATA 0x102   // the picture's bytes, a multiple of 4 (PBULK_DATA_KEY). Bytes past the end are ignored
+#define K_PIC_END 0x103    // plink_crc32 of the size bytes of DATA
 #define K_PIC_ACK 0x104    // panel -> ESP: status (PIC_*) << 24 | id << 16 | bytes received
 #define K_PIC_CLEAR 0x105  // forget the picture
 
 #define PIC_POOL 14336  // panel memory for a picture, plus room behind it for a patch while it comes in
+#define PIC_MAX_W 320   // the screen, the biggest picture or animation
+#define PIC_MAX_H 240
 
 // PIC_ACK status
 enum {
@@ -65,55 +87,135 @@ enum {
 
 // ---- Screensaver animations
 // BEGIN, an animation: id, slot (0..ANIM_SLOTS - 1), w (2, even), h (2), scale (1 or 2), transparent colour index
-// (ANIM_OPAQUE = none), len (4), palette (16 x RGB). Then DATA up to len bytes and END, as for a picture. The data is
-// one plink_anim_record per frame. The first is the whole first frame, the last one takes the last frame back to the
-// first. It replaces the slot's animation and its places. The panel keeps every slot's frame and records in
-// ANIM_POOL, and answers PIC_TOO_BIG when they don't fit next to the others.
+// (ANIM_OPAQUE = none), size (4), then at ANIM_BEGIN_HEAD the palette (16 x RGB). Then DATA up to size bytes and END,
+// as for a picture. The data is one plink_anim_record per frame. The first is the whole first frame, the last one
+// takes the last frame back to the first. It replaces the slot's animation and its places. The panel keeps every
+// slot's frame and records in ANIM_POOL, and answers PIC_TOO_BIG when they don't fit next to the others.
 #define K_ANIM_BEGIN 0x120
+enum {
+  ANIM_BEGIN_SLOT = 1,
+  ANIM_BEGIN_W,
+  ANIM_BEGIN_H = 4,
+  ANIM_BEGIN_SCALE = 6,
+  ANIM_BEGIN_TRANSP,
+  ANIM_BEGIN_SIZE,
+  ANIM_BEGIN_HEAD = 12,
+};
+// A record is ANIM_RECORD_HEAD bytes, delay, x / 2, y, w / 2 and h, then its deflated rectangle. The delay is in
+// ANIM_TICK_MS, up to ANIM_DELAY_MAX. Whatever its delay, a frame shows ANIM_FRAME_MIN_MS at least.
+enum { ANIM_RECORD_DELAY, ANIM_RECORD_X, ANIM_RECORD_Y, ANIM_RECORD_W, ANIM_RECORD_H, ANIM_RECORD_HEAD };
+#define ANIM_TICK_MS 10
+#define ANIM_DELAY_MAX 255
+#define ANIM_FRAME_MIN_MS 40
 #define K_ANIM_CLEAR 0x121  // a slot, ANIM_PLACE_BIT | a place, or ANIM_ALL, | ms << 8 to fade out over ms first
+// The rest up to ROUNDS go to anim_msg(). FRAMES is for a slot, the others for a place, ignored without it.
+#define ANIM_MSG_PLACE 0
+#define K_ANIM_FRAMES 0x122  // slot, frame rate (2, percent of the records' times, 0..ANIM_RATE_MAX, 0 = paused)
+enum { ANIM_FRAMES_SLOT, ANIM_FRAMES_RATE, ANIM_FRAMES_LEN = 3 };
+#define ANIM_RATE_MAX 1000
 // PLACE, where an animation shows: place (0..ANIM_PLACES - 1), slot, x (2), y (2), own, start, fade (2). Replaces
-// that place. Every place of a slot shows its frames in step, unless own = 1 gives it a frame of its own (w x h / 2
-// bytes more of ANIM_POOL) that starts start frames in. It fades in over fade ms, upright, full size and on the
-// whole screen. Ignored without the animation or the room.
-#define K_ANIM_PLACE 0x122
-// MOVE, moves a place: place, mode, then
-//   ANIM_GLIDE: x, y (2 each, signed, the top left to glide to) and ms (2) to get there, 0 = jump
-//   ANIM_DRIFT: vx, vy (2 each, signed) in pixels per second
-//   ANIM_WANDER: legs of speed min..max px/s (2 + 2) toward heading +- spread degrees (2 + 2, signed, clockwise from
-//     right) for leg min..max ms (2 + 2, 0 0 = one leg), rests of min..max ms (2 + 2, 0 0 = none) between. A bounce
-//     turns the heading round.
-// A drift or wander keeps to the place's AREA. ANIM_STOP alone leaves it where it is. Ignored without the place.
-#define K_ANIM_MOVE 0x123
-enum { ANIM_STOP, ANIM_GLIDE, ANIM_DRIFT, ANIM_WANDER };
-// TURN, turns and flips a place round its middle: place, mode, flip (ANIM_FLIP_*), then
-//   ANIM_GLIDE: angle (2, signed, degrees clockwise) to turn to the short way round and ms (2), 0 = at once
-//   ANIM_DRIFT: degrees per second (2, signed) to spin
-//   ANIM_FACE: toward where it goes: ANIM_FACE_* flags, the way the frames face (2, degrees), tilt (2, the most
-//     it turns, 0..180) and rate (2, degrees per second, 0 = at once)
-// ANIM_STOP stays at the angle it has.
-#define K_ANIM_TURN 0x124
-#define ANIM_FACE 3         // TURN's own mode
-#define ANIM_FLIP_X 1       // mirrored left to right, before it turns
-#define ANIM_FLIP_Y 2       // upside down
-#define ANIM_FACE_MIRROR 1  // flips left to right to face the other way
-#define ANIM_FACE_LEVEL 2   // turns back upright when it stops
-// AREA, where a drift or wander keeps: place, x0, y0, x1, y1 (2 each, signed, x1 and y1 just past it), then
-// ANIM_EDGE_* for x and for y. The turned and sized box keeps to it.
-#define K_ANIM_AREA 0x125
+// that place, x and y signed, so it can start off the screen. Every place of a slot shows its frames in step,
+// unless own = 1 gives it a frame of its own (w x h / 2 bytes more of ANIM_POOL) that starts start frames in. It
+// fades in over fade ms, upright, full size and on the whole screen. Ignored without the animation or the room.
+#define K_ANIM_PLACE 0x123
+enum {
+  ANIM_PLACE_SLOT = 1,
+  ANIM_PLACE_X,
+  ANIM_PLACE_Y = 4,
+  ANIM_PLACE_OWN = 6,
+  ANIM_PLACE_START,
+  ANIM_PLACE_FADE,
+  ANIM_PLACE_LEN = 10,
+};
+// AREA, where a drift or wander keeps and what a MAP goes across: place, x0, y0, x1, y1 (2 each, signed, x1 and y1
+// just past it), then ANIM_EDGE_* for x and for y. The turned and sized box keeps to it.
+#define K_ANIM_AREA 0x124
+enum {
+  ANIM_AREA_X0 = 1,
+  ANIM_AREA_Y0 = 3,
+  ANIM_AREA_X1 = 5,
+  ANIM_AREA_Y1 = 7,
+  ANIM_AREA_EDGES = 9,
+  ANIM_AREA_LEN = 11,
+};
 enum {
   ANIM_EDGE_SCREEN,  // round the whole screen, what's over one edge shows at the other
   ANIM_EDGE_CROSS,   // out across an edge of the area, back in at the other one
   ANIM_EDGE_BOUNCE,  // back off the edges
 };
-#define K_ANIM_SIZE 0x126  // place, percent (2, 10..400) and ms (2) to get there, round its middle
-#define K_ANIM_FADE 0x127  // place, opacity (0..255) and ms (2) to get there
+// A place's channels: x, y the top left of its frame at full size in px, turn degrees clockwise round its middle,
+// size, opacity and speed in percent. Speed is how fast its drifts and wander on x and y go.
+enum { ANIM_X, ANIM_Y, ANIM_TURN, ANIM_SIZE, ANIM_OPACITY, ANIM_SPEED, ANIM_CHANNELS };
+// GLIDE: place, channels (a bit per ANIM_*), ms (2, 0 = at once), ANIM_EASE_*, then at ANIM_GLIDE_HEAD a value (2,
+// signed) for each channel in order: size ANIM_SIZE_MIN..ANIM_SIZE_MAX, opacity and speed from 0 to their
+// ANIM_*_MAX. A turn goes the short way round. It stops each channel's drift, the wander on x or y, the face on turn.
+#define K_ANIM_GLIDE 0x125
+enum { ANIM_GLIDE_CHANNELS = 1, ANIM_GLIDE_MS, ANIM_GLIDE_EASE = 4, ANIM_GLIDE_HEAD };
+#define ANIM_EASE_IN 1   // starts slow
+#define ANIM_EASE_OUT 2  // ends slow
+#define ANIM_SIZE_MIN 10
+#define ANIM_SIZE_MAX 400
+#define ANIM_OPACITY_MAX 100
+#define ANIM_SPEED_MAX 1000
+// DRIFT: place, channels (bits of x, y and turn), then at ANIM_DRIFT_HEAD tenths of a px or degree per second (2,
+// signed) for each channel in order, 0 = stays where it is. On x and y it keeps to the AREA. It stops each channel's
+// glide, the wander on x or y, the face on turn.
+#define K_ANIM_DRIFT 0x126
+enum { ANIM_DRIFT_CHANNELS = 1, ANIM_DRIFT_HEAD };
+// WANDER: place, legs of speed min..max tenths of a px/s (2 + 2) toward heading +- spread degrees (2 + 2, signed,
+// clockwise from right) for leg min..max ms (2 + 2, 0 0 = one leg), rests of min..max ms (2 + 2, 0 0 = none)
+// between. It keeps to the AREA, and a bounce turns the heading round. It stops the glides and drifts of x and y.
+#define K_ANIM_WANDER 0x127
+enum {
+  ANIM_WANDER_SPEED = 1,  // min, then max
+  ANIM_WANDER_HEADING = 5,
+  ANIM_WANDER_SPREAD = 7,
+  ANIM_WANDER_LEG = 9,    // min, then max
+  ANIM_WANDER_REST = 13,  // min, then max
+  ANIM_WANDER_LEN = 17,
+};
+// FACE: place, ANIM_FACE_*, the way the frames face (2, degrees), tilt (2, the most it turns, 0..180) and rate (2,
+// whole degrees per second, 0 = at once). Turns toward where it goes until a glide or drift of its turn.
+#define K_ANIM_FACE 0x128
+enum { ANIM_FACE_FLAGS = 1, ANIM_FACE_FACING, ANIM_FACE_TILT = 4, ANIM_FACE_RATE = 6, ANIM_FACE_LEN = 8 };
+#define ANIM_FACE_MIRROR 1  // flips left to right to face the other way
+#define ANIM_FACE_LEVEL 2   // turns back upright when it stops
+#define K_ANIM_FLIP 0x129   // place, ANIM_FLIP_*
+#define ANIM_FLIP_X 1       // mirrored left to right, before it turns
+#define ANIM_FLIP_Y 2       // upside down
+enum { ANIM_FLIP_FLAGS = 1, ANIM_FLIP_LEN };
+// WAVE: place, channel, low, high (2 each, signed), rise, fall (2 each, ms for the whole way up and down), hold at
+// high, hold at low (2 each, ms), jitter (percent the times vary), ANIM_WAVE_*. Goes between low and high on its
+// own, an offset on x, y and turn, percent of the channel on the others. Low = high goes there and stays, and at no
+// change the wave is gone.
+#define K_ANIM_WAVE 0x12A
+enum {
+  ANIM_WAVE_CHANNEL = 1,
+  ANIM_WAVE_LO,
+  ANIM_WAVE_HI = 4,
+  ANIM_WAVE_MS = 6,     // rise, then fall
+  ANIM_WAVE_HOLD = 10,  // at high, then at low
+  ANIM_WAVE_JITTER = 14,
+  ANIM_WAVE_FLAGS,
+  ANIM_WAVE_LEN,
+};
+#define ANIM_WAVE_SLOW_LOW 1   // eases in and out at low
+#define ANIM_WAVE_SLOW_HIGH 2  // and at high
+#define ANIM_WAVE_RANDOM 4     // each way to anywhere between low and high
+// MAP: place, channel (turn, size, opacity or speed), its value at the AREA's left, right, top and bottom (2 each,
+// signed). The channel follows where its middle is across the area, an offset on turn and percent on the others,
+// the two ways added or multiplied. The places it makes bigger are nearer, and drawn in front.
+#define K_ANIM_MAP 0x12B
+enum { ANIM_MAP_CHANNEL = 1, ANIM_MAP_VALUES, ANIM_MAP_LEN = 10 };  // VALUES: left, right, top, bottom
 // ROUNDS: place, rounds (2), fade (2), tag. Plays to the end of rounds rounds, then fades out over fade ms and goes,
 // answering GONE. A frame of its own holds the last one. 0 plays on.
-#define K_ANIM_ROUNDS 0x128
-#define K_ANIM_GONE 0x129  // panel -> ESP: place | tag << 8 of one that went after its rounds
+#define K_ANIM_ROUNDS 0x12C
+enum { ANIM_ROUNDS_COUNT = 1, ANIM_ROUNDS_FADE = 3, ANIM_ROUNDS_TAG = 5, ANIM_ROUNDS_LEN };
+#define K_ANIM_GONE 0x12D  // panel -> ESP: place | tag << 8 of one that went after its rounds
 #define ANIM_OPAQUE 16
 #define ANIM_SLOTS 4
 #define ANIM_PLACES 8
+#define ANIM_WAVES 12  // waves the panel runs at a time, of all places together
 #define ANIM_PLACE_BIT 0x80
 #define ANIM_ALL 0xFF
 #define ANIM_POOL 6144  // panel memory for the animations, each one inflated frame of w x h / 2 bytes plus records
@@ -123,6 +225,19 @@ enum {
 // DEF: type, flags, icon, decimals, step (2), id (2), min (4), max (4), then four levels (2 each) for
 // ITEMF_LEVELS. Bad below the first, good from the second to the third, bad above the fourth, fair in between.
 // id is a 14-bit hash of the item's name, never 0. Dashboard tiles and trends remember the item by it.
+enum {
+  ITEM_DEF_TYPE,
+  ITEM_DEF_FLAGS,
+  ITEM_DEF_ICON,
+  ITEM_DEF_DEC,
+  ITEM_DEF_STEP,
+  ITEM_DEF_ID = 6,
+  ITEM_DEF_MIN = 8,
+  ITEM_DEF_MAX = 12,
+  ITEM_DEF_LEVELS = 16,
+  ITEM_DEF_LEN = 24,
+};
+#define ITEM_ID_MASK 0x3FFF
 #define K_ITEM_DEF 0x200    // + item: DEF bytes
 #define K_ITEM_VALUE 0x240  // + item: the value. Goes both ways, the panel sends it when the user changes it
 #define K_ITEM_LABEL 0x280  // + item: text in the panel's LANGUAGE
@@ -133,12 +248,14 @@ enum {
 // Panel -> ESP: n, asking for item n's help text, shown with ?. ESP -> panel: n, then the text, at most
 // PLINK_HELP_MAX bytes.
 #define K_ITEM_HELP 0x3C0
+// An item's key is its kind, K_ITEM_DEF .. K_ITEM_HELP, plus the item
+#define K_ITEM_KIND(key) ((key) & ~0x3F)
+#define K_ITEM_INDEX(key) ((key) & 0x3F)
 #define N_ITEMS 24              // up to 0x40, a kind's keys
-#define ITEM_DEF_LEN 24         // DEF length in bytes
 #define ITEM_TEXT_LEN 16        // the panel's room for an ITEM_TEXT value, with the 0
-#define ITEM_LABEL 20           // and for a label
-#define ITEM_UNIT 8             // a unit
-#define ITEM_STATE 12           // a toggle's word for on or off
+#define ITEM_LABEL_LEN 20       // and for a label
+#define ITEM_UNIT_LEN 8         // a unit
+#define ITEM_STATE_LEN 12       // a toggle's word for on or off
 #define ITEM_UNKNOWN INT32_MIN  // VALUE when there's none, like from a sensor that's unavailable
 #define PLINK_HELP_MAX 78       // with the item byte within PBULK_MSG_MAX, so it goes in an ordinary window
 // DEF type. ITEM_TEXT is read-only and shows its TEXT, the DEF's value fields are unused

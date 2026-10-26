@@ -1,0 +1,27 @@
+# A setting of a package that runs on the ESP, kept in its flash. Used by co2.yaml, fireplace.yaml,
+# humidity_boost.yaml and summer_cooling.yaml.
+#   - file: parts/config_number.yaml
+#     vars: {id: fireplace_duration, name: Fireplace Mode Duration, min: 1, max: 240, initial: 60, unit: min}
+defaults:
+  step: "1"
+  unit: ""
+  icon: ""
+  device_class: ""
+  disabled: "false"  # disabled_by_default
+
+number:
+  - platform: template
+    id: ${id}
+    name: ${name}
+    entity_category: config
+    disabled_by_default: ${disabled}
+    optimistic: true
+    restore_value: true
+    mode: BOX
+    min_value: ${min}
+    max_value: ${max}
+    step: ${step}
+    initial_value: ${initial}
+    unit_of_measurement: ${unit}
+    icon: ${icon}
+    device_class: ${device_class}

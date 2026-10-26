@@ -3,9 +3,9 @@
 #   - path: packages/panel/binary_sensor.yaml
 #     vars: {entity: front_door, label: Front door|Inngangsdør, icon: door}
 # name, label, help, icon, page, view and menu work as in sensor.yaml. on_text and off_text are what the panel says
-# instead of On and Off, like on_text: Locked|Låst, off_text: Unlocked|Ulåst. At most 11 bytes each.
+# instead of On and Off, like on_text: Locked|Låst, off_text: Unlocked|Ulåst.
 defaults:
-  name: ""
+  name: ${entity}
   on_text: ""
   off_text: ""
   icon: circle
@@ -18,16 +18,9 @@ esphome:
   on_boot:
     - then:
         - lambda: |-
-            static int i = flexit::panel::Item(std::string("${name}").empty() ? "${entity}" : "${name}", ITEM_TOGGLE)
-                               .label(R"~(${label})~")
-                               .help(R"~(${help})~")
+            static int i = flexit::panel::Item("${name}", ITEM_TOGGLE)
+                               .vars(R"~(${label})~", R"~(${help})~", "${icon}", "${page}", ${view}, ${menu})
                                .states(R"~(${on_text})~", R"~(${off_text})~")
-                               .icon("${icon}")
-                               .page("${page}")
-                               .view(${view})
-                               .menu(${menu})
                                .read_only()
                                .add();
-            id(${entity}).add_on_state_callback([](bool on) { flexit::panel::item_value(i, on); });
-            if (id(${entity}).has_state())
-              flexit::panel::item_value(i, id(${entity}).state);
+            flexit::panel::follow(i, id(${entity}));

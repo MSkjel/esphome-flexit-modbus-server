@@ -1,75 +1,84 @@
-// Code for packages/fireplace.yaml. The steps and waits are in its switch.
+// Code for packages/fireplace.yaml
 #pragma once
 #include "controls.h"
-
-// weak symbol, the panel's weather picture uses it for the cabin's chimney
-extern "C" bool flexit_fireplace_active() { return id(fireplace_mode_active); }
 
 namespace flexit::fireplace {
 
 static constexpr const char *WHO = "fireplace";  // its name with the mode arbiter
-inline uint32_t started_ms;                      // when it was turned on
-inline bool changed_by_hand;                     // a max fan speed was set while it's on
+static constexpr const char *TAG = "flexit.fireplace";
+inline const char STEP = 0, TIMER = 0;  // scheduler keys: the mode a moment after the fan speeds, and the timer
 
-// Switch turned on. Does nothing if the unit is stopped or we don't know the max fan speeds yet. If it's
-// already on the YAML just restarts the timer.
-inline void start() {
-  if (id(fireplace_mode_active))
-    return;
-  auto &s = id(server);
-  if (s.read_holding_register(flexit_modbus_server::REG_MODE) == 0) {
-    ESP_LOGW("fireplace", "Not starting fireplace mode, the unit is stopped");
-    return;
-  }
-  const int supply = s.real_value(flexit_modbus_server::REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX);
-  const int extract = s.real_value(flexit_modbus_server::REG_CMD_PERCENTAGE_EXTRACT_FAN_MAX);
-  if (supply == 0 || extract == 0) {
-    ESP_LOGW("fireplace", "Not starting fireplace mode, the max fan speeds aren't known yet");
+// What a reboot loses
+inline struct State {
+  bool active = false;
+  uint32_t started_ms = 0;       // when it was turned on
+  bool changed_by_hand = false;  // a max fan speed was set while it's on
+} state;
+
+// The real max fan speeds back, then the old mode once they're out
+inline void turn_off() {
+  App.scheduler.cancel_timeout(&TIMER);
+  if (!state.active) {
+    ESP_LOGI(TAG, "Fireplace mode is already off");
     return;
   }
-  ESP_LOGI("fireplace", "Fireplace mode on (max speeds are supply %d%%, extract %d%%)", supply, extract);
-  changed_by_hand = false;
-  id(fireplace_mode_active) = true;
-  started_ms = millis();
+  ESP_LOGI(TAG, "Fireplace mode off");
+  state.active = false;
+  controls::MAX_FANS.restore(TAG);
+  // The arbiter goes back to the old mode if nobody else wants max
+  App.scheduler.set_timeout(&STEP, 200, [] { controls::release(WHO); });
 }
 
-// Our speeds as temporary max speeds, the server keeps the real ones
-inline void set_fans() {
-  id(server).send_cmd(flexit_modbus_server::REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX,
-                      (uint16_t) id(fireplace_supply_fan_speed), true);
-  id(server).send_cmd(flexit_modbus_server::REG_CMD_PERCENTAGE_EXTRACT_FAN_MAX,
-                      (uint16_t) id(fireplace_extract_fan_speed), true);
-}
-
-// The real max fan speeds back. After a reboot in fireplace mode the server does that itself.
-inline void restore_fans() {
-  auto &s = id(server);
-  ESP_LOGI("fireplace", "Max fan speeds back to supply %u%%, extract %u%%",
-           s.real_value(flexit_modbus_server::REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX),
-           s.real_value(flexit_modbus_server::REG_CMD_PERCENTAGE_EXTRACT_FAN_MAX));
-  s.restore(flexit_modbus_server::REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX);
-  s.restore(flexit_modbus_server::REG_CMD_PERCENTAGE_EXTRACT_FAN_MAX);
+// Our fan speeds as the max ones, then max once they're out, for the set time. Not if the unit is stopped or we
+// don't know the max fan speeds yet. If it's on already the timer starts over.
+inline void turn_on() {
+  if (!state.active) {
+    if (controls::stopped()) {
+      ESP_LOGW(TAG, "Not starting fireplace mode, the unit is stopped");
+      return;
+    }
+    if (!controls::MAX_FANS.known()) {
+      ESP_LOGW(TAG, "Not starting fireplace mode, the max fan speeds aren't known yet");
+      return;
+    }
+    ESP_LOGI(TAG, "Fireplace mode on (max speeds are supply %d%%, extract %d%%)", controls::MAX_FANS.real(0),
+             controls::MAX_FANS.real(1));
+    state.changed_by_hand = false;
+    state.active = true;
+    state.started_ms = millis();
+  }
+  controls::MAX_FANS.set((int) id(fireplace_supply_speed_control).state,
+                         (int) id(fireplace_extract_speed_control).state);
+  App.scheduler.set_timeout(&STEP, 200, [] { controls::request(WHO, flexit_modbus_server::MODE_MAX); });
+  const float minutes = id(fireplace_duration).state;
+  ESP_LOGI(TAG, "Fireplace timer started, %.0f min", minutes);
+  App.scheduler.set_timeout(&TIMER, (uint32_t) (minutes * 60000), [] {
+    ESP_LOGI(TAG, "Fireplace timer done, turning off");
+    turn_off();
+  });
 }
 
 // Setting callback. A max fan speed set by someone while it's on is kept, and conflict() ends fireplace mode.
 inline void setting(uint16_t reg, uint16_t value) {
-  if (!id(fireplace_mode_active) || (reg != flexit_modbus_server::REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX &&
-                                     reg != flexit_modbus_server::REG_CMD_PERCENTAGE_EXTRACT_FAN_MAX))
+  if (!state.active || (reg != controls::MAX_FANS.regs[0] && reg != controls::MAX_FANS.regs[1]))
     return;
-  ESP_LOGW("fireplace", "Max fan speed set to %u%%: keeping that", value);
-  changed_by_hand = true;
+  ESP_LOGI(TAG, "Max fan speed set to %u%%: keeping that", value);
+  state.changed_by_hand = true;
 }
 
 // true if somebody changed the mode or a max fan speed by hand while it's on
 inline bool conflict() {
-  if (!id(fireplace_mode_active))
+  if (!state.active)
     return false;
-  if (changed_by_hand)
+  if (state.changed_by_hand)
     return true;
   // Our request only goes in after the fan speeds, so give it a few seconds
-  if (millis() - started_ms < 5000)
+  if (millis() - state.started_ms < 5000)
     return false;
-  return !controls::requesting(WHO);
+  return controls::requested(WHO) < 0;
 }
 
 }  // namespace flexit::fireplace
+
+// weak symbol, the panel's weather picture uses it for the cabin's chimney
+extern "C" bool flexit_fireplace_active() { return flexit::fireplace::state.active; }

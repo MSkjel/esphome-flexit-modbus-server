@@ -20,10 +20,13 @@ class ESPPreferenceObject {
 // Flash as ESPHome's preferences: save() queues a record, sync() writes what's queued
 struct ESPPreferences {
   std::map<uint32_t, std::vector<uint8_t>> flash, queued;
+  int writes = 0;  // records sync() changed in flash
   template<typename T> ESPPreferenceObject make_preference(uint32_t key, bool) { return ESPPreferenceObject(key); }
   bool sync() {
-    for (auto &record : queued)
+    for (auto &record : queued) {
+      writes += flash[record.first] != record.second;
       flash[record.first] = record.second;
+    }
     queued.clear();
     return true;
   }

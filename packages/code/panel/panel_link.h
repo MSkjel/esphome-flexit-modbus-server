@@ -1,7 +1,7 @@
 // Our end of the panel link. plink.h, pbulk.h and pbus.h, like the rest of proto/, are copied unchanged from the panel
 // firmware.
 //
-// Right after each CS60 status broadcast, about 9 times a second, we send the panel as many queued messages as fit,
+// Right after each CX60 status broadcast, about 9 times a second, we send the panel as many queued messages as fit,
 // even none, so it can answer with its own. While there's more to send, extra frames go in the gaps after polls.
 #pragma once
 #include <utility>
@@ -12,38 +12,42 @@
 namespace flexit::panel::link {
 
 // Max bytes queued before items, pictures and animations wait, so values and notes don't wait long behind them
-static constexpr unsigned BACKLOG = 512;
+inline constexpr unsigned BACKLOG = 512;
+inline constexpr uint32_t SILENT_MS = 30000;     // the panel normally answers every cycle, this long without it's gone
+inline constexpr uint32_t ASK_AGAIN_MS = 60000;  // after a refusal started
+inline constexpr uint32_t STATS_MS = 60000;      // between the link's stats in the log
 
 inline pbulk_esp_t tx;                                 // outgoing message queue and link state
-inline pbus_gaps_t gaps;                               // tracks the gaps after the CS60's polls
+inline pbus_gaps_t gaps;                               // tracks the gaps after the CX60's polls
 inline uint32_t heard_ms;                              // millis() of the panel's last answer
 inline bool connected;                                 // the panel answers and has our link version, kept by panel.h
 inline std::vector<std::pair<uint16_t, uint32_t>> in;  // from the panel, for panel.h's loop
 inline uint32_t log_ms, gap_frames;
 inline uint32_t sent_us;  // micros() when our last frame was out
 // An answer starts within PBUS_TURN_US of our frame. Nothing on the way well after that, so none is coming.
-static constexpr uint32_t NO_ANSWER_US = PBUS_TURN_US + 1000;
+inline constexpr uint32_t NO_ANSWER_US = PBUS_TURN_US + 1000;
 
-// The panel refuses the link, or frames in the gaps after polls, while the CS60 doesn't keep to its timing. We ask
-// again a minute after it started, and it lets us back in once the CS60 has kept to it for a while. Each is logged
+// The panel refuses the link, or frames in the gaps after polls, while the CX60 doesn't keep to its timing. We ask
+// again a minute after it started, and it lets us back in once the CX60 has kept to it for a while. Each is logged
 // once when it starts and once when it ends.
-inline struct {
+struct Refusal {
   uint32_t ms;      // when the last one started
   bool link, gaps;  // logged as started, not yet as ended
   bool in_gap;      // the last frame went in a gap after a poll
-} refusal;
+};
+inline Refusal refusal;
 
-inline void refusals(bool was_refused, bool was_no_gaps, bool answered) {
+inline void log_refusals(bool was_refused, bool was_no_gaps, bool answered) {
   auto &r = refusal;
   if ((tx.refused && !was_refused) || (tx.no_gaps && !was_no_gaps))
     r.ms = millis();
   if (tx.refused && !r.link) {
-    ESP_LOGE("panel", "The panel refuses the link for a while: it saw the CS60 send sooner than expected after its "
+    ESP_LOGE("panel", "The panel refuses the link for a while: it saw the CX60 send sooner than expected after its "
                       "status broadcast");
     r.link = true;
   }
   if (tx.no_gaps && !r.gaps) {
-    ESP_LOGW("panel", "The panel saw the CS60 send sooner than expected after a poll: no gaps after polls for a while");
+    ESP_LOGW("panel", "The panel saw the CX60 send sooner than expected after a poll: no gaps after polls for a while");
     r.gaps = true;
   }
   if (answered && !tx.refused && r.link) {
@@ -74,19 +78,19 @@ inline void send_window(uint32_t left_us, bool in_gap) {
   pbulk_esp_took(&tx, (int32_t) (micros() - t0) - n * PBUS_BYTE_US - (int32_t) PBUS_ESP_START_US - 300);
 }
 
-// Status callback, in the quiet after the CS60's status broadcast
+// Status callback, in the quiet after the CX60's status broadcast
 inline void window() {
-  if (id(server).updating())  // update.h is flashing the panel and has the bus
+  if (id(server).updating())  // update.cpp is flashing the panel and has the bus
     return;
-  if ((tx.refused || tx.no_gaps) && millis() - refusal.ms > 60000) {
+  if ((tx.refused || tx.no_gaps) && millis() - refusal.ms > ASK_AGAIN_MS) {
     ESP_LOGD("panel", "Asking the panel again");
-    tx.refused = tx.no_gaps = false;
+    pbulk_esp_retry(&tx);
   }
   delayMicroseconds(pbus_wait_us(id(server).status_min_age_us()));  // the panel is still handling the status frame
   send_window(pbus_status_left(id(server).status_age_us(), tx.end_us), false);
 }
 
-// Read callback, for the gap after each CS60 poll
+// Read callback, for the gap after each CX60 poll
 inline void gap() {
   if (id(server).updating())
     return;
@@ -104,12 +108,13 @@ inline void gap() {
 inline void frame(const uint8_t *f, size_t n) {
   uint32_t now = micros(), age = id(server).frame_age_us();
   bool off = gaps.off;
+  // It started between these: with a byte rounded up to whole us for the earliest, down to 86 us for the latest
   pbus_gaps_frame(&gaps, f, (int) n, now - age - (uint32_t) n * PBUS_BYTE_US, now - (uint32_t) n * 86);
   if (gaps.off != off) {
     if (gaps.off) {
-      ESP_LOGW("panel", "The CS60 sent sooner than expected after a poll: no gaps after polls for a while");
+      ESP_LOGW("panel", "The CX60 sent sooner than expected after a poll: no gaps after polls for a while");
     } else {
-      ESP_LOGI("panel", "The CS60 keeps to its steps again: the gaps after polls are back");
+      ESP_LOGI("panel", "The CX60 keeps to its steps again: the gaps after polls are back");
     }
   }
   if (n < 3 || f[0] != PBULK_ADDR || f[1] != PBULK_FC_ANSWER)
@@ -122,7 +127,7 @@ inline void frame(const uint8_t *f, size_t n) {
   if (tx.sessions != sessions) {
     ESP_LOGI("panel", "The panel knew an earlier ESP by our session number: a new one");
   }
-  refusals(refused, no_gaps, tx.answered != answered);
+  log_refusals(refused, no_gaps, tx.answered != answered);
 }
 
 // Length of a link frame, so the component's splitter knows where it ends
@@ -143,7 +148,7 @@ inline void setup(uint8_t panel_address) {
 
 // Queues bytes for the panel, like a text or picture data
 inline bool send(uint16_t key, const uint8_t *b, int n) {
-  if (pbulk_esp_send(&tx, key, b, n, plink_kind(key) == PLINK_VALUE))
+  if (pbulk_esp_send(&tx, key, b, n, plink_bulk_flags(key)))
     return true;
   ESP_LOGW("panel", "Too much waiting for the panel, dropped 0x%03X", key);
   return false;
@@ -160,12 +165,14 @@ inline void forget() {
 }
 
 inline unsigned waiting() { return tx.qn; }  // bytes queued that the panel hasn't confirmed yet
-inline bool queued(uint16_t key) { return pbulk_esp_queued(&tx, key); }   // one with this key it hasn't confirmed
-inline unsigned room() { return pbulk_esp_room(&tx); }                    // free bytes in the queue
-inline bool online() { return heard_ms && millis() - heard_ms < 30000; }  // it normally answers every cycle
+inline bool queued(uint16_t key) { return pbulk_esp_queued(&tx, key); }  // one with this key it hasn't confirmed
+inline unsigned room() { return pbulk_esp_room(&tx); }                   // free bytes in the queue
+// Room for msgs messages with n bytes of values in all, so send() can't fail
+inline bool fits(unsigned n, unsigned msgs = 1) { return room() >= msgs * PBULK_MSG_HEAD + n; }
+inline bool online() { return heard_ms && millis() - heard_ms < SILENT_MS; }
 
 inline void log_stats() {
-  if (millis() - log_ms < 60000)
+  if (millis() - log_ms < STATS_MS)
     return;
   log_ms = millis();
   ESP_LOGD("panel",

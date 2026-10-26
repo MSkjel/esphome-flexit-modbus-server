@@ -1,13 +1,21 @@
 import logging
 import os
 import re
+from pathlib import Path
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
-from esphome.const import CONF_ADDRESS, CONF_ID, CONF_INVERTED, CONF_UART_ID
+from esphome.const import (
+    CONF_ADDRESS,
+    CONF_ID,
+    CONF_INVERTED,
+    CONF_UART_ID,
+    PLATFORM_ESP32,
+    PLATFORM_ESP8266,
+)
 from esphome.core import CORE
-from esphome.helpers import fnv1_hash
+from esphome.helpers import copy_file_if_changed, fnv1_hash
 
 from esphome import pins
 from esphome.components import uart
@@ -23,14 +31,15 @@ CONF_TCP_BRIDGE_MAX_CLIENTS = "tcp_bridge_max_clients"
 CONF_RESTORE_FROM_FLASH = "restore_from_flash"  # esp8266's
 
 flexit_modbus_server_ns = cg.esphome_ns.namespace("flexit_modbus_server")
-FlexitModbusDeviceComponent = flexit_modbus_server_ns.class_(
-    "FlexitModbusServer", cg.Component
-)
+FlexitModbusServer = flexit_modbus_server_ns.class_("FlexitModbusServer", cg.Component)
 
 DEPENDENCIES = ["uart"]
 AUTO_LOAD = ["socket"]  # the TCP bridge
 
 LIBRARY_REPOSITORY = "https://github.com/MSkjel/ESP-ModbusRTUServer.git"
+
+# The bus code the panel firmware shares, which this repo ships for the panel packages
+PBUS_DIR = Path(__file__).resolve().parents[3] / "packages" / "code" / "panel"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -40,6 +49,18 @@ def validate_ref(value):
     if not re.fullmatch(r"[A-Za-z0-9._/-]+", value):
         raise cv.Invalid(f"'{value}' is not a branch, tag or commit")
     return value
+
+
+def _check_pbus(config):
+    """The component builds the bus code from the repo's packages, so it needs the repo around it."""
+    missing = [name for name in ("pbus.h", "pbus.c") if not (PBUS_DIR / name).is_file()]
+    if missing:
+        raise cv.Invalid(
+            f"{', '.join(missing)} not found in {PBUS_DIR}. The component needs the whole "
+            "esphome-flexit-modbus-server repo, not just its component directory: point external_components "
+            "at the repo."
+        )
+    return config
 
 
 def _consume_sockets(config):
@@ -59,8 +80,8 @@ def _consume_sockets(config):
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
-            cv.GenerateID(): cv.declare_id(FlexitModbusDeviceComponent),
-            # The CS60 only polls 1-3, and something answering at 254 sends it to its bootloader
+            cv.GenerateID(): cv.declare_id(FlexitModbusServer),
+            # The CX60 only polls 1-3, and something answering at 254 sends it to its bootloader
             cv.Required(CONF_ADDRESS): cv.int_range(min=1, max=3),
             # "none" so the pin can be turned off from a substitution
             cv.Optional(CONF_TX_ENABLE_PIN): cv.Any(
@@ -79,6 +100,8 @@ CONFIG_SCHEMA = cv.All(
     )
     .extend(uart.UART_DEVICE_SCHEMA)
     .extend(cv.COMPONENT_SCHEMA),
+    cv.only_on([PLATFORM_ESP32, PLATFORM_ESP8266]),
+    _check_pbus,
     _consume_sockets,
 )
 
@@ -92,12 +115,12 @@ _WIFI_WORDS = 26
 _API_KEY_WORDS = 9
 
 
-def _final_validate(config):
+def _final_validate_flash(config):
     if not CORE.is_esp8266:
-        return
+        return config
     full_config = fv.full_config.get()
     if full_config.get("esp8266", {}).get(CONF_RESTORE_FROM_FLASH):
-        return
+        return config
     left = _FLASH_WORDS
     if config[CONF_PERSIST_SETTINGS]:
         left -= _SETTINGS_WORDS
@@ -121,9 +144,16 @@ def _final_validate(config):
             "runtime counters fill the flash space for it. Put the key in the config, or set "
             "persist_runtime_counters to false."
         )
+    return config
 
 
-FINAL_VALIDATE_SCHEMA = _final_validate
+# The CX60's bus runs at 115200 baud, and the server both reads and answers
+FINAL_VALIDATE_SCHEMA = cv.All(
+    uart.final_validate_device_schema(
+        "flexit_modbus_server", require_tx=True, require_rx=True, baud_rate=115200
+    ),
+    _final_validate_flash,
+)
 
 MULTI_CONF = True
 CODEOWNERS = ["@MSkjel"]
@@ -149,15 +179,19 @@ async def to_code(config):
     if config[CONF_TCP_BRIDGE_ENABLED]:
         cg.add_define("USE_FLEXIT_TCP_BRIDGE")
 
+    # Where the panel package's includes put it too, so a build with both has one copy
+    for name in ("pbus.h", "pbus.c"):
+        copy_file_if_changed(PBUS_DIR / name, CORE.relative_src_path("panel", name))
+
     uart_parent = await cg.get_variable(config[CONF_UART_ID])
     server = cg.new_Pvariable(config[CONF_ID])
     cg.add(server.set_uart_parent(uart_parent))
     cg.add(server.set_server_address(config[CONF_ADDRESS]))
-    cg.add(server.set_tx_enable_direct(config[CONF_TX_ENABLE_DIRECT]))
     cg.add(server.set_persist_settings(config[CONF_PERSIST_SETTINGS]))
     cg.add(server.set_persist_runtime_counters(config[CONF_PERSIST_RUNTIME_COUNTERS]))
     cg.add(server.set_preference_hash(fnv1_hash(config[CONF_ID].id)))
 
+    direct = config[CONF_TX_ENABLE_DIRECT]
     pin_config = config.get(CONF_TX_ENABLE_PIN, "none")
     if pin_config != "none":
         if CORE.is_esp32:
@@ -165,12 +199,15 @@ async def to_code(config):
             # bit, the Modbus library doesn't get it. tx_enable_direct false (active low) becomes an inverted pin.
             pin_config = dict(pin_config)
             pin_config[CONF_INVERTED] = bool(pin_config.get(CONF_INVERTED, False)) != (
-                not config[CONF_TX_ENABLE_DIRECT]
+                not direct
             )
             flow_control_pin = await cg.gpio_pin_expression(pin_config)
             cg.add(uart_parent.set_flow_control_pin(flow_control_pin))
         else:
+            # The Modbus library drives the pin, inverted is active low like tx_enable_direct false
             cg.add(server.set_tx_enable_pin(pin_config["number"]))
+            direct = direct != bool(pin_config.get(CONF_INVERTED, False))
+    cg.add(server.set_tx_enable_direct(direct))
 
     if config[CONF_TCP_BRIDGE_ENABLED]:
         cg.add(server.set_tcp_bridge_enabled(config[CONF_TCP_BRIDGE_ENABLED]))
