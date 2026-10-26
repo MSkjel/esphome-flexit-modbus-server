@@ -25,6 +25,9 @@ uart:
   tx_pin: ${flexit_tx_pin}
   rx_pin: ${flexit_rx_pin}
   baud_rate: 115200
+  # Saving a setting to flash stalls the loop for tens of ms. 256 bytes is 22 ms of the bus, and the CX60's
+  # status alone is 180 bytes every ~110 ms.
+  rx_buffer_size: 1024
 
 flexit_modbus_server:
   - id: server

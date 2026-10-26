@@ -14,6 +14,14 @@ packages:
     file: parts/setting_number.yaml
     vars: {id: temperature_supply_max, name: Temperature Supply Max, register: REG_CMD_TEMPERATURE_SUPPLY_MAX,
            min: 15, max: 45, step: 0.5, scale: 10, zero_unknown: "true", category: ""}
+  max_timer_minutes: !include
+    file: parts/setting_number.yaml
+    vars: {id: max_timer_minutes, name: Max Timer Minutes, register: REG_CMD_MINUTES_MAX_TIMER, min: 0, max: 360,
+           category: "", mode: AUTO}
+  filter_change_interval: !include
+    file: parts/setting_number.yaml
+    vars: {id: filter_change_interval, name: Filter Change Interval, register: REG_CMD_DAYS_FILTER_CHANGE_INTERVAL,
+           min: 30, max: 360, step: 30, zero_unknown: "true", category: "", disabled: "false"}
 
 interval:
   # Runs the highest mode asked for, see code/controls.h. Packages ask with flexit::controls::request().
@@ -26,7 +34,11 @@ switch:
     id: heater
     name: "Heater"
     restore_mode: DISABLED
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_STATUS_HEATER);"
+    # from the status, nothing before the first one or while it's old
+    lambda: |-
+      if (!id(server)->fresh())
+        return {};
+      return id(server)->read_holding_register(flexit_modbus_server::REG_STATUS_HEATER) != 0;
     # The CX60 ORs the heater flags of the panels present, so on sets our own and off clears all three
     turn_on_action:
       - lambda: id(server)->send_cmd(flexit_modbus_server::REG_CMD_HEATER_PANEL1 + id(server)->server_address() - 1, 1);
@@ -74,6 +86,8 @@ button:
     on_press: 
       - lambda: id(server)->send_cmd(flexit_modbus_server::REG_CMD_STOP_MAX_TIMER, 1);
 
+# From the CX60's status: nothing before the first one, and the setpoint goes unknown while it's old. Template
+# entities publish every value their lambda returns, so these return only a new one.
 number:
   - platform: template
     id: temperature
@@ -82,37 +96,16 @@ number:
     min_value: 10
     step: 0.5
     update_interval: 1s
-    lambda: return id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_SETPOINT);
-    set_action:
-      lambda: id(server)->send_cmd(flexit_modbus_server::REG_CMD_TEMPERATURE_SETPOINT, x * 10);
-
-  - platform: template
-    id: max_timer_minutes
-    name: "Max Timer Minutes"
-    max_value: 360
-    min_value: 0
-    step: 1
-    disabled_by_default: True
-    update_interval: 1s
     lambda: |-
-      uint16_t v = id(server)->read_holding_register(flexit_modbus_server::REG_CMD_MINUTES_MAX_TIMER);
-      return v;
+      float t = id(server)->fresh()
+                    ? id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_SETPOINT)
+                    : NAN;
+      float now = id(temperature)->state;
+      if (id(temperature)->has_state() && (t == now || (std::isnan(t) && std::isnan(now))))
+        return {};
+      return t;
     set_action:
-      lambda: id(server)->send_cmd(flexit_modbus_server::REG_CMD_MINUTES_MAX_TIMER, x);
-
-  - platform: template
-    id: filter_change_interval
-    name: "Filter Change Interval"
-    max_value: 360
-    min_value: 30
-    step: 30
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      uint16_t v = id(server)->read_holding_register(flexit_modbus_server::REG_CMD_DAYS_FILTER_CHANGE_INTERVAL);
-      return v;
-    set_action:
-      lambda: id(server)->send_cmd(flexit_modbus_server::REG_CMD_DAYS_FILTER_CHANGE_INTERVAL, x);
+      lambda: id(server)->send_cmd(flexit_modbus_server::REG_CMD_TEMPERATURE_SETPOINT, static_cast<int16_t>(lroundf(x * 10)));
 
 select:
   - platform: template
@@ -120,9 +113,12 @@ select:
     name: "Set Mode"
     update_interval: 1s
     lambda: |-
-      return flexit_modbus_server::mode_to_string(
-        id(server)->read_holding_register(flexit_modbus_server::REG_MODE)
-      );
+      if (!id(server)->fresh())
+        return {};
+      auto mode = flexit_modbus_server::mode_to_string(id(server)->read_holding_register(flexit_modbus_server::REG_MODE));
+      if (id(set_mode)->current_option() == mode)
+        return {};
+      return mode;
     options:
       - Stop
       - Min
@@ -141,13 +137,15 @@ text_sensor:
     update_interval: 5s
     lambda: return flexit::controls::boosted_by();
 
+  # The same as Set Mode, as a sensor for history and automations
   - platform: template
     id: current_mode
     name: "Current Mode"
     update_interval: 1s
     lambda: |-
-      return flexit_modbus_server::mode_to_string(
-        id(server)->read_holding_register(
-          flexit_modbus_server::REG_MODE
-        )
-      );
+      if (!id(server)->fresh())
+        return {};
+      auto mode = flexit_modbus_server::mode_to_string(id(server)->read_holding_register(flexit_modbus_server::REG_MODE));
+      if (id(current_mode)->has_state() && id(current_mode)->state == mode)
+        return {};
+      return mode;

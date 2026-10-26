@@ -10,13 +10,32 @@ esphome:
   includes:
     - code/humidity_boost.h
 
-# ESPHome skips top-level keys that start with a dot
-.config_number: &config_number
-  platform: template
-  entity_category: config
-  optimistic: true
-  restore_value: true
-  mode: BOX
+packages:
+  # Boost starts when the humidity is this much above the baseline
+  humidity_trigger_delta: !include
+    file: parts/config_number.yaml
+    vars: {id: humidity_trigger_delta, name: Humidity Boost Trigger Delta, unit: "%", icon: "mdi:arrow-up-bold",
+           min: 2, max: 30, step: 0.5, initial: 8}
+  # and ends when it has been less than this much above it for the release minutes
+  humidity_release_delta: !include
+    file: parts/config_number.yaml
+    vars: {id: humidity_release_delta, name: Humidity Boost Release Delta, unit: "%", icon: "mdi:arrow-down-bold",
+           min: 0, max: 20, step: 0.5, initial: 3}
+  humidity_release_minutes: !include
+    file: parts/config_number.yaml
+    vars: {id: humidity_release_minutes, name: Humidity Boost Release Minutes, unit: min, min: 1, max: 30,
+           initial: 5, disabled: "true"}
+  humidity_boost_min_minutes: !include
+    file: parts/config_number.yaml
+    vars: {id: humidity_boost_min_minutes, name: Humidity Boost Min Minutes, unit: min, min: 0, max: 60, initial: 5}
+  humidity_boost_max_minutes: !include
+    file: parts/config_number.yaml
+    vars: {id: humidity_boost_max_minutes, name: Humidity Boost Max Minutes, unit: min, min: 5, max: 240, step: 5,
+           initial: 45}
+  humidity_boost_cooldown_minutes: !include
+    file: parts/config_number.yaml
+    vars: {id: humidity_boost_cooldown_minutes, name: Humidity Boost Cooldown Minutes, unit: min, min: 0, max: 120,
+           step: 5, initial: 15, disabled: "true"}
 
 switch:
   - platform: template
@@ -34,73 +53,12 @@ switch:
     optimistic: false
     # Don't pick a boost back up after a reboot, we no longer know which mode to go back to
     restore_mode: ALWAYS_OFF
-    lambda: return flexit::humidity_boost::boost.active;
+    lambda: return flexit::humidity_boost::state.boost.active;
 
     turn_on_action:
       - lambda: flexit::humidity_boost::start();
     turn_off_action:
       - lambda: flexit::humidity_boost::stop();
-
-number:
-  # Boost starts when the humidity is this much above the baseline
-  - <<: *config_number
-    name: "Humidity Boost Trigger Delta"
-    id: humidity_trigger_delta
-    unit_of_measurement: "%"
-    icon: "mdi:arrow-up-bold"
-    min_value: 2
-    max_value: 30
-    step: 0.5
-    initial_value: 8
-
-  # and ends when it has been less than this much above it for the release minutes
-  - <<: *config_number
-    name: "Humidity Boost Release Delta"
-    id: humidity_release_delta
-    unit_of_measurement: "%"
-    icon: "mdi:arrow-down-bold"
-    min_value: 0
-    max_value: 20
-    step: 0.5
-    initial_value: 3
-
-  - <<: *config_number
-    name: "Humidity Boost Release Minutes"
-    id: humidity_release_minutes
-    unit_of_measurement: "min"
-    min_value: 1
-    max_value: 30
-    step: 1
-    initial_value: 5
-    disabled_by_default: True
-
-  - <<: *config_number
-    name: "Humidity Boost Min Minutes"
-    id: humidity_boost_min_minutes
-    unit_of_measurement: "min"
-    min_value: 0
-    max_value: 60
-    step: 1
-    initial_value: 5
-
-  - <<: *config_number
-    name: "Humidity Boost Max Minutes"
-    id: humidity_boost_max_minutes
-    unit_of_measurement: "min"
-    min_value: 5
-    max_value: 240
-    step: 5
-    initial_value: 45
-
-  - <<: *config_number
-    name: "Humidity Boost Cooldown Minutes"
-    id: humidity_boost_cooldown_minutes
-    unit_of_measurement: "min"
-    min_value: 0
-    max_value: 120
-    step: 5
-    initial_value: 15
-    disabled_by_default: True
 
 sensor:
   - platform: template

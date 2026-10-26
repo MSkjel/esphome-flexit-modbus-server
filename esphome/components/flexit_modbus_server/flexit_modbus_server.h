@@ -223,6 +223,12 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
   /// True once we've seen a status broadcast since boot, so mode and temperatures are live. Settings are still the
   /// saved ones until the CX60 sends them.
   bool synced() const { return status_heard_; }
+  /// Time since the last status broadcast, UINT32_MAX before the first
+  uint32_t data_age_ms() const { return status_heard_ ? millis() - status_ms_ : UINT32_MAX; }
+  /// A status broadcast came within STATUS_STALE_MS, so mode, temperatures and alarms are live
+  bool fresh() const { return data_age_ms() < STATUS_STALE_MS; }
+  /// The CX60 sends its status every ~110 ms, none for this long means the bus or the CX60 is down
+  static constexpr uint32_t STATUS_STALE_MS = 10000;
 
   /// Sends our own frame and waits until it's out. Adds the CRC after len bytes, needs room for 2 more.
   void send_frame(uint8_t *frame, size_t len) { mb_.sendResponse(frame, len, false); }
@@ -292,6 +298,7 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
 
   /// For status_age_us(), when the last loops read the UART and how much of a status frame they had
   uint32_t loop_us_{0}, prev_loop_us_{0}, status_from_us_{0}, status_seen_us_{0};
+  uint32_t status_ms_{0};  // millis() then, for data_age_ms()
   int status_part_{0}, prev_status_part_{0}, status_from_part_{0};
   bool status_new_{false}, status_last_{false}, answered_{false}, status_heard_{false};
   bool updating_{false};  // panel update running, see set_updating()
@@ -365,7 +372,6 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
       hash = (hash * 16777619u) ^ (range.start << 16 | range.count);
     return hash;
   }();
-  static constexpr uint32_t RUNTIME_CHECK_INTERVAL_MS = 10000;
 
   struct SavedSettings {
     uint16_t values[NUM_SAVED_REGISTERS];
@@ -374,9 +380,7 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
 
   ESPPreferenceObject settings_pref_;
   SavedSettings saved_{};
-  bool settings_dirty_{false};  // save it
-  bool settings_sync_{false};   // and write it to flash now
-  uint32_t last_runtime_check_{0};
+  bool settings_dirty_{false};  // save it and sync the flash
 
   /// Index in SavedSettings, -1 if it's not a setting
   int slot_(uint16_t reg) const;
@@ -402,6 +406,7 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
       REG_RUNTIME_ROTOR_HIGH, REG_RUNTIME_HEATER_HIGH, REG_RUNTIME_HIGH,        REG_RUNTIME_FILTER_HIGH,
   };
   static constexpr size_t NUM_RUNTIME_COUNTERS = std::size(RUNTIME_HIGH_REGS);
+  static constexpr uint32_t RUNTIME_CHECK_INTERVAL_MS = 10000;  // how often save_runtime_() looks
   static constexpr uint32_t RUNTIME_SAVE_INTERVAL_MS = 60 * 60 * 1000;
 
   struct SavedRuntime {

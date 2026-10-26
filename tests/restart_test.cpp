@@ -108,23 +108,13 @@ static void boot() {
   server = esp.get();
   server->set_uart_parent(&bus);
   server->set_server_address(1);
-  server->setup();
   App.scheduler.clear();
-  flexit::controls::requests.clear();
-  flexit::controls::target = -1;
-  flexit::controls::sent_ms = 0;
-  flexit::controls::confirmed = true;
-  flexit::controls::user_mode = -1;
-  flexit::co2::boost = {flexit::co2::boost.who, flexit::co2::boost.tag};
-  flexit::co2::pi_integral = 0;
-  flexit::co2::fans_up = false;
-  flexit::co2::fans_refused = false;
-  flexit::co2::added = 0;
+  server->setup();
+  flexit::controls::state = {};
+  flexit::co2::state = {};
+  flexit::fireplace::state = {};
   co2.has = false;  // Home Assistant sends it a while after we start
   co2_known_at = now_ms + 15000;
-  flexit::fireplace::active = false;
-  flexit::fireplace::started_ms = 0;
-  flexit::fireplace::changed_by_hand = false;
   // as in the on_boot of co2.yaml and fireplace.yaml
   server->add_on_setting_callback(flexit::co2::setting);
   server->add_on_setting_callback(flexit::fireplace::setting);
@@ -236,7 +226,7 @@ static int check(const char *what) {
   if (!up)
     boot();
   run(5);  // let fireplace see a change by hand first
-  if (flexit::fireplace::active)
+  if (flexit::fireplace::state.active)
     flexit::fireplace::turn_off();
   run(30 * 60);
   int bad = 0;
@@ -347,7 +337,7 @@ int main(int argc, char **argv) {
          co2_level = 1300;
          run(5 * 60);
          co2_level = 600;
-         for (int i = 0; i < 40 * 60 && flexit::co2::fans_up; i++)
+         for (int i = 0; i < 40 * 60 && flexit::co2::state.fans_up; i++)
            second();
          down(false);
          run(10);
@@ -467,7 +457,7 @@ int main(int argc, char **argv) {
                       60 + rnd() % 40, rnd() % 2);
           break;
         case 4:
-          if (up && !flexit::fireplace::active)
+          if (up && !flexit::fireplace::state.active)
             flexit::fireplace::turn_on();
           break;
         case 5:

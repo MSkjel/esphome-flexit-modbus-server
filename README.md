@@ -71,7 +71,7 @@ pieces the packages share, you don't add those yourself.
 | [`core.yaml`](packages/core.yaml) | UART + `flexit_modbus_server` (`id: server`) | Required. Pins and address via substitutions |
 | [`controls.yaml`](packages/controls.yaml) | Mode, setpoint, heater, supply air control, max timer, filter interval, supply temp min/max, alarm/filter reset | |
 | [`sensors.yaml`](packages/sensors.yaml) | Temperatures, heating/cooling/heat exchanger %, max timer remaining, runtime counters, alarms | |
-| [`diagnostics.yaml`](packages/diagnostics.yaml) | Fan type (EC/AC), heating type, controller SW version, week program active, home/away input, filter resets | Read only |
+| [`diagnostics.yaml`](packages/diagnostics.yaml) | CX60 connected, fan type (EC/AC), heating type, controller SW version, week program active, home/away input, filter resets | Read only |
 | [`fan_speeds.yaml`](packages/fan_speeds.yaml) | Supply/extract fan % for MIN/NORMAL/MAX | EC fans only. Disabled by default |
 | [`fireplace.yaml`](packages/fireplace.yaml) | Fireplace mode (temporary MAX with custom fan speeds) | Needs `controls.yaml`. EC fans only |
 | [`humidity_boost.yaml`](packages/humidity_boost.yaml) | Humidity boost (temporary MAX when humidity spikes, e.g. a shower) | Needs `controls.yaml` and a humidity sensor of your own |
@@ -138,8 +138,13 @@ A few things that are the same for all packages:
 - **Settings are saved on the ESP.** A value you change in Home Assistant survives reboots and most updates
   (see [Saved settings and counters](#saved-settings-and-counters)), and wins over a starting value in the
   config.
+- **Unknown values.** The mode, temperatures, percentages and alarms come in the CX60's status broadcast, and
+  are unknown until the ESP has heard one. When it hasn't for 10 seconds the temperatures and percentages go
+  back to unknown, the rest keep their last state, and `CX60 Connected` (`diagnostics.yaml`) goes off: the
+  wiring, the RS485 board or the CX60 is down.
 - **Seeing why something happened.** The packages log when they start and stop and why. That is at `INFO`
-  level, so set `logger: level: INFO` while you are tuning.
+  level, so set `logger: level: INFO` while you are tuning. Their log tags start with `flexit.`, like
+  `flexit.co2` and `flexit.mode`, and the component's is `flexit_modbus_server`.
 
 ---
 

@@ -11,7 +11,7 @@
 namespace esphome {
 namespace flexit_modbus_server {
 
-static constexpr const char *const TAG = "FlexitModbus";
+static constexpr const char *const TAG = "flexit_modbus_server";
 
 static constexpr const char *const MODE_STRINGS[] = {"Stop", "Min", "Normal", "Max"};
 
@@ -128,6 +128,7 @@ void FlexitModbusServer::setup() {
 
   restore_settings_();
   restore_runtime_();
+  this->set_interval(RUNTIME_CHECK_INTERVAL_MS, [this]() { save_runtime_(false); });
 
 #ifdef USE_FLEXIT_TCP_BRIDGE
   if (tcp_bridge_enabled_)
@@ -181,6 +182,7 @@ size_t FlexitModbusServer::split_frames_(uint8_t *data, size_t length) {
     if (status) {
       status_from_us_ = prev_loop_us_;
       status_seen_us_ = micros();
+      status_ms_ = millis();
       status_from_part_ = prev_status_part_;
     }
     status_new_ |= status;
@@ -292,11 +294,6 @@ void FlexitModbusServer::loop() {
     status_callback_.call();
   read_callback_.call();
 
-  if (millis() - last_runtime_check_ >= RUNTIME_CHECK_INTERVAL_MS) {
-    last_runtime_check_ = millis();
-    save_runtime_(false);
-  }
-
 #ifdef USE_FLEXIT_TCP_BRIDGE
   if (tcp_bridge_enabled_) {
     handle_tcp_bridge_();
@@ -368,10 +365,9 @@ void FlexitModbusServer::save_settings_() {
     return;
   if (persist_settings_) {
     settings_pref_.save(&saved_);
-    if (settings_sync_)
-      global_preferences->sync();
+    global_preferences->sync();
   }
-  settings_dirty_ = settings_sync_ = false;
+  settings_dirty_ = false;
 }
 
 void FlexitModbusServer::on_safe_shutdown() {
@@ -384,7 +380,7 @@ void FlexitModbusServer::set_held_(int i, bool held) {
   if (held_(i) == held)
     return;
   saved_.held[i / 32] ^= 1u << (i % 32);
-  settings_dirty_ = settings_sync_ = true;  // rare, and needed after a power cut
+  settings_dirty_ = true;  // rare, and needed after a power cut
 }
 
 // A setting changed for good, from Home Assistant or from a panel via the CX60. Written to flash right away, a
@@ -392,7 +388,7 @@ void FlexitModbusServer::set_held_(int i, bool held) {
 void FlexitModbusServer::set_real_(int i, uint16_t reg, uint16_t value) {
   if (saved_.values[i] != value) {
     saved_.values[i] = value;
-    settings_dirty_ = settings_sync_ = true;
+    settings_dirty_ = true;
   }
   setting_callback_.call(reg, value);
 }
@@ -547,9 +543,9 @@ float FlexitModbusServer::read_holding_register_hours(uint16_t high_reg) {
     return NAN;
 
   // Combine two registers: the high word and the subsequent low word.
-  uint32_t rawSeconds = (static_cast<uint32_t>(mb_.getHoldingRegister(high_reg)) << 16) +
-                        static_cast<uint32_t>(mb_.getHoldingRegister(high_reg + 1));
-  return rawSeconds / 3600.0f;
+  uint32_t seconds = (static_cast<uint32_t>(mb_.getHoldingRegister(high_reg)) << 16) +
+                     static_cast<uint32_t>(mb_.getHoldingRegister(high_reg + 1));
+  return seconds / 3600.0f;
 }
 
 void FlexitModbusServer::send_cmd(uint16_t reg, uint16_t value, bool temporary) {

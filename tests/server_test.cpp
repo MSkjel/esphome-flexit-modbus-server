@@ -45,10 +45,12 @@ struct Esp {
         heard.insert(heard.end(), data, data + len);
     });
   }
+  ~Esp() { App.scheduler.clear(); }  // its intervals
   // bytes on the bus, then a loop
   void hear(const std::vector<uint8_t> &bytes) {
     bus.rx.insert(bus.rx.end(), bytes.begin(), bytes.end());
     now_us += 1000;
+    App.scheduler.run();
     server.loop();
   }
   float filter_hours() { return server.read_holding_register_hours(REG_RUNTIME_FILTER_HIGH); }
@@ -209,6 +211,89 @@ int main() {
     // our coils, 0x13A and 0x13F are bits 2 and 7 of byte 39
     CHECK(esp->bus.tx.size() == 47 && (esp->bus.tx[3 + 39] & 0x84) == 0x80);
   }
+
+  // Ours changed again between the CX60's read and its FC65: still flagged, and the next read gets the new one
+  {
+    auto esp = std::make_unique<Esp>();
+    const auto read = frame({1, 0x03, 0x00, REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX, 0x00, 0x01});
+    const auto poll = frame({1, 0x01, 0x00, 0x00, 0x00, 0x08});
+    esp->server.send_cmd(REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX, 80);
+    esp->hear(read);
+    esp->server.send_cmd(REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX, 90);
+    esp->hear(fc65(REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX, 80));
+    CHECK(esp->server.read_holding_register(REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX) == 90);
+    esp->bus.tx.clear();
+    esp->hear(poll);
+    CHECK(esp->bus.tx.size() == 6 && (esp->bus.tx[3] & 1 << REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX));
+    esp->bus.tx.clear();
+    esp->hear(read);
+    CHECK(esp->bus.tx.size() == 7 && esp->bus.tx[4] == 90);
+    esp->hear(fc65(REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX, 90));
+    esp->bus.tx.clear();
+    esp->hear(poll);
+    CHECK(esp->bus.tx.size() == 6 && !(esp->bus.tx[3] & 1 << REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX));
+    CHECK(esp->server.real_value(REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX) == 90);
+  }
+
+  // A junk byte before a frame. The frame callback gets each on its own, and the frame is handled.
+  {
+    auto esp = std::make_unique<Esp>();
+    const auto bytes = std::vector<uint8_t>{0x55} + fc6(REG_RUNTIME_FILTER_LOW, 1234);
+    esp->hear(bytes);
+    CHECK((esp->frames == std::vector<size_t>{1, 8}) && esp->heard == bytes);
+    CHECK(esp->server.read_holding_register(REG_RUNTIME_FILTER_LOW) == 1234);
+  }
+
+  // Junk like an FC16 header whose byte count doesn't fit its register count. The frame after it is handled at
+  // once, not after 264 bytes.
+  {
+    auto esp = std::make_unique<Esp>();
+    esp->hear(std::vector<uint8_t>{2, 0x10, 0x00, 0x00, 0x00, 0x05, 0xFF} + fc6(REG_RUNTIME_FILTER_LOW, 4321));
+    CHECK(esp->server.read_holding_register(REG_RUNTIME_FILTER_LOW) == 4321);
+  }
+
+  // An FC16 in pieces waits for its byte count, then for the rest
+  {
+    auto esp = std::make_unique<Esp>();
+    const auto f = fc16(REG_RUNTIME_FILTER_HIGH, {0, 777});
+    esp->hear(std::vector<uint8_t>(f.begin(), f.begin() + 5));
+    esp->hear(std::vector<uint8_t>(f.begin() + 5, f.begin() + 9));
+    CHECK(esp->frames.empty());
+    esp->hear(std::vector<uint8_t>(f.begin() + 9, f.end()));
+    CHECK((esp->frames == std::vector<size_t>{f.size()}));
+    CHECK(esp->server.read_holding_register(REG_RUNTIME_FILTER_LOW) == 777);
+  }
+
+  // The bootloader's 0x64 frames go by their length byte. One too long for a 0x64 isn't one, and the frame after
+  // it is handled at once.
+  {
+    auto esp = std::make_unique<Esp>();
+    esp->hear(frame({3, 0x64, 0x01, 4, 1, 2, 3, 4}));
+    CHECK((esp->frames == std::vector<size_t>{10}));
+    esp->frames.clear();
+    esp->hear(std::vector<uint8_t>{3, 0x64, 0x01, 250} + fc6(REG_RUNTIME_FILTER_LOW, 999));
+    CHECK((esp->frames == std::vector<size_t>{4, 8}));
+    CHECK(esp->server.read_holding_register(REG_RUNTIME_FILTER_LOW) == 999);
+  }
+
+  // The status: nothing before the first, live after it, and old 10 s after the last
+  {
+    auto esp = std::make_unique<Esp>();
+    CHECK(!esp->server.fresh() && !esp->server.synced() && esp->server.data_age_ms() == UINT32_MAX);
+    esp->hear(status(0, 0));
+    CHECK(esp->server.fresh() && esp->server.data_age_ms() == 0);
+    now_us += (FlexitModbusServer::STATUS_STALE_MS - 1) * 1000;
+    CHECK(esp->server.fresh());
+    now_us += 1000;
+    CHECK(!esp->server.fresh() && esp->server.synced());
+    esp->hear(status(0, 0));
+    CHECK(esp->server.fresh());
+  }
+
+  // The select's options
+  CHECK(string_to_mode("Stop") == MODE_STOP && string_to_mode("Min") == MODE_MIN && string_to_mode("Max") == MODE_MAX);
+  CHECK(string_to_mode("Auto") == MODE_NORMAL);
+  CHECK(mode_to_string(MODE_NORMAL) == "Normal" && mode_to_string(4) == "Invalid mode");
 
   printf("server test: %s\n", fails ? "FAILED" : "ok");
   return fails != 0;

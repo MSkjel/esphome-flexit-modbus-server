@@ -197,6 +197,8 @@ def main():
     print(f"Connecting to {args.host}:{args.port}...")
     try:
         sock = socket.create_connection((args.host, args.port), timeout=5.0)
+        # Only connecting times out, the bus can be quiet for longer while the CX60 restarts
+        sock.settimeout(None)
         print("Connected! Monitoring UART traffic...\n")
     except OSError as e:
         print(f"ERROR: Could not connect: {e}")
