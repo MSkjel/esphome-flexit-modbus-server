@@ -1,4 +1,4 @@
-# The board from example.yaml: XIAO ESP32-C3 on the XIAO RS485 board
+# XIAO ESP32-C3 on the XIAO RS485 board, as in example.yaml. No TCP bridge, like most builds.
 esphome:
   name: flexit-ci-esp32-c3
 
@@ -21,7 +21,3 @@ substitutions:
 packages:
   common: !include common.yaml
   panel: !include panel.yaml
-
-flexit_modbus_server:
-  - id: !extend server
-    tcp_bridge_enabled: true

@@ -8,13 +8,28 @@ esphome:
   includes:
     - code/summer_cooling.h
 
-# ESPHome skips top-level keys that start with a dot
-.config_number: &config_number
-  platform: template
-  entity_category: config
-  optimistic: true
-  restore_value: true
-  mode: BOX
+packages:
+  # Cool when the extract air is warmer than this
+  summer_cooling_above: !include
+    file: parts/config_number.yaml
+    vars: {id: summer_cooling_above, name: Summer Cooling Above, unit: "°C", device_class: temperature, min: 18,
+           max: 30, step: 0.5, initial: 24}
+  # and also this much warmer than the setpoint, so it doesn't cool a house the unit is trying to heat
+  summer_cooling_above_setpoint: !include
+    file: parts/config_number.yaml
+    vars: {id: summer_cooling_above_setpoint, name: Summer Cooling Above Setpoint, unit: "°C", min: 0, max: 10,
+           step: 0.5, initial: 1}
+  # and the outdoor air is at least this much colder than the extract air
+  summer_cooling_min_difference: !include
+    file: parts/config_number.yaml
+    vars: {id: summer_cooling_min_difference, name: Summer Cooling Min Difference, unit: "°C", min: 1, max: 10,
+           step: 0.5, initial: 2}
+  # Never below this outdoor temperature. Keeps it from running in winter
+  # when a wood stove has made the house warm.
+  summer_cooling_min_outdoor: !include
+    file: parts/config_number.yaml
+    vars: {id: summer_cooling_min_outdoor, name: Summer Cooling Min Outdoor, unit: "°C", device_class: temperature,
+           min: 0, max: 25, initial: 12, disabled: "true"}
 
 switch:
   - platform: template
@@ -24,58 +39,13 @@ switch:
     optimistic: True
     restore_mode: RESTORE_DEFAULT_ON
 
-number:
-  # Cool when the extract air is warmer than this
-  - <<: *config_number
-    name: "Summer Cooling Above"
-    id: summer_cooling_above
-    unit_of_measurement: "°C"
-    device_class: temperature
-    min_value: 18
-    max_value: 30
-    step: 0.5
-    initial_value: 24
-
-  # and also this much warmer than the setpoint, so it doesn't cool a house the unit is trying to heat
-  - <<: *config_number
-    name: "Summer Cooling Above Setpoint"
-    id: summer_cooling_above_setpoint
-    unit_of_measurement: "°C"
-    min_value: 0
-    max_value: 10
-    step: 0.5
-    initial_value: 1
-
-  # and the outdoor air is at least this much colder than the extract air
-  - <<: *config_number
-    name: "Summer Cooling Min Difference"
-    id: summer_cooling_min_difference
-    unit_of_measurement: "°C"
-    min_value: 1
-    max_value: 10
-    step: 0.5
-    initial_value: 2
-
-  # Never below this outdoor temperature. Keeps it from running in winter
-  # when a wood stove has made the house warm.
-  - <<: *config_number
-    name: "Summer Cooling Min Outdoor"
-    id: summer_cooling_min_outdoor
-    unit_of_measurement: "°C"
-    device_class: temperature
-    min_value: 0
-    max_value: 25
-    step: 1
-    initial_value: 12
-    disabled_by_default: True
-
 binary_sensor:
   - platform: template
     name: "Summer Cooling Active"
     id: summer_cooling_running
     device_class: running
     icon: "mdi:snowflake"
-    lambda: return flexit::summer_cooling::boost.active;
+    lambda: return flexit::summer_cooling::state.boost.active;
 
 interval:
   - interval: 30s

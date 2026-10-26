@@ -9,53 +9,30 @@ esphome:
     - then:
         - lambda: id(server).add_on_setting_callback(flexit::fireplace::setting);
 
-# ESPHome skips top-level keys that start with a dot
-.config_number: &config_number
-  platform: template
-  entity_category: config
-  optimistic: true
-  restore_value: true
-  mode: BOX
+packages:
+  fireplace_duration: !include
+    file: parts/config_number.yaml
+    vars: {id: fireplace_duration, name: Fireplace Mode Duration, min: 1, max: 240, initial: 60, unit: min}
+  # The max fan speeds while it's on
+  fireplace_supply_speed_control: !include
+    file: parts/config_number.yaml
+    vars: {id: fireplace_supply_speed_control, name: Fireplace Supply Fan Speed, min: 1, max: 100, initial: 90,
+           unit: "%"}
+  fireplace_extract_speed_control: !include
+    file: parts/config_number.yaml
+    vars: {id: fireplace_extract_speed_control, name: Fireplace Extract Fan Speed, min: 1, max: 100, initial: 20,
+           unit: "%"}
 
 switch:
   - platform: template
     name: "Fireplace Mode"
     id: fireplace_mode_switch
     restore_mode: DISABLED
-    lambda: return flexit::fireplace::active;
+    lambda: return flexit::fireplace::state.active;
     turn_on_action:
       - lambda: flexit::fireplace::turn_on();
     turn_off_action:
       - lambda: flexit::fireplace::turn_off();
-
-number:
-  - <<: *config_number
-    name: "Fireplace Mode Duration"
-    id: fireplace_duration
-    min_value: 1
-    max_value: 240
-    step: 1
-    initial_value: 60
-    unit_of_measurement: "min"
-
-  # The max fan speeds while it's on
-  - <<: *config_number
-    name: "Fireplace Supply Fan Speed"
-    id: fireplace_supply_speed_control
-    min_value: 1
-    max_value: 100
-    step: 1
-    initial_value: 90
-    unit_of_measurement: "%"
-
-  - <<: *config_number
-    name: "Fireplace Extract Fan Speed"
-    id: fireplace_extract_speed_control
-    min_value: 1
-    max_value: 100
-    step: 1
-    initial_value: 20
-    unit_of_measurement: "%"
 
 binary_sensor:
   - platform: template
@@ -64,5 +41,5 @@ binary_sensor:
     internal: true
     lambda: return flexit::fireplace::conflict();
     on_press:
-      - lambda: ESP_LOGW("fireplace", "Changed by hand, turning fireplace mode off");
+      - lambda: ESP_LOGI(flexit::fireplace::TAG, "Changed by hand, turning fireplace mode off");
       - switch.turn_off: fireplace_mode_switch

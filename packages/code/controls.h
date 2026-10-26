@@ -6,14 +6,19 @@
 
 namespace flexit::controls {
 
-// Who wants a higher mode, and which. Fireplace, humidity boost etc. add one while they want it, the highest
-// runs. A mode change by anyone else drops them all.
-inline std::map<std::string, int> requests;
+static constexpr const char *TAG = "flexit.mode";
 
-inline int target = -1;        // the mode we sent while boosting, -1 = not boosting
-inline uint32_t sent_ms;       // when
-inline bool confirmed = true;  // the CX60 runs it, or 30 s have passed
-inline int user_mode = -1;     // the user's mode when we last looked, -1 = not yet
+// What a reboot loses
+inline struct State {
+  // Who wants a higher mode, and which. Fireplace, humidity boost etc. add one while they want it, the highest
+  // runs. A mode change by anyone else drops them all.
+  std::map<std::string, int> requests;
+
+  int target = -1;        // the mode we sent while boosting, -1 = not boosting
+  uint32_t sent_ms = 0;   // when
+  bool confirmed = true;  // the CX60 runs it, or 30 s have passed
+  int user_mode = -1;     // the user's mode when we last looked, -1 = not yet
+} state;
 
 // The unit is stopped, or its mode isn't known yet
 inline bool stopped() {
@@ -33,60 +38,62 @@ inline void arbiter() {
 
   // The CX60 takes a few seconds to run a mode we sent. Until it does (or 30 s have passed) the mode it
   // reports says nothing about anyone else.
-  if (!confirmed && (mode == target || now - sent_ms >= 30000))
-    confirmed = true;
+  if (!state.confirmed && (mode == state.target || now - state.sent_ms >= 30000))
+    state.confirmed = true;
 
   // Somebody else changed the mode: by hand, the week program, an input. The user's own mode changing counts
   // even when no request raises it right now, like CO2 asking for normal while it's in normal.
-  if (((target >= 0 && confirmed && mode != target) || (user_mode >= 0 && base != user_mode)) && !requests.empty()) {
-    ESP_LOGW("mode", "Mode was changed by hand, dropping all boosts");
-    requests.clear();
+  if (((state.target >= 0 && state.confirmed && mode != state.target) ||
+       (state.user_mode >= 0 && base != state.user_mode)) &&
+      !state.requests.empty()) {
+    ESP_LOGI(TAG, "Mode was changed by hand, dropping all boosts");
+    state.requests.clear();
   }
-  user_mode = base;
+  state.user_mode = base;
 
   int want = flexit_modbus_server::MODE_STOP;
-  for (auto &r : requests)
+  for (auto &r : state.requests)
     want = std::max(want, r.second);
 
   // Requests only raise the mode, and never start a stopped unit (stop is also not known yet)
   if (base == flexit_modbus_server::MODE_STOP || want <= base) {
-    if (target >= 0) {
-      ESP_LOGI("mode", "Boosts done, going back to %s", flexit_modbus_server::mode_to_string(base).c_str());
+    if (state.target >= 0) {
+      ESP_LOGI(TAG, "Boosts done, going back to %s", flexit_modbus_server::mode_to_string(base).c_str());
       s.restore(flexit_modbus_server::REG_CMD_MODE);
-      target = -1;
+      state.target = -1;
     }
     return;
   }
-  if (want == target)
+  if (want == state.target)
     return;
-  ESP_LOGI("mode", "Going from %s to %s", flexit_modbus_server::mode_to_string(base).c_str(),
+  ESP_LOGI(TAG, "Going from %s to %s", flexit_modbus_server::mode_to_string(base).c_str(),
            flexit_modbus_server::mode_to_string(want).c_str());
   s.send_cmd(flexit_modbus_server::REG_CMD_MODE, want, true);
-  target = want;
-  sent_ms = now;
-  confirmed = false;
+  state.target = want;
+  state.sent_ms = now;
+  state.confirmed = false;
 }
 
 // who wants a higher mode, and which
 inline void request(const std::string &who, int mode) {
-  requests[who] = mode;
+  state.requests[who] = mode;
   arbiter();
 }
 
 inline void release(const std::string &who) {
-  requests.erase(who);
+  state.requests.erase(who);
   arbiter();
 }
 
 // The mode `who` asks for, -1 if none or the arbiter dropped it after a mode change by someone else
 inline int requested(const std::string &who) {
-  auto r = requests.find(who);
-  return r == requests.end() ? -1 : r->second;
+  auto r = state.requests.find(who);
+  return r == state.requests.end() ? -1 : r->second;
 }
 
 inline std::string boosted_by() {
   std::string names;
-  for (auto &r : requests) {
+  for (auto &r : state.requests) {
     if (!names.empty())
       names += ", ";
     names += r.first;
@@ -116,7 +123,7 @@ struct Boost {
   bool dropped() {
     if (!active || requested(who) >= 0)
       return false;
-    ESP_LOGW(tag, "Stopping, the mode was changed by hand");
+    ESP_LOGI(tag, "Stopping, the mode was changed by hand");
     armed = false;
     return true;
   }

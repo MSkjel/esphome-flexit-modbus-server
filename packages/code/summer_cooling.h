@@ -5,8 +5,13 @@
 
 namespace flexit::summer_cooling {
 
-// Unarmed after somebody changed the mode during cooling, until there is no reason to cool anymore
-inline controls::Boost boost{"summer cooling", "cooling"};
+static constexpr const char *TAG = "flexit.summer_cooling";
+
+// What a reboot loses
+inline struct State {
+  // Unarmed after somebody changed the mode during cooling, until there is no reason to cool anymore
+  controls::Boost boost{"summer cooling", TAG};
+} state;
 
 // every 30 s
 inline void tick() {
@@ -21,27 +26,27 @@ inline void tick() {
   const float difference = id(summer_cooling_min_difference).state;
   const float min_outdoor = id(summer_cooling_min_outdoor).state;
 
-  if (boost.active) {
-    if (boost.dropped()) {
-      boost.stop();
+  if (state.boost.active) {
+    if (state.boost.dropped()) {
+      state.boost.stop();
     } else if (!id(summer_cooling_enable).state) {
-      ESP_LOGI("cooling", "Stopping, it was disabled");
-      boost.stop();
+      ESP_LOGI(TAG, "Stopping, it was disabled");
+      state.boost.stop();
     } else if (heating) {
-      ESP_LOGI("cooling", "Stopping, the heater is on");
-      boost.stop();
+      ESP_LOGI(TAG, "Stopping, the heater is on");
+      state.boost.stop();
     } else if (inside < setpoint) {
-      ESP_LOGI("cooling", "Stopping, %.1f°C inside is under the setpoint (%.1f°C)", inside, setpoint);
-      boost.stop();
-    } else if (boost.runtime_ms() >= 15 * 60000UL) {
+      ESP_LOGI(TAG, "Stopping, %.1f°C inside is under the setpoint (%.1f°C)", inside, setpoint);
+      state.boost.stop();
+    } else if (state.boost.runtime_ms() >= 15 * 60000UL) {
       // Runs at least 15 minutes. The stop levels are a bit past the start levels, so it doesn't flip in and
       // out of max.
       if (inside <= above - 0.5f) {
-        ESP_LOGI("cooling", "Cooled down to %.1f°C, stopping", inside);
-        boost.stop();
+        ESP_LOGI(TAG, "Cooled down to %.1f°C, stopping", inside);
+        state.boost.stop();
       } else if (outside >= inside - difference / 2 || outside < min_outdoor - 1.0f) {
-        ESP_LOGI("cooling", "Outdoor air (%.1f°C) is no use anymore, stopping at %.1f°C", outside, inside);
-        boost.stop();
+        ESP_LOGI(TAG, "Outdoor air (%.1f°C) is no use anymore, stopping at %.1f°C", outside, inside);
+        state.boost.stop();
       }
     }
     return;
@@ -50,15 +55,15 @@ inline void tick() {
   const bool cool = id(summer_cooling_enable).state && !heating && inside >= above && outside <= inside - difference &&
                     outside >= min_outdoor;
 
-  if (!boost.armed) {
+  if (!state.boost.armed) {
     if (!cool)
-      boost.armed = true;
+      state.boost.armed = true;
     return;
   }
 
   if (cool && !controls::stopped()) {
-    ESP_LOGI("cooling", "%.1f°C inside and %.1f°C outside, cooling", inside, outside);
-    boost.start(flexit_modbus_server::MODE_MAX);
+    ESP_LOGI(TAG, "%.1f°C inside and %.1f°C outside, cooling", inside, outside);
+    state.boost.start(flexit_modbus_server::MODE_MAX);
   }
 }
 

@@ -1,0 +1,12 @@
+# One of the CX60's alarms, on while its register is 1. Used by sensors.yaml.
+#   - file: parts/alarm.yaml
+#     vars: {id: alarm_filter_change, name: Alarm Filter Change, register: REG_ALARM_FILTER_CHANGE}
+binary_sensor:
+  - platform: template
+    id: ${id}
+    name: ${name}
+    # from the status, nothing before the first one or while it's old
+    lambda: |-
+      if (!id(server)->fresh())
+        return {};
+      return id(server)->read_holding_register(flexit_modbus_server::${register}) != 0;

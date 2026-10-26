@@ -2,7 +2,18 @@
 #   - file: parts/setting_select.yaml
 #     vars: {id: home_away_speed, name: Home Away Speed, register: REG_CMD_HOME_AWAY_SPEED, first: 1,
 #            options: [Min, Normal, Max]}
-# The options are the values first, first + 1 and so on.
+# The options are the values first, first + 1 and so on. The register must be one the server saves, and the
+# select is sent when its real value changes.
+esphome:
+  on_boot:
+    - then:
+        - lambda: |-
+            id(${id}).update();  // the saved one, the CX60 only sends its settings when it starts
+            id(server).add_on_setting_callback([](uint16_t reg, uint16_t) {
+              if (reg == flexit_modbus_server::${register})
+                id(${id}).update();
+            });
+
 select:
   - platform: template
     id: ${id}
@@ -10,8 +21,8 @@ select:
     entity_category: config
     disabled_by_default: true
     options: ${options}
-    update_interval: 1s
+    update_interval: never  # see on_boot, a template select sends every update
     # nothing for a value that isn't one of them
-    lambda: return id(${id}).at(id(server)->read_holding_register(flexit_modbus_server::${register}) - ${first});
+    lambda: return id(${id}).at(id(server)->real_value(flexit_modbus_server::${register}) - ${first});
     set_action:
       lambda: id(server)->send_cmd(flexit_modbus_server::${register}, ${first} + *id(${id}).index_of(x.c_str()));
