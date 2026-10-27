@@ -74,7 +74,7 @@ pieces the packages share, you don't add those yourself.
 | [`diagnostics.yaml`](packages/diagnostics.yaml) | CX60 connected, fan type (EC/AC), heating type, controller SW version, week program active, home/away input, filter resets | Read only |
 | [`fan_speeds.yaml`](packages/fan_speeds.yaml) | Supply/extract fan % for MIN/NORMAL/MAX | EC fans only. Disabled by default |
 | [`fireplace.yaml`](packages/fireplace.yaml) | Fireplace mode (temporary MAX with custom fan speeds) | Needs `controls.yaml`. EC fans only |
-| [`humidity_boost.yaml`](packages/humidity_boost.yaml) | Humidity boost (temporary MAX when humidity spikes, e.g. a shower) | Needs `controls.yaml` and a humidity sensor of your own |
+| [`humidity_boost.yaml`](packages/humidity_boost.yaml) | Humidity boost (temporary MAX when humidity spikes, e.g. a shower): above its 1 h baseline, or a fast rise | Needs `controls.yaml` and a humidity sensor of your own |
 | [`co2.yaml`](packages/co2.yaml) | CO2 control around a target: stepped (MAX), proportional or PI (fan speeds) | Needs `controls.yaml` and a CO2 sensor of your own. The fan speed modes are EC fans only |
 | [`summer_cooling.yaml`](packages/summer_cooling.yaml) | Summer cooling (MAX when it is warm inside and cooler outside) | Needs `controls.yaml` |
 | [`computed.yaml`](packages/computed.yaml) | Heat recovery efficiency, heater power/energy, filter days remaining, combined alarm | Read only |

@@ -15,6 +15,7 @@ static Sensor humidity, humidity_baseline;
 static Switch humidity_boost, humidity_boost_enable;
 static Number humidity_trigger_delta{8}, humidity_release_delta{3}, humidity_release_minutes{5},
     humidity_boost_min_minutes{5}, humidity_boost_max_minutes{45}, humidity_boost_cooldown_minutes{15};
+static Number humidity_rise_trigger{0}, humidity_rise_minutes{5};  // off unless a case turns it on
 
 #include "humidity_boost.h"
 
@@ -57,6 +58,7 @@ static void start(int minutes) {
   humidity_release_minutes.state = 5;
   humidity_boost_cooldown_minutes.state = 15;
   humidity.publish_state(50);
+  humidity_rise_trigger.state = 0;
   run(minutes * 60);
 }
 
@@ -192,6 +194,25 @@ int main() {
   CHECK(boosting() && cx60.mode == MODE_MAX);
   run(4 * 60 + 30);
   CHECK(boosting());
+  run(60);
+  CHECK(!boosting());
+
+  // A fast rise starts it below the trigger delta: the humidity was a little up already, then rises the rise
+  // trigger within the rise minutes
+  start(15);
+  humidity_rise_trigger.state = 5;
+  humidity.publish_state(52);
+  run(10 * 60);
+  CHECK(!boosting());
+  humidity.publish_state(57);  // 7 over the baseline, under the trigger delta, but up 5 in a minute
+  run(60);
+  CHECK(boosting() && cx60.mode == MODE_MAX);
+
+  // The same rise with the rise trigger off doesn't
+  start(15);
+  humidity.publish_state(52);
+  run(10 * 60);
+  humidity.publish_state(57);
   run(60);
   CHECK(!boosting());
 

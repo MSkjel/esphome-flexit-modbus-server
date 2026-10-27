@@ -1,4 +1,6 @@
 # Humidity boost. Runs max when the humidity jumps (shower, cooking), then goes back to what it was.
+# It starts when the humidity is the trigger delta above its baseline, or has risen the rise trigger within the rise
+# minutes, which also catches a shower while the baseline is still up from the last one.
 # This is done on the ESP, the CX60 doesn't have it.
 # Needs core.yaml, controls.yaml and your own humidity sensor, with its id in flexit_humidity_sensor
 substitutions:
@@ -21,6 +23,15 @@ packages:
     file: parts/config_number.yaml
     vars: {id: humidity_release_delta, name: Humidity Boost Release Delta, unit: "%", icon: "mdi:arrow-down-bold",
            min: 0, max: 20, step: 0.5, initial: 3}
+  # or when it has risen this much within the rise minutes, 0 = off
+  humidity_rise_trigger: !include
+    file: parts/config_number.yaml
+    vars: {id: humidity_rise_trigger, name: Humidity Boost Rise Trigger, unit: "%", icon: "mdi:trending-up",
+           min: 0, max: 30, step: 0.5, initial: 5}
+  humidity_rise_minutes: !include
+    file: parts/config_number.yaml
+    vars: {id: humidity_rise_minutes, name: Humidity Boost Rise Minutes, unit: min, min: 1, max: 15, initial: 5,
+           disabled: "true"}
   humidity_release_minutes: !include
     file: parts/config_number.yaml
     vars: {id: humidity_release_minutes, name: Humidity Boost Release Minutes, unit: min, min: 1, max: 30,
@@ -87,6 +98,17 @@ sensor:
     accuracy_decimals: 1
     update_interval: 30s
     lambda: return flexit::humidity_boost::above_baseline(id(${flexit_humidity_sensor}));
+
+  # How much it rose over the rise minutes, for picking the rise trigger
+  - platform: template
+    id: humidity_rise
+    entity_category: diagnostic
+    name: "Humidity Rise"
+    state_class: measurement
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    update_interval: 30s
+    lambda: return flexit::humidity_boost::rise(id(${flexit_humidity_sensor}));
 
 interval:
   - interval: 10s
