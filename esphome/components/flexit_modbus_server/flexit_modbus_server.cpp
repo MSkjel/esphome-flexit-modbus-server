@@ -349,7 +349,7 @@ void FlexitModbusServer::restore_settings_() {
   // coil makes it win over the settings the CX60 sends when it starts too.
   int i = 0;
   for (const auto &range : SETTINGS_RANGES) {
-    for (uint16_t reg = range.start; reg < range.start + range.count; reg++, i++) {
+    for (int reg = range.start; reg < range.start + range.count; reg++, i++) {
       mb_.setHoldingRegister(reg, saved_.values[i]);
       if (held_(i)) {
         mb_.setCoil(reg, 1);

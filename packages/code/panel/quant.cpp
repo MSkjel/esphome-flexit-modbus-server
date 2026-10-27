@@ -56,7 +56,8 @@ int median_cut(const std::vector<uint32_t> &hist, int colours, uint32_t *pal, st
   for (size_t i = 0; i < boxes.size(); i++) {
     uint64_t r = 0, g = 0, b = 0, n = 0;
     for (size_t k = boxes[i].first; k < boxes[i].second; k++) {
-      uint32_t c = bin_rgb(bins[k]), cnt = hist[bins[k]];
+      uint32_t c = bin_rgb(bins[k]);
+      uint64_t cnt = hist[bins[k]];
       r += (c >> 16) * cnt;
       g += (c >> 8 & 255) * cnt;
       b += (c & 255) * cnt;
