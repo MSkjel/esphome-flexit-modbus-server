@@ -1,0 +1,26 @@
+# One of your binary sensors on the panel as On/Off, on the smart home or comfort page and as a dashboard tile if
+# you pick it.
+#   - path: packages/panel/binary_sensor.yaml
+#     vars: {entity: front_door, label: Front door|Inngangsdør, icon: door}
+# name, label, help, icon, page, view and menu work as in sensor.yaml. on_text and off_text are what the panel says
+# instead of On and Off, like on_text: Locked|Låst, off_text: Unlocked|Ulåst.
+defaults:
+  name: ${entity}
+  on_text: ""
+  off_text: ""
+  icon: circle
+  help: ""
+  page: smart_home
+  view: "true"
+  menu: "true"
+
+esphome:
+  on_boot:
+    - then:
+        - lambda: |-
+            static int i = flexit::panel::Item("${name}", ITEM_TOGGLE)
+                               .vars(R"~(${label})~", R"~(${help})~", "${icon}", "${page}", ${view}, ${menu})
+                               .states(R"~(${on_text})~", R"~(${off_text})~")
+                               .read_only()
+                               .add();
+            flexit::panel::follow(i, id(${entity}));

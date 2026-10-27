@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main, dev]
+    branches: ['**']
   pull_request:
   workflow_dispatch:
   schedule:
@@ -11,17 +11,122 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch or PR cancels the older run
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install formatters
+        run: pip install clang-format==23.1.3 ruff==0.17.1
+
+      - name: C/C++ (clang-format, ESPHome's style)
+        run: clang-format --dry-run --Werror $(git ls-files '*.c' '*.h' '*.cpp')
+
+      - name: Python (ruff format)
+        run: ruff format --check
+
+      - name: Python (ruff check)
+        run: ruff check
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: The panel updater's probe
+        run: |
+          g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stubs -Ipackages/code \
+            tests/update_test.cpp packages/code/panel/update.cpp packages/code/panel/pbus.c -o update_test
+          ./update_test
+
+      - uses: actions/checkout@v7
+        with:
+          repository: MSkjel/ESP-ModbusRTUServer
+          path: modbus-library
+
+      - name: The component on the bus
+        run: |
+          g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Itests/stubs -Ipackages/code -Iesphome/components/flexit_modbus_server -Imodbus-library tests/server_test.cpp \
+            esphome/components/flexit_modbus_server/flexit_modbus_server.cpp modbus-library/ModbusRTUServer.cpp \
+            packages/code/panel/pbus.c -o server_test
+          ./server_test
+
+      - name: The packages that change the CX60 for a while, across reboots
+        run: |
+          g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Itests/stubs -Ipackages/code -Iesphome/components/flexit_modbus_server -Imodbus-library tests/restart_test.cpp \
+            esphome/components/flexit_modbus_server/flexit_modbus_server.cpp modbus-library/ModbusRTUServer.cpp \
+            packages/code/panel/pbus.c -o restart_test
+          ./restart_test
+
+      - name: Humidity boost and summer cooling, when they start and stop
+        run: |
+          for t in humidity_boost_test summer_cooling_test; do
+            g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined \
+              -Itests/stubs -Ipackages/code -Iesphome/components/flexit_modbus_server -Imodbus-library tests/$t.cpp \
+              esphome/components/flexit_modbus_server/flexit_modbus_server.cpp modbus-library/ModbusRTUServer.cpp \
+              packages/code/panel/pbus.c -o $t
+            ./$t
+          done
+
+  # The panel firmware's tests, esp_test too, against the panel code here, at the firmware commit in
+  # packages/code/panel/proto.lock
+  firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: The firmware commit
+        id: lock
+        run: |
+          sha=$(awk '$1=="firmware"{print $2}' packages/code/panel/proto.lock)
+          if [ -z "$sha" ]; then
+            echo "::error::no firmware line in packages/code/panel/proto.lock"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          repository: MSkjel/flexit-ci600-firmware
+          ref: ${{ steps.lock.outputs.sha }}
+          path: firmware
+          fetch-depth: 0  # the tags, for the version
+
+      - run: git -C firmware submodule update --init --depth 1
+
+      - name: Install the 32-bit compilers
+        run: |
+          apt="sudo apt-get -q -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          $apt update
+          $apt install -y --no-install-recommends gcc-multilib g++-multilib
+
+      - run: pip install pyyaml pillow
+
+      - run: make -C firmware/sim check -j"$(nproc)" ESP_REPO="$GITHUB_WORKSPACE"
+
   build:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        config: [esp32, esp32-c3, esp8266]
+        config: [esp32, esp32-c3, esp8266, esp32-panel-minimal]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -31,10 +136,12 @@ jobs:
           pip install esphome
           echo "version=$(esphome version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6  # PlatformIO for ESP8266, ESPHome's ESP-IDF toolchain for ESP32
         with:
-          path: ~/.platformio
-          key: pio-${{ runner.os }}-${{ matrix.config }}-${{ steps.esphome.outputs.version }}
+          path: |
+            ~/.platformio
+            ~/.cache/esphome/idf
+          key: build-${{ runner.os }}-${{ matrix.config }}-${{ steps.esphome.outputs.version }}
 
       - name: Build
         run: |

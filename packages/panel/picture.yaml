@@ -1,0 +1,30 @@
+# A screensaver picture for the panel from a file next to your config, like a PNG or JPEG. It's fitted to the
+# screen and sent as 16 colours or as a JPEG, whichever looks better in the panel's 14 KB. Show it with the
+# "Panel Picture" select or the panel_show_picture action.
+#   - path: packages/panel/picture.yaml
+#     vars: {name: aurora, file: pictures/aurora.png}
+# name: letters, digits and _ only
+# encoding: auto, palette (16 colours) or jpeg. A palette picture that doesn't fit goes as a JPEG anyway.
+# quality: highest JPEG quality, 1-100, or auto for the best that fits
+defaults:
+  encoding: auto
+  quality: auto
+
+# the image component wants a display: section, an empty one will do
+display: []
+
+image:
+  - platform: file
+    id: panel_picture_${name}
+    file: ${file}
+    type: RGB565
+    resize: 320x240
+
+select:
+  - id: !extend panel_picture
+    options: ["${name}"]
+
+esphome:
+  on_boot:
+    - then:
+        - lambda: flexit::panel::picture::add_image("${name}", id(panel_picture_${name}), "${encoding}", "${quality}");

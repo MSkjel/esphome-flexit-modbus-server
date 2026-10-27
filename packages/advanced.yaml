@@ -3,118 +3,147 @@
 # Some of it depends on your unit (EC/AC fans, water coil).
 # Needs core.yaml
 
-switch:
-  - platform: template
-    name: "Supply Air Sensor Enabled"
-    id: supply_air_sensor_enabled
-    entity_category: config
-    disabled_by_default: True
-    restore_mode: DISABLED
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_CMD_SENSOR_SUPPLY_ENABLE) != 0;"
-    turn_on_action:
-      - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_SENSOR_SUPPLY_ENABLE, 1);"
-    turn_off_action:
-      - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_SENSOR_SUPPLY_ENABLE, 0);"
+packages:
+  supply_air_sensor_enabled: !include
+    file: parts/setting_switch.yaml
+    vars: {id: supply_air_sensor_enabled, name: Supply Air Sensor Enabled, register: REG_CMD_SENSOR_SUPPLY_ENABLE}
+  # needed for extract air (room) regulation
+  extract_air_sensor_enabled: !include
+    file: parts/setting_switch.yaml
+    vars: {id: extract_air_sensor_enabled, name: Extract Air Sensor Enabled, register: REG_CMD_SENSOR_EXTRACT_ENABLE}
+  outdoor_air_sensor_enabled: !include
+    file: parts/setting_switch.yaml
+    vars: {id: outdoor_air_sensor_enabled, name: Outdoor Air Sensor Enabled, register: REG_CMD_SENSOR_OUTDOOR_ENABLE}
+  # water coil frost protection
+  return_water_sensor_enabled: !include
+    file: parts/setting_switch.yaml
+    vars: {id: return_water_sensor_enabled, name: Return Water Sensor Enabled,
+           register: REG_CMD_SENSOR_RETURN_WATER_ENABLE}
+  # filter pressure switch
+  filter_guard_enabled: !include
+    file: parts/setting_switch.yaml
+    vars: {id: filter_guard_enabled, name: Filter Guard Enabled, register: REG_CMD_FILTER_GUARD_ENABLE}
+  # setpoint from an external pot (10-30 C)
+  external_temperature_control: !include
+    file: parts/setting_switch.yaml
+    vars: {id: external_temperature_control, name: External Temperature Control,
+           register: REG_CMD_EXTERNAL_TEMP_CONTROL_ENABLE}
+  cooling_enabled: !include
+    file: parts/setting_switch.yaml
+    vars: {id: cooling_enabled, name: Cooling Enabled, register: REG_CMD_COOLING_ENABLE}
+  coolness_recovery_enabled: !include
+    file: parts/setting_switch.yaml
+    vars: {id: coolness_recovery_enabled, name: Coolness Recovery Enabled, register: REG_CMD_COOLNESS_RECOVERY_ENABLE}
+  de_icing_enabled: !include
+    file: parts/setting_switch.yaml
+    vars: {id: de_icing_enabled, name: De-icing Enabled, register: REG_CMD_DEICING_ENABLE}
+  calibration_supply_sensor: !include
+    file: parts/setting_number.yaml
+    vars: {id: calibration_supply_sensor, name: Calibration Supply Sensor, register: REG_CMD_CALIBRATION_SUPPLY_AIR,
+           min: -5, max: 5, step: 0.1, unit: "°C", scale: 10}
+  calibration_extract_sensor: !include
+    file: parts/setting_number.yaml
+    vars: {id: calibration_extract_sensor, name: Calibration Extract Sensor,
+           register: REG_CMD_CALIBRATION_EXTRACT_AIR, min: -5, max: 5, step: 0.1, unit: "°C", scale: 10}
+  calibration_outdoor_sensor: !include
+    file: parts/setting_number.yaml
+    vars: {id: calibration_outdoor_sensor, name: Calibration Outdoor Sensor,
+           register: REG_CMD_CALIBRATION_OUTDOOR_AIR, min: -5, max: 5, step: 0.1, unit: "°C", scale: 10}
+  calibration_return_water_sensor: !include
+    file: parts/setting_number.yaml
+    vars: {id: calibration_return_water_sensor, name: Calibration Return Water Sensor,
+           register: REG_CMD_CALIBRATION_RETURN_WATER, min: -5, max: 5, step: 0.1, unit: "°C", scale: 10}
+  neutral_zone_cooling_rotor: !include
+    file: parts/setting_number.yaml
+    vars: {id: neutral_zone_cooling_rotor, name: Neutral Zone Cooling-Rotor,
+           register: REG_CMD_NEUTRAL_ZONE_COOLING_ROTOR, min: 0, max: 5, step: 0.1, unit: "°C", scale: 10}
+  neutral_zone_rotor_heating: !include
+    file: parts/setting_number.yaml
+    vars: {id: neutral_zone_rotor_heating, name: Neutral Zone Rotor-Heating,
+           register: REG_CMD_NEUTRAL_ZONE_ROTOR_HEATING, min: 0, max: 5, step: 0.1, unit: "°C", scale: 10}
+  cooling_min_outdoor_temperature: !include
+    file: parts/setting_number.yaml
+    vars: {id: cooling_min_outdoor_temperature, name: Cooling Min Outdoor Temperature,
+           register: REG_CMD_COOLING_MIN_OUTDOOR_TEMP, min: 5, max: 25, step: 0.5, unit: "°C", scale: 10,
+           zero_unknown: "true"}
+  cooling_restart_delay: !include
+    file: parts/setting_number.yaml
+    vars: {id: cooling_restart_delay, name: Cooling Restart Delay, register: REG_CMD_COOLING_RESTART_DELAY, min: 0,
+           max: 300, unit: "s"}
+  coolness_recovery_difference: !include
+    file: parts/setting_number.yaml
+    vars: {id: coolness_recovery_difference, name: Coolness Recovery Difference,
+           register: REG_CMD_COOLNESS_RECOVERY_DIFF, min: 0, max: 5, step: 0.1, unit: "°C", scale: 10}
+  home_away_temperature: !include
+    file: parts/setting_number.yaml
+    vars: {id: home_away_temperature, name: Home Away Temperature, register: REG_CMD_HOME_AWAY_TEMPERATURE, min: 10,
+           max: 40, step: 0.5, unit: "°C", scale: 10, zero_unknown: "true"}
+  home_away_time_delay: !include
+    file: parts/setting_number.yaml
+    vars: {id: home_away_time_delay, name: Home Away Time Delay, register: REG_CMD_HOME_AWAY_TIME_DELAY, min: 0,
+           max: 120, unit: "min"}
+  start_delay_1: !include
+    file: parts/setting_number.yaml
+    vars: {id: start_delay_1, name: Start Delay 1, register: REG_CMD_START_DELAY_1, min: 0, max: 60, unit: "s"}
+  start_delay_2: !include
+    file: parts/setting_number.yaml
+    vars: {id: start_delay_2, name: Start Delay 2, register: REG_CMD_START_DELAY_2, min: 0, max: 60, unit: "s"}
+  start_delay_3: !include
+    file: parts/setting_number.yaml
+    vars: {id: start_delay_3, name: Start Delay 3, register: REG_CMD_START_DELAY_3, min: 0, max: 60, unit: "s"}
+  start_delay_4: !include
+    file: parts/setting_number.yaml
+    vars: {id: start_delay_4, name: Start Delay 4, register: REG_CMD_START_DELAY_4, min: 0, max: 60, unit: "s"}
+  stop_sequence_heater_delay: !include
+    file: parts/setting_number.yaml
+    vars: {id: stop_sequence_heater_delay, name: Stop Sequence Heater Delay, register: REG_CMD_STOP_SEQUENCE_HEATER,
+           min: 0, max: 300, unit: "s"}
+  de_icing_start_temperature: !include
+    file: parts/setting_number.yaml
+    vars: {id: de_icing_start_temperature, name: De-icing Start Temperature, register: REG_CMD_DEICING_START_TEMP,
+           min: -45, max: -5, step: 0.5, unit: "°C", scale: 10, zero_unknown: "true"}
+  de_icing_fan_reduction_temperature: !include
+    file: parts/setting_number.yaml
+    vars: {id: de_icing_fan_reduction_temperature, name: De-icing Fan Reduction Temperature,
+           register: REG_CMD_DEICING_FAN_REDUCTION_TEMP, min: -45, max: -5, step: 0.5, unit: "°C", scale: 10,
+           zero_unknown: "true"}
+  # 180 = full speed
+  de_icing_rotor_speed: !include
+    file: parts/setting_number.yaml
+    vars: {id: de_icing_rotor_speed, name: De-icing Rotor Speed, register: REG_CMD_DEICING_ROTOR_SPEED, min: 15,
+           max: 180, zero_unknown: "true"}
 
-  - platform: template
-    name: "Extract Air Sensor Enabled"
-    id: extract_air_sensor_enabled
-    entity_category: config
-    disabled_by_default: True
-    restore_mode: DISABLED
-    # needed for extract air (room) regulation
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_CMD_SENSOR_EXTRACT_ENABLE) != 0;"
-    turn_on_action:
-      - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_SENSOR_EXTRACT_ENABLE, 1);"
-    turn_off_action:
-      - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_SENSOR_EXTRACT_ENABLE, 0);"
-
-  - platform: template
-    name: "Outdoor Air Sensor Enabled"
-    id: outdoor_air_sensor_enabled
-    entity_category: config
-    disabled_by_default: True
-    restore_mode: DISABLED
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_CMD_SENSOR_OUTDOOR_ENABLE) != 0;"
-    turn_on_action:
-      - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_SENSOR_OUTDOOR_ENABLE, 1);"
-    turn_off_action:
-      - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_SENSOR_OUTDOOR_ENABLE, 0);"
-
-  - platform: template
-    name: "Return Water Sensor Enabled"
-    id: return_water_sensor_enabled
-    entity_category: config
-    disabled_by_default: True
-    restore_mode: DISABLED
-    # water coil frost protection
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_CMD_SENSOR_RETURN_WATER_ENABLE) != 0;"
-    turn_on_action:
-      - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_SENSOR_RETURN_WATER_ENABLE, 1);"
-    turn_off_action:
-      - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_SENSOR_RETURN_WATER_ENABLE, 0);"
-
-  - platform: template
-    name: "Filter Guard Enabled"
-    id: filter_guard_enabled
-    entity_category: config
-    disabled_by_default: True
-    restore_mode: DISABLED
-    # filter pressure switch
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_CMD_FILTER_GUARD_ENABLE) != 0;"
-    turn_on_action:
-      - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_FILTER_GUARD_ENABLE, 1);"
-    turn_off_action:
-      - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_FILTER_GUARD_ENABLE, 0);"
-
-  - platform: template
-    name: "External Temperature Control"
-    id: external_temperature_control
-    entity_category: config
-    disabled_by_default: True
-    restore_mode: DISABLED
-    # setpoint from an external pot (10-30 C)
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_CMD_EXTERNAL_TEMP_CONTROL_ENABLE) != 0;"
-    turn_on_action:
-      - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_EXTERNAL_TEMP_CONTROL_ENABLE, 1);"
-    turn_off_action:
-      - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_EXTERNAL_TEMP_CONTROL_ENABLE, 0);"
-
-  - platform: template
-    name: "Cooling Enabled"
-    id: cooling_enabled
-    entity_category: config
-    disabled_by_default: True
-    restore_mode: DISABLED
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_CMD_COOLING_ENABLE) != 0;"
-    turn_on_action:
-      - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_COOLING_ENABLE, 1);"
-    turn_off_action:
-      - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_COOLING_ENABLE, 0);"
-
-  - platform: template
-    name: "Coolness Recovery Enabled"
-    id: coolness_recovery_enabled
-    entity_category: config
-    disabled_by_default: True
-    restore_mode: DISABLED
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_CMD_COOLNESS_RECOVERY_ENABLE) != 0;"
-    turn_on_action:
-      - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_COOLNESS_RECOVERY_ENABLE, 1);"
-    turn_off_action:
-      - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_COOLNESS_RECOVERY_ENABLE, 0);"
-
-  - platform: template
-    name: "De-icing Enabled"
-    id: de_icing_enabled
-    entity_category: config
-    disabled_by_default: True
-    restore_mode: DISABLED
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_CMD_DEICING_ENABLE) != 0;"
-    turn_on_action:
-      - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_DEICING_ENABLE, 1);"
-    turn_off_action:
-      - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_DEICING_ENABLE, 0);"
+  # what happens on the fire/smoke input
+  fire_smoke_mode: !include
+    file: parts/setting_select.yaml
+    vars: {id: fire_smoke_mode, name: Fire Smoke Mode, register: REG_CMD_FIRE_SMOKE_MODE, first: 1,
+           options: [Stop, Supply and Extract Max, Extract Max, Supply Max]}
+  cooling_min_speed: !include
+    file: parts/setting_select.yaml
+    vars: {id: cooling_min_speed, name: Cooling Min Speed, register: REG_CMD_COOLING_MIN_SPEED, first: 2,
+           options: [Normal, Max]}
+  home_away_speed: !include
+    file: parts/setting_select.yaml
+    vars: {id: home_away_speed, name: Home Away Speed, register: REG_CMD_HOME_AWAY_SPEED, first: 1,
+           options: [Min, Normal, Max]}
+  # AC fans only
+  max_timer_speed: !include
+    file: parts/setting_select.yaml
+    vars: {id: max_timer_speed, name: Max Timer Speed, register: REG_CMD_MAX_TIMER_SPEED, first: 1,
+           options: [Min, Normal, Max]}
+  # these two: AC fans only, used while the hood/fireplace input is on
+  air_volume_comp_supply_speed: !include
+    file: parts/setting_select.yaml
+    vars: {id: air_volume_comp_supply_speed, name: Air Volume Comp. Supply Speed,
+           register: REG_CMD_AIR_VOLUME_COMP_SUPPLY_SPEED, first: 1, options: [Min, Normal, Max]}
+  air_volume_comp_extract_speed: !include
+    file: parts/setting_select.yaml
+    vars: {id: air_volume_comp_extract_speed, name: Air Volume Comp. Extract Speed,
+           register: REG_CMD_AIR_VOLUME_COMP_EXTRACT_SPEED, first: 1, options: [Min, Normal, Max]}
+  rotor_alarm_type: !include
+    file: parts/setting_select.yaml
+    vars: {id: rotor_alarm_type, name: Rotor Alarm Type, register: REG_CMD_ROTOR_ALARM_TYPE, first: 0,
+           options: [A (stop unit), B (continue)]}
 
 button:
   - platform: template
@@ -124,495 +153,3 @@ button:
     disabled_by_default: True
     on_press:
       - lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_CLEAR_ALARM_LOG, 1);"
-
-number:
-  - platform: template
-    name: "Calibration Supply Sensor"
-    id: calibration_supply_sensor
-    entity_category: config
-    disabled_by_default: True
-    min_value: -5
-    max_value: 5
-    step: 0.1
-    unit_of_measurement: "°C"
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_CALIBRATION_SUPPLY_AIR));
-      return v / 10.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_CALIBRATION_SUPPLY_AIR, static_cast<int16_t>(lroundf(x * 10)));"
-
-  - platform: template
-    name: "Calibration Extract Sensor"
-    id: calibration_extract_sensor
-    entity_category: config
-    disabled_by_default: True
-    min_value: -5
-    max_value: 5
-    step: 0.1
-    unit_of_measurement: "°C"
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_CALIBRATION_EXTRACT_AIR));
-      return v / 10.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_CALIBRATION_EXTRACT_AIR, static_cast<int16_t>(lroundf(x * 10)));"
-
-  - platform: template
-    name: "Calibration Outdoor Sensor"
-    id: calibration_outdoor_sensor
-    entity_category: config
-    disabled_by_default: True
-    min_value: -5
-    max_value: 5
-    step: 0.1
-    unit_of_measurement: "°C"
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_CALIBRATION_OUTDOOR_AIR));
-      return v / 10.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_CALIBRATION_OUTDOOR_AIR, static_cast<int16_t>(lroundf(x * 10)));"
-
-  - platform: template
-    name: "Calibration Return Water Sensor"
-    id: calibration_return_water_sensor
-    entity_category: config
-    disabled_by_default: True
-    min_value: -5
-    max_value: 5
-    step: 0.1
-    unit_of_measurement: "°C"
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_CALIBRATION_RETURN_WATER));
-      return v / 10.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_CALIBRATION_RETURN_WATER, static_cast<int16_t>(lroundf(x * 10)));"
-
-  - platform: template
-    name: "Neutral Zone Cooling-Rotor"
-    id: neutral_zone_cooling_rotor
-    entity_category: config
-    disabled_by_default: True
-    min_value: 0
-    max_value: 5
-    step: 0.1
-    unit_of_measurement: "°C"
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_NEUTRAL_ZONE_COOLING_ROTOR));
-      return v / 10.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_NEUTRAL_ZONE_COOLING_ROTOR, static_cast<int16_t>(lroundf(x * 10)));"
-
-  - platform: template
-    name: "Neutral Zone Rotor-Heating"
-    id: neutral_zone_rotor_heating
-    entity_category: config
-    disabled_by_default: True
-    min_value: 0
-    max_value: 5
-    step: 0.1
-    unit_of_measurement: "°C"
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_NEUTRAL_ZONE_ROTOR_HEATING));
-      return v / 10.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_NEUTRAL_ZONE_ROTOR_HEATING, static_cast<int16_t>(lroundf(x * 10)));"
-
-  - platform: template
-    name: "Cooling Min Outdoor Temperature"
-    id: cooling_min_outdoor_temperature
-    entity_category: config
-    disabled_by_default: True
-    min_value: 5
-    max_value: 25
-    step: 0.5
-    unit_of_measurement: "°C"
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_COOLING_MIN_OUTDOOR_TEMP));
-      if (v == 0) return {};  // 0 = not synced from the CS60 yet
-      return v / 10.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_COOLING_MIN_OUTDOOR_TEMP, static_cast<int16_t>(lroundf(x * 10)));"
-
-  - platform: template
-    name: "Cooling Restart Delay"
-    id: cooling_restart_delay
-    entity_category: config
-    disabled_by_default: True
-    min_value: 0
-    max_value: 300
-    step: 1
-    unit_of_measurement: "s"
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_COOLING_RESTART_DELAY));
-      return v / 1.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_COOLING_RESTART_DELAY, static_cast<int16_t>(lroundf(x)));"
-
-  - platform: template
-    name: "Coolness Recovery Difference"
-    id: coolness_recovery_difference
-    entity_category: config
-    disabled_by_default: True
-    min_value: 0
-    max_value: 5
-    step: 0.1
-    unit_of_measurement: "°C"
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_COOLNESS_RECOVERY_DIFF));
-      return v / 10.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_COOLNESS_RECOVERY_DIFF, static_cast<int16_t>(lroundf(x * 10)));"
-
-  - platform: template
-    name: "Home Away Temperature"
-    id: home_away_temperature
-    entity_category: config
-    disabled_by_default: True
-    min_value: 10
-    max_value: 40
-    step: 0.5
-    unit_of_measurement: "°C"
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_HOME_AWAY_TEMPERATURE));
-      if (v == 0) return {};  // 0 = not synced from the CS60 yet
-      return v / 10.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_HOME_AWAY_TEMPERATURE, static_cast<int16_t>(lroundf(x * 10)));"
-
-  - platform: template
-    name: "Home Away Time Delay"
-    id: home_away_time_delay
-    entity_category: config
-    disabled_by_default: True
-    min_value: 0
-    max_value: 120
-    step: 1
-    unit_of_measurement: "min"
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_HOME_AWAY_TIME_DELAY));
-      return v / 1.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_HOME_AWAY_TIME_DELAY, static_cast<int16_t>(lroundf(x)));"
-
-  - platform: template
-    name: "Start Delay 1"
-    id: start_delay_1
-    entity_category: config
-    disabled_by_default: True
-    min_value: 0
-    max_value: 60
-    step: 1
-    unit_of_measurement: "s"
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_START_DELAY_1));
-      return v / 1.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_START_DELAY_1, static_cast<int16_t>(lroundf(x)));"
-
-  - platform: template
-    name: "Start Delay 2"
-    id: start_delay_2
-    entity_category: config
-    disabled_by_default: True
-    min_value: 0
-    max_value: 60
-    step: 1
-    unit_of_measurement: "s"
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_START_DELAY_2));
-      return v / 1.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_START_DELAY_2, static_cast<int16_t>(lroundf(x)));"
-
-  - platform: template
-    name: "Start Delay 3"
-    id: start_delay_3
-    entity_category: config
-    disabled_by_default: True
-    min_value: 0
-    max_value: 60
-    step: 1
-    unit_of_measurement: "s"
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_START_DELAY_3));
-      return v / 1.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_START_DELAY_3, static_cast<int16_t>(lroundf(x)));"
-
-  - platform: template
-    name: "Start Delay 4"
-    id: start_delay_4
-    entity_category: config
-    disabled_by_default: True
-    min_value: 0
-    max_value: 60
-    step: 1
-    unit_of_measurement: "s"
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_START_DELAY_4));
-      return v / 1.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_START_DELAY_4, static_cast<int16_t>(lroundf(x)));"
-
-  - platform: template
-    name: "Stop Sequence Heater Delay"
-    id: stop_sequence_heater_delay
-    entity_category: config
-    disabled_by_default: True
-    min_value: 0
-    max_value: 300
-    step: 1
-    unit_of_measurement: "s"
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_STOP_SEQUENCE_HEATER));
-      return v / 1.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_STOP_SEQUENCE_HEATER, static_cast<int16_t>(lroundf(x)));"
-
-  - platform: template
-    name: "De-icing Start Temperature"
-    id: de_icing_start_temperature
-    entity_category: config
-    disabled_by_default: True
-    min_value: -45
-    max_value: -5
-    step: 0.5
-    unit_of_measurement: "°C"
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_DEICING_START_TEMP));
-      if (v == 0) return {};  // 0 = not synced from the CS60 yet
-      return v / 10.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_DEICING_START_TEMP, static_cast<int16_t>(lroundf(x * 10)));"
-
-  - platform: template
-    name: "De-icing Fan Reduction Temperature"
-    id: de_icing_fan_reduction_temperature
-    entity_category: config
-    disabled_by_default: True
-    min_value: -45
-    max_value: -5
-    step: 0.5
-    unit_of_measurement: "°C"
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_DEICING_FAN_REDUCTION_TEMP));
-      if (v == 0) return {};  // 0 = not synced from the CS60 yet
-      return v / 10.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_DEICING_FAN_REDUCTION_TEMP, static_cast<int16_t>(lroundf(x * 10)));"
-
-  - platform: template
-    name: "De-icing Rotor Speed"
-    id: de_icing_rotor_speed
-    entity_category: config
-    disabled_by_default: True
-    # 180 = full speed
-    min_value: 15
-    max_value: 180
-    step: 1
-    mode: BOX
-    update_interval: 1s
-    lambda: |-
-      int16_t v = static_cast<int16_t>(id(server)->read_holding_register(flexit_modbus_server::REG_CMD_DEICING_ROTOR_SPEED));
-      if (v == 0) return {};  // 0 = not synced from the CS60 yet
-      return v / 1.0f;
-    set_action:
-      lambda: "id(server)->send_cmd(flexit_modbus_server::REG_CMD_DEICING_ROTOR_SPEED, static_cast<int16_t>(lroundf(x)));"
-
-select:
-  - platform: template
-    name: "Fire Smoke Mode"
-    id: fire_smoke_mode
-    entity_category: config
-    disabled_by_default: True
-    # what happens on the fire/smoke input
-    options:
-      - "Stop"
-      - "Supply and Extract Max"
-      - "Extract Max"
-      - "Supply Max"
-    update_interval: 1s
-    lambda: |-
-      switch (id(server)->read_holding_register(flexit_modbus_server::REG_CMD_FIRE_SMOKE_MODE)) {
-        case 1: return std::string("Stop");
-        case 2: return std::string("Supply and Extract Max");
-        case 3: return std::string("Extract Max");
-        case 4: return std::string("Supply Max");
-        default: return {};
-      }
-    set_action:
-      lambda: |-
-        if (x == "Stop") id(server)->send_cmd(flexit_modbus_server::REG_CMD_FIRE_SMOKE_MODE, 1);
-        else if (x == "Supply and Extract Max") id(server)->send_cmd(flexit_modbus_server::REG_CMD_FIRE_SMOKE_MODE, 2);
-        else if (x == "Extract Max") id(server)->send_cmd(flexit_modbus_server::REG_CMD_FIRE_SMOKE_MODE, 3);
-        else if (x == "Supply Max") id(server)->send_cmd(flexit_modbus_server::REG_CMD_FIRE_SMOKE_MODE, 4);
-
-  - platform: template
-    name: "Cooling Min Speed"
-    id: cooling_min_speed
-    entity_category: config
-    disabled_by_default: True
-    options:
-      - "Normal"
-      - "Max"
-    update_interval: 1s
-    lambda: |-
-      switch (id(server)->read_holding_register(flexit_modbus_server::REG_CMD_COOLING_MIN_SPEED)) {
-        case 2: return std::string("Normal");
-        case 3: return std::string("Max");
-        default: return {};
-      }
-    set_action:
-      lambda: |-
-        if (x == "Normal") id(server)->send_cmd(flexit_modbus_server::REG_CMD_COOLING_MIN_SPEED, 2);
-        else if (x == "Max") id(server)->send_cmd(flexit_modbus_server::REG_CMD_COOLING_MIN_SPEED, 3);
-
-  - platform: template
-    name: "Home Away Speed"
-    id: home_away_speed
-    entity_category: config
-    disabled_by_default: True
-    options:
-      - "Min"
-      - "Normal"
-      - "Max"
-    update_interval: 1s
-    lambda: |-
-      switch (id(server)->read_holding_register(flexit_modbus_server::REG_CMD_HOME_AWAY_SPEED)) {
-        case 1: return std::string("Min");
-        case 2: return std::string("Normal");
-        case 3: return std::string("Max");
-        default: return {};
-      }
-    set_action:
-      lambda: |-
-        if (x == "Min") id(server)->send_cmd(flexit_modbus_server::REG_CMD_HOME_AWAY_SPEED, 1);
-        else if (x == "Normal") id(server)->send_cmd(flexit_modbus_server::REG_CMD_HOME_AWAY_SPEED, 2);
-        else if (x == "Max") id(server)->send_cmd(flexit_modbus_server::REG_CMD_HOME_AWAY_SPEED, 3);
-
-  - platform: template
-    name: "Max Timer Speed"
-    id: max_timer_speed
-    entity_category: config
-    disabled_by_default: True
-    # AC fans only
-    options:
-      - "Min"
-      - "Normal"
-      - "Max"
-    update_interval: 1s
-    lambda: |-
-      switch (id(server)->read_holding_register(flexit_modbus_server::REG_CMD_MAX_TIMER_SPEED)) {
-        case 1: return std::string("Min");
-        case 2: return std::string("Normal");
-        case 3: return std::string("Max");
-        default: return {};
-      }
-    set_action:
-      lambda: |-
-        if (x == "Min") id(server)->send_cmd(flexit_modbus_server::REG_CMD_MAX_TIMER_SPEED, 1);
-        else if (x == "Normal") id(server)->send_cmd(flexit_modbus_server::REG_CMD_MAX_TIMER_SPEED, 2);
-        else if (x == "Max") id(server)->send_cmd(flexit_modbus_server::REG_CMD_MAX_TIMER_SPEED, 3);
-
-  - platform: template
-    name: "Air Volume Comp. Supply Speed"
-    id: air_volume_comp_supply_speed
-    entity_category: config
-    disabled_by_default: True
-    # AC fans only, used while the hood/fireplace input is on
-    options:
-      - "Min"
-      - "Normal"
-      - "Max"
-    update_interval: 1s
-    lambda: |-
-      switch (id(server)->read_holding_register(flexit_modbus_server::REG_CMD_AIR_VOLUME_COMP_SUPPLY_SPEED)) {
-        case 1: return std::string("Min");
-        case 2: return std::string("Normal");
-        case 3: return std::string("Max");
-        default: return {};
-      }
-    set_action:
-      lambda: |-
-        if (x == "Min") id(server)->send_cmd(flexit_modbus_server::REG_CMD_AIR_VOLUME_COMP_SUPPLY_SPEED, 1);
-        else if (x == "Normal") id(server)->send_cmd(flexit_modbus_server::REG_CMD_AIR_VOLUME_COMP_SUPPLY_SPEED, 2);
-        else if (x == "Max") id(server)->send_cmd(flexit_modbus_server::REG_CMD_AIR_VOLUME_COMP_SUPPLY_SPEED, 3);
-
-  - platform: template
-    name: "Air Volume Comp. Extract Speed"
-    id: air_volume_comp_extract_speed
-    entity_category: config
-    disabled_by_default: True
-    # AC fans only, used while the hood/fireplace input is on
-    options:
-      - "Min"
-      - "Normal"
-      - "Max"
-    update_interval: 1s
-    lambda: |-
-      switch (id(server)->read_holding_register(flexit_modbus_server::REG_CMD_AIR_VOLUME_COMP_EXTRACT_SPEED)) {
-        case 1: return std::string("Min");
-        case 2: return std::string("Normal");
-        case 3: return std::string("Max");
-        default: return {};
-      }
-    set_action:
-      lambda: |-
-        if (x == "Min") id(server)->send_cmd(flexit_modbus_server::REG_CMD_AIR_VOLUME_COMP_EXTRACT_SPEED, 1);
-        else if (x == "Normal") id(server)->send_cmd(flexit_modbus_server::REG_CMD_AIR_VOLUME_COMP_EXTRACT_SPEED, 2);
-        else if (x == "Max") id(server)->send_cmd(flexit_modbus_server::REG_CMD_AIR_VOLUME_COMP_EXTRACT_SPEED, 3);
-
-  - platform: template
-    name: "Rotor Alarm Type"
-    id: rotor_alarm_type
-    entity_category: config
-    disabled_by_default: True
-    options:
-      - "A (stop unit)"
-      - "B (continue)"
-    update_interval: 1s
-    lambda: |-
-      switch (id(server)->read_holding_register(flexit_modbus_server::REG_CMD_ROTOR_ALARM_TYPE)) {
-        case 0: return std::string("A (stop unit)");
-        case 1: return std::string("B (continue)");
-        default: return {};
-      }
-    set_action:
-      lambda: |-
-        if (x == "A (stop unit)") id(server)->send_cmd(flexit_modbus_server::REG_CMD_ROTOR_ALARM_TYPE, 0);
-        else if (x == "B (continue)") id(server)->send_cmd(flexit_modbus_server::REG_CMD_ROTOR_ALARM_TYPE, 1);

@@ -1,4 +1,4 @@
-# Read only stuff: DIP switches, SW version, week program, filter resets.
+# Read only stuff: the bus, DIP switches, SW version, week program, filter resets.
 # Needs core.yaml
 
 sensor:
@@ -8,9 +8,21 @@ sensor:
     entity_category: diagnostic
     accuracy_decimals: 0
     update_interval: 60s
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_NUM_FILTER_RESETS);"
+    lambda: |-
+      if (!id(server)->fresh())
+        return NAN;
+      return id(server)->read_holding_register(flexit_modbus_server::REG_NUM_FILTER_RESETS);
 
 binary_sensor:
+  # On while the CX60's status comes. Off: the RS485 wiring, the transceiver or the CX60 is down, and the status
+  # values are unknown.
+  - platform: template
+    name: "CX60 Connected"
+    id: cx60_connected
+    device_class: connectivity
+    entity_category: diagnostic
+    lambda: return id(server)->fresh();
+
   - platform: template
     name: "Week Program Active"
     id: week_program_active
@@ -21,7 +33,10 @@ binary_sensor:
     name: "Home Away Input Active"
     id: home_away_input_active
     entity_category: diagnostic
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_OVERRIDING_SYSTEM_ACTIVE) != 0;"
+    lambda: |-
+      if (!id(server)->fresh())
+        return {};
+      return id(server)->read_holding_register(flexit_modbus_server::REG_OVERRIDING_SYSTEM_ACTIVE) != 0;
 
 text_sensor:
   - platform: template
@@ -30,6 +45,8 @@ text_sensor:
     entity_category: diagnostic
     update_interval: 60s
     lambda: |-
+      if (!id(server)->fresh())
+        return {};
       return std::string(id(server)->read_holding_register(flexit_modbus_server::REG_DS4_FAN_TYPE) == 0 ? "EC" : "AC");
 
   - platform: template
@@ -38,6 +55,8 @@ text_sensor:
     entity_category: diagnostic
     update_interval: 60s
     lambda: |-
+      if (!id(server)->fresh())
+        return {};
       return std::string(id(server)->read_holding_register(flexit_modbus_server::REG_DS1_HEATING_TYPE) == 0 ? "Water" : "Electric");
 
   - platform: template

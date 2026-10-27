@@ -36,6 +36,7 @@ packages:
   summer_cooling: !include ../packages/summer_cooling.yaml
   computed: !include ../packages/computed.yaml
   advanced: !include ../packages/advanced.yaml
+  health: !include ../packages/health.yaml
 
 # Stand-ins for the sensors
 sensor:

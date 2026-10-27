@@ -1,0 +1,22 @@
+# One of your text sensors on the panel, read-only, on the smart home or comfort page and as a dashboard tile if
+# you pick it. Longer texts are cut, see docs/panel.md#how-long-texts-can-be.
+#   - path: packages/panel/text.yaml
+#     vars: {entity: washer_state, label: Washer|Vaskemaskin, icon: washer}
+# name, label, help, icon, page, view and menu work as in sensor.yaml. A state like "Washing|Vasker" shows the
+# part for the panel's language.
+defaults:
+  name: ${entity}
+  icon: circle
+  help: ""
+  page: smart_home
+  view: "true"
+  menu: "true"
+
+esphome:
+  on_boot:
+    - then:
+        - lambda: |-
+            static int i = flexit::panel::Item("${name}", ITEM_TEXT)
+                               .vars(R"~(${label})~", R"~(${help})~", "${icon}", "${page}", ${view}, ${menu})
+                               .add();
+            flexit::panel::follow(i, id(${entity}));

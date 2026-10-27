@@ -1,0 +1,338 @@
+# A CI600 panel running the replacement firmware (github.com/MSkjel/flexit-ci600-firmware) on the same bus.
+# ESP32 only. Needs ESPHome 2026.9 or newer and core.yaml with flexit_address: "1". The panel uses address 3.
+# Only address 1 may change the setpoint and the NORMAL fan speeds, so this ESP does that for the panel.
+# Gives you the panel's temperature and the settings you might automate, "Panel Connected", a "Panel Action" event
+# for actions picked on the panel, and actions for notifications, views, pictures, animations and every other
+# setting. More in packages/panel/. From your own YAML, call the same as C++ in a lambda, like
+# flexit::panel::notify("Filter change due in a week", "filter", "warning").
+#
+# panel_address: the panel's bus address, if it isn't 3. The ESP only talks to that panel.
+defaults:
+  panel_address: "3"
+
+globals:
+  - id: panel_language  # the panel's language, so its items' texts are right straight after a restart
+    type: int
+    restore_value: true
+    initial_value: "0"
+
+time:
+  - platform: homeassistant
+    id: flexit_panel_time
+    on_time_sync:
+      - lambda: flexit::panel::send_time();  # the panel also sets the CX60's clock from this
+
+esphome:
+  includes:
+    - code/panel
+  on_boot:
+    - priority: 600
+      then:
+        - lambda: flexit::panel::setup(${panel_address});
+    - priority: -100                      # all pictures are registered by now, animation.yaml restores its own
+      then:
+        - lambda: |-
+            auto p = id(panel_picture).current_option();
+            if (!p.empty() && !(p == "None"))
+              flexit::panel::picture::show(std::string(p.c_str(), p.size()));
+
+interval:
+  # what the panel sent, its items, pictures and animations. A picture gets its own 16 colours and is compressed a
+  # few rows per loop so the bus still gets answered. Then it goes whole, or just the rows that differ.
+  - interval: 20ms
+    then:
+      - lambda: flexit::panel::loop();
+
+binary_sensor:
+  - platform: template
+    id: panel_connected
+    name: "Panel Connected"
+    device_class: connectivity
+    entity_category: diagnostic
+    lambda: return flexit::panel::link::connected;
+
+sensor:
+  - platform: template
+    id: panel_temperature
+    name: "Panel Temperature"
+    device_class: temperature
+    state_class: measurement
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    update_interval: never
+  # link trouble since the ESP started
+  - name: "Panel Link Windows Too Short"
+    lambda: return flexit::panel::link::tx.short_windows;
+    <<: &link_count
+      platform: template
+      entity_category: diagnostic
+      state_class: total_increasing
+      accuracy_decimals: 0
+      update_interval: 60s
+  - name: "Panel Link Unanswered"
+    lambda: return flexit::panel::link::tx.missed;
+    <<: *link_count
+  - name: "Panel Link Lost"
+    lambda: return flexit::panel::link::tx.resyncs;
+    <<: *link_count
+
+text_sensor:
+  - platform: template
+    id: panel_firmware
+    name: "Panel Firmware"
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    id: panel_picture_status
+    name: "Panel Picture Status"
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    id: panel_animation_status
+    name: "Panel Animation Status"
+    entity_category: diagnostic
+    update_interval: never
+
+event:
+  # fired when one of these is picked in the panel's menu
+  - platform: template
+    id: panel_action
+    name: "Panel Action"
+    event_types: [reset_filter, reset_alarms, clear_history, factory_reset]
+
+# The panel's settings show what it reports, unknown until it has, and what's set from here. The rest of them are in
+# its own menu and the panel_set action.
+select:
+  - platform: template
+    id: panel_screensaver
+    name: "Panel Screensaver"
+    entity_category: config
+    icon: "mdi:monitor-shimmer"
+    options: ["Off", Clock, Clock and temperatures, Picture, Picture and clock, Picture and everything]
+    lambda: return {};
+    update_interval: never
+    set_action:
+      - lambda: |-
+          flexit::panel::set(K_SCREENSAVER, (int) id(panel_screensaver).index_of(x.c_str(), x.size()).value_or(1));
+  # the panel's LEDs. Auto works like the stock firmware, the rest let this ESP decide
+  - id: panel_led_alarm
+    name: "Panel Alarm LED"
+    <<: &led
+      platform: template
+      entity_category: config
+      icon: "mdi:led-on"
+      optimistic: true
+      restore_value: true
+      options: [Auto, "Off", "On", Blink]
+      on_value:
+        - lambda: flexit::panel::send_leds();
+  - id: panel_led_filter
+    name: "Panel Filter LED"
+    <<: *led
+  - id: panel_led_ok
+    name: "Panel OK LED"
+    <<: *led
+  # the screensaver picture. packages/panel/picture.yaml adds its name to the options.
+  # panel_show_picture sets it too, so restore_value keeps that as well.
+  - platform: template
+    id: panel_picture
+    name: "Panel Picture"
+    icon: "mdi:image"
+    optimistic: true
+    restore_value: true                   # on_boot shows it again after a restart
+    options: [None]
+    set_action:
+      - lambda: flexit::panel::picture::picked(std::string(x.c_str(), x.size()));
+
+number:
+  - platform: template
+    id: panel_brightness
+    name: "Panel Brightness"
+    entity_category: config
+    icon: "mdi:brightness-6"
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 5
+    lambda: return {};
+    update_interval: never
+    set_action:
+      - lambda: flexit::panel::set(K_BRIGHTNESS, (int) lroundf(x));
+  - platform: template
+    id: panel_idle_brightness
+    name: "Panel Idle Brightness"
+    entity_category: config
+    icon: "mdi:brightness-4"
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 5
+    lambda: return {};
+    update_interval: never
+    set_action:
+      - lambda: flexit::panel::set(K_IDLE_BRIGHTNESS, (int) lroundf(x));
+
+# They follow the panel
+switch:
+  - platform: template
+    id: panel_night
+    name: "Panel Night Mode"
+    icon: "mdi:weather-night"
+    restore_mode: DISABLED
+    turn_on_action:
+      - lambda: flexit::panel::set(K_NIGHT, 1);
+    turn_off_action:
+      - lambda: flexit::panel::set(K_NIGHT, 0);
+  # hold ? on the panel for 3 s to lock or unlock it there
+  - platform: template
+    id: panel_key_lock
+    name: "Panel Key Lock"
+    icon: "mdi:lock"
+    restore_mode: DISABLED
+    turn_on_action:
+      - lambda: flexit::panel::set(K_KEY_LOCK, 1);
+    turn_off_action:
+      - lambda: flexit::panel::set(K_KEY_LOCK, 0);
+
+button:
+  - platform: template
+    id: panel_restart
+    name: "Panel Restart"
+    entity_category: config
+    icon: "mdi:restart"
+    on_press:
+      - lambda: flexit::panel::link::send(K_ACTION, A_RESTART);
+
+api:
+  actions:
+    # in Home Assistant: esphome.<device>_panel_notify etc.
+    # A notification. level is info, warning or alarm, icon an id from code/panel/plink_icons.h in lower case.
+    - action: panel_notify
+      variables: &notify {message: string, icon: string, level: string}
+      then: &do_notify
+        - lambda: flexit::panel::notify(message, icon, level);
+    # view is dashboard, airflow, trends, sensors, comfort or smart_home
+    - action: panel_show_view
+      variables: &show_view {view: string}
+      then: &do_show_view
+        - lambda: flexit::panel::show_view(view);
+    # a screensaver picture from packages/panel/, for one of the Picture screensaver modes. One from a URL is
+    # downloaded again first.
+    - action: panel_show_picture
+      variables: &by_name {name: string}
+      then: &do_show_picture
+        - lambda: flexit::panel::picture::show(name);
+    - action: panel_clear_picture
+      then: &do_clear_picture
+        - lambda: flexit::panel::picture::clear();
+    # an animation from packages/panel/animation.yaml, over the picture, where its yaml puts it, like its switch.
+    # The panel holds 4 at a time in 6 KB and shows them in up to 8 places. No name clears them all.
+    - action: panel_show_animation
+      variables: *by_name
+      then: &do_show_animation
+        - lambda: flexit::panel::anim::show(name);
+    - action: panel_clear_animation
+      variables: *by_name
+      then: &do_clear_animation
+        - lambda: flexit::panel::anim::clear(name);
+    # copy 0 is the one panel_show_animation shows. Another copy at x, y plays in step with it, unless own = true
+    # gives it a frame of its own (w x h / 2 bytes more of the 6 KB) that starts `start` frames in.
+    - action: panel_place_animation
+      variables: &place_animation {name: string, copy: int, x: int, y: int, own: bool, start: int}
+      then: &do_place_animation
+        - lambda: flexit::panel::anim::place(name, copy, x, y, own, start);
+    - action: panel_remove_animation
+      variables: &remove_animation {name: string, copy: int}
+      then: &do_remove_animation
+        - lambda: flexit::panel::anim::remove(name, copy);
+    # move a copy: glide to x, y over ms (0 jumps, 65535 at most), or drift at vx, vy px/s round the screen.
+    # ease: none, in, out or both
+    - action: panel_move_animation
+      variables: &move_animation {name: string, copy: int, x: int, y: int, ms: int, ease: string}
+      then: &do_move_animation
+        - lambda: flexit::panel::anim::move(name, copy, x, y, ms, ease);
+    - action: panel_drift_animation
+      variables: &drift_animation {name: string, copy: int, vx: float, vy: float}
+      then: &do_drift_animation
+        - lambda: flexit::panel::anim::drift(name, copy, vx, vy);
+    # what: x, y, turn, size, opacity or speed
+    - action: panel_glide_animation
+      variables: &glide_animation {name: string, copy: int, what: string, to: int, ms: int, ease: string}
+      then: &do_glide_animation
+        - lambda: flexit::panel::anim::glide(name, copy, what, to, ms, ease);
+    - action: panel_spin_animation
+      variables: &spin_animation {name: string, copy: int, speed: float}
+      then: &do_spin_animation
+        - lambda: flexit::panel::anim::spin(name, copy, speed);
+    - action: panel_flip_animation
+      variables: &flip_animation {name: string, copy: int, horizontal: bool, vertical: bool}
+      then: &do_flip_animation
+        - lambda: flexit::panel::anim::flip(name, copy, horizontal, vertical);
+    # edge_x, edge_y: screen, cross or bounce
+    - action: panel_area_animation
+      variables: &area_animation
+        {name: string, copy: int, left: int, top: int, right: int, bottom: int, edge_x: string, edge_y: string}
+      then: &do_area_animation
+        - lambda: flexit::panel::anim::area(name, copy, left, top, right, bottom, edge_x, edge_y);
+    - action: panel_wander_animation
+      variables: &wander_animation
+        {name: string, copy: int, speed_min: float, speed_max: float, heading: int, spread: int, leg_min: int,
+         leg_max: int, rest_min: int, rest_max: int}
+      then: &do_wander_animation
+        - lambda: |-
+            flexit::panel::anim::wander(name, copy, speed_min, speed_max, heading, spread, leg_min, leg_max, rest_min,
+                                        rest_max);
+    - action: panel_face_animation
+      variables: &face_animation {name: string, copy: int, facing: int, mirror: bool, tilt: int, rate: int, level: bool}
+      then: &do_face_animation
+        - lambda: flexit::panel::anim::face(name, copy, facing, mirror, tilt, rate, level);
+    # slow: none, low, high or both
+    - action: panel_wave_animation
+      variables: &wave_animation
+        {name: string, copy: int, what: string, low: int, high: int, rise: int, fall: int, hold_high: int,
+         hold_low: int, jitter: int, random: bool, slow: string}
+      then: &do_wave_animation
+        - lambda: |-
+            flexit::panel::anim::wave(name, copy, what, low, high, rise, fall, hold_high, hold_low, jitter, random,
+                                      slow);
+    - action: panel_map_animation
+      variables: &map_animation {name: string, copy: int, what: string, left: int, right: int, top: int, bottom: int}
+      then: &do_map_animation
+        - lambda: flexit::panel::anim::map(name, copy, what, left, right, top, bottom);
+    - action: panel_rounds_animation
+      variables: &rounds_animation {name: string, copy: int, rounds: int}
+      then: &do_rounds_animation
+        - lambda: flexit::panel::anim::rounds(name, copy, rounds);
+    - action: panel_frame_rate_animation
+      variables: &frame_rate_animation {name: string, percent: int}
+      then: &do_frame_rate_animation
+        - lambda: flexit::panel::anim::frame_rate(name, percent);
+    # A panel setting by its lower-case id, value in the panel's own units: see docs/panel.md#panel-settings
+    - action: panel_set
+      variables: &set {setting: string, value: int}
+      then: &do_set
+        - lambda: flexit::panel::set(setting, value);
+
+# The same for your own YAML, like script.execute: {id: panel_notify, message: Hi, icon: bell, level: info}
+script:
+  - {id: panel_notify, parameters: *notify, then: *do_notify}
+  - {id: panel_show_view, parameters: *show_view, then: *do_show_view}
+  - {id: panel_set, parameters: *set, then: *do_set}
+  - {id: panel_show_picture, parameters: *by_name, then: *do_show_picture}
+  - {id: panel_clear_picture, then: *do_clear_picture}
+  - {id: panel_show_animation, parameters: *by_name, then: *do_show_animation}
+  - {id: panel_clear_animation, parameters: *by_name, then: *do_clear_animation}
+  - {id: panel_place_animation, parameters: *place_animation, then: *do_place_animation}
+  - {id: panel_remove_animation, parameters: *remove_animation, then: *do_remove_animation}
+  - {id: panel_move_animation, parameters: *move_animation, then: *do_move_animation}
+  - {id: panel_drift_animation, parameters: *drift_animation, then: *do_drift_animation}
+  - {id: panel_glide_animation, parameters: *glide_animation, then: *do_glide_animation}
+  - {id: panel_spin_animation, parameters: *spin_animation, then: *do_spin_animation}
+  - {id: panel_flip_animation, parameters: *flip_animation, then: *do_flip_animation}
+  - {id: panel_area_animation, parameters: *area_animation, then: *do_area_animation}
+  - {id: panel_wander_animation, parameters: *wander_animation, then: *do_wander_animation}
+  - {id: panel_face_animation, parameters: *face_animation, then: *do_face_animation}
+  - {id: panel_wave_animation, parameters: *wave_animation, then: *do_wave_animation}
+  - {id: panel_map_animation, parameters: *map_animation, then: *do_map_animation}
+  - {id: panel_rounds_animation, parameters: *rounds_animation, then: *do_rounds_animation}
+  - {id: panel_frame_rate_animation, parameters: *frame_rate_animation, then: *do_frame_rate_animation}

@@ -1,0 +1,4 @@
+# panel.yaml and its updater only, to build it without the extras in packages/panel/. For esp32-panel-minimal.yaml.
+packages:
+  panel: !include ../packages/panel.yaml
+  panel_update: !include ../packages/panel/update.yaml

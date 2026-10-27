@@ -1,0 +1,96 @@
+# Flash the CI600 panel's firmware from Home Assistant, over the bus. Works on a stock panel too, no SWD, jumper
+# or opening the panel. Needs panel.yaml.
+#   - path: packages/panel/update.yaml
+#     vars: {url: "https://github.com/MSkjel/flexit-ci600-firmware/releases/latest/download/ci600.fxup"}
+#
+# url: where to get the .fxup, built by tools/mkupdate.py in the firmware repo. The default is the newest GitHub
+# release, any other HTTP(S) URL works too. The "Panel Firmware URL" text box starts at it, change it there for a
+# one-off. "Flash Panel Firmware" starts the update, "Panel Firmware Update" and "Panel Firmware Progress" show how
+# it goes.
+#
+# The ESP downloads the file a few KB at a time into its spare app slot, where its own next OTA update goes, and
+# streams it to the panel's ROM bootloader. What it checks and how the flash goes: docs/flashing.md in the firmware
+# repo.
+defaults:
+  url: "https://github.com/MSkjel/flexit-ci600-firmware/releases/latest/download/ci600.fxup"
+
+http_request:
+  # GitHub's release download redirects to a URL about 1.7 KB long, longer than the default 512-byte buffers
+  buffer_size_tx: 4096
+  buffer_size_rx: 2048
+
+esp32:
+  framework:
+    advanced:
+      use_full_certificate_bundle: true  # for https, the full set so GitHub's CA is in it
+    sdkconfig_options:
+      # TLS buffers only as big as each record, not 20 KB for the whole download, see met.yaml
+      CONFIG_MBEDTLS_DYNAMIC_BUFFER: "y"
+
+text:
+  - platform: template
+    id: panel_firmware_url
+    name: "Panel Firmware URL"
+    entity_category: config
+    icon: "mdi:link-variant"
+    mode: text
+    optimistic: true
+    initial_value: "${url}"
+
+button:
+  - platform: template
+    id: panel_firmware_flash
+    name: "Flash Panel Firmware"
+    entity_category: config
+    icon: "mdi:cellphone-arrow-down"
+    on_press:
+      - if:
+          condition:
+            lambda: return flexit::panel::update::can_start();
+          then:
+            # the download follows GitHub's redirects
+            - http_request.get:
+                url: !lambda return id(panel_firmware_url).state;
+                on_response:
+                  then:
+                    - lambda: flexit::panel::update::download(response);
+                on_error:
+                  then:
+                    - lambda: flexit::panel::update::status("Couldn't connect to download it");
+
+switch:
+  - platform: template
+    id: panel_firmware_force
+    name: "Panel Firmware Force"
+    entity_category: config
+    icon: "mdi:cellphone-arrow-down-variant"
+    optimistic: true
+    restore_mode: DISABLED  # off after every restart
+    turn_on_action:
+      - lambda: flexit::panel::update::force = true;
+    turn_off_action:
+      - lambda: flexit::panel::update::force = false;
+
+text_sensor:
+  - platform: template
+    id: panel_firmware_update
+    name: "Panel Firmware Update"
+    entity_category: diagnostic
+    icon: "mdi:progress-download"
+
+sensor:
+  - platform: template
+    id: panel_firmware_progress
+    name: "Panel Firmware Progress"
+    entity_category: diagnostic
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    icon: "mdi:percent"
+
+esphome:
+  on_boot:
+    - priority: 500
+      then:
+        - lambda: |-
+            flexit::panel::update::setup([](const std::string &s) { id(panel_firmware_update).publish_state(s); },
+                                         [](int pct) { id(panel_firmware_progress).publish_state(pct); });

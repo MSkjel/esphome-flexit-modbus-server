@@ -1,0 +1,62 @@
+# A Home Assistant entity switched from the panel with one include. A template switch (id ha_${name}) follows the
+# entity's state and runs on_action and off_action in Home Assistant, which needs "Allow the device to perform
+# Home Assistant actions" ticked for this ESP in the ESPHome integration. It goes on the panel like switch.yaml,
+# with the same vars.
+#   - path: packages/panel/ha_switch.yaml
+#     vars: {name: garden_lights, entity_id: light.garden, label: Garden lights|Hagelys, icon: bulb}
+#   - path: packages/panel/ha_switch.yaml
+#     vars: {name: front_door, entity_id: lock.front_door, label: Front door|Inngangsdør, icon: lock,
+#            on_action: lock.lock, off_action: lock.unlock, on_state: locked, on_text: Locked|Låst,
+#            off_text: Unlocked|Ulåst}
+# The switch is on while the entity's state is on_state. name works as in ha_sensor.yaml. The panel shows a dash
+# until Home Assistant has a state, and a change on the panel goes back if the entity hasn't followed in 15 s.
+defaults:
+  on_action: homeassistant.turn_on
+  off_action: homeassistant.turn_off
+  on_state: "on"
+  on_text: ""
+  off_text: ""
+  icon: circle
+  help: ""
+  page: smart_home
+  view: "true"
+  menu: "true"
+
+text_sensor:
+  - platform: homeassistant
+    id: ha_${name}_state
+    entity_id: ${entity_id}
+
+switch:
+  - platform: template
+    id: ha_${name}
+    restore_mode: DISABLED
+    lambda: return id(ha_${name}_state).state == "${on_state}";
+    turn_on_action:
+      - homeassistant.action:
+          action: ${on_action}
+          data:
+            entity_id: ${entity_id}
+    turn_off_action:
+      - homeassistant.action:
+          action: ${off_action}
+          data:
+            entity_id: ${entity_id}
+
+# Like switch.yaml, but the panel follows the entity's state, not the switch
+esphome:
+  on_boot:
+    - then:
+        - lambda: |-
+            static int i = flexit::panel::Item("${name}", ITEM_TOGGLE)
+                               .vars(R"~(${label})~", R"~(${help})~", "${icon}", "${page}", ${view}, ${menu})
+                               .states(R"~(${on_text})~", R"~(${off_text})~")
+                               .echo_ms(15000)  // a lock can take a while, and may say "locking" first
+                               .on_set([](float v) {
+                                 if (v)
+                                   id(ha_${name}).turn_on();
+                                 else
+                                   id(ha_${name}).turn_off();
+                               })
+                               .add();
+            flexit::panel::follow_state(i, id(ha_${name}_state), "${on_state}");

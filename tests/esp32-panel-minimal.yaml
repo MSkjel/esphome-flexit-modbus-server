@@ -1,0 +1,20 @@
+# Classic ESP32 with the panel package and nothing else from packages/panel/
+esphome:
+  name: flexit-ci-esp32-panel
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+substitutions:
+  flexit_tx_pin: GPIO17
+  flexit_rx_pin: GPIO16
+  flexit_tx_enable_pin: GPIO4
+  flexit_address: "1"  # panel.yaml wants the ESP at 1
+
+packages:
+  common: !include common.yaml
+  panel: !include panel_minimal.yaml

@@ -1,4 +1,4 @@
-# ESP8266 without a DE pin, with the TCP bridge
+# ESP8266 with an inverted DE pin, which the Modbus library drives, and the TCP bridge
 esphome:
   name: flexit-ci-esp8266
 
@@ -18,3 +18,6 @@ packages:
 flexit_modbus_server:
   - id: !extend server
     tcp_bridge_enabled: true
+    tx_enable_pin:
+      number: GPIO5
+      inverted: true

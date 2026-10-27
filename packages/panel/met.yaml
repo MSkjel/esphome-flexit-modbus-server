@@ -1,0 +1,134 @@
+# The weather as a screensaver picture, drawn on the ESP from MET Norway's forecast, see code/met/met.h. Needs
+# panel.yaml. Show it with the "Panel Picture" select or the panel_show_picture action.
+#   - path: packages/panel/met.yaml
+#     vars: {latitude: "59.9139", longitude: "10.7522"}
+# update_interval checks whether the forecast has expired, redraw_interval redraws the picture. name, encoding and
+# quality work as in picture.yaml, palette suits the flat colours. scene and aurora start the Panel Weather Scene and
+# Aurora selects. "Panel Animation Weather" brings it to life and takes the panel's animations, so turn your others
+# off with it. The weather now is also a tile under Display > Home screen > Dashboard tiles.
+# Weather data: MET Norway, CC BY 4.0.
+defaults:
+  name: weather
+  encoding: palette
+  quality: auto
+  update_interval: 5min
+  redraw_interval: 5min
+  scene: hills
+  aurora: auto
+
+# ESP-IDF's HTTP client and the root certificates for met.h, and its timeout
+http_request:
+  id: panel_http
+
+# api.met.no's certificate is from HARICA, which ESPHome's usual root bundle doesn't have, so we take the full one.
+# About 70 KB more flash.
+esp32:
+  framework:
+    advanced:
+      use_full_certificate_bundle: true
+    sdkconfig_options:
+      # TLS takes its buffers for each record as it comes and goes instead of 20 KB for the whole request, so the
+      # request, which runs beside the pictures, needs less RAM at once. Closing a connection frees them either way.
+      CONFIG_MBEDTLS_DYNAMIC_BUFFER: "y"
+
+select:
+  - id: !extend panel_picture
+    options: ["${name}"]
+  - platform: template
+    id: panel_weather_scene
+    name: "Panel Weather Scene"
+    entity_category: config
+    icon: "mdi:image-filter-hdr"
+    options: ["hills", "coast", "mountains", "city"]
+    initial_option: "${scene}"
+    optimistic: true
+    restore_value: true
+    set_action:
+      - lambda: |-
+          flexit::panel::met::options.ground = flexit::panel::met::ground_of(x.c_str());
+          flexit::panel::met::redraw();
+  - platform: template
+    id: panel_weather_aurora
+    name: "Panel Weather Aurora"
+    entity_category: config
+    icon: "mdi:aurora"
+    options: ["auto", "off", "always"]
+    initial_option: "${aurora}"
+    optimistic: true
+    restore_value: true
+    set_action:
+      - lambda: |-
+          flexit::panel::met::options.aurora = flexit::panel::met::aurora_of(x.c_str());
+          flexit::panel::met::redraw();
+
+switch:
+  - platform: template
+    id: panel_weather_forecast
+    name: "Panel Weather Forecast"
+    entity_category: config
+    icon: "mdi:weather-cloudy-clock"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - lambda: flexit::panel::met::with_forecast = true; flexit::panel::met::redraw();
+    on_turn_off:
+      - lambda: flexit::panel::met::with_forecast = false; flexit::panel::met::redraw();
+  - platform: template
+    id: panel_weather_animation
+    name: "Panel Animation Weather"
+    icon: "mdi:weather-partly-snowy-rainy"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: flexit::panel::met::animate(true);
+    on_turn_off:
+      - lambda: flexit::panel::met::animate(false);
+
+text_sensor:
+  - platform: template
+    id: panel_weather
+    name: "Panel Weather"
+    entity_category: diagnostic
+    icon: "mdi:weather-partly-cloudy"
+
+script:
+  - id: panel_weather_fetch
+    mode: single
+    then:
+      - lambda: |-
+          if (flexit::panel::met::due())
+            flexit::panel::met::fetch();
+
+esphome:
+  # Only here, so builds without the weather don't compile its .cpp files
+  includes:
+    - ../code/met
+  on_boot:
+    - then:
+        - lambda: |-
+            flexit::panel::met::setup(${latitude}, ${longitude}, "${name}", "${encoding}", "${quality}",
+                                      id(panel_http).get_timeout());
+            flexit::panel::met::options.ground = flexit::panel::met::ground_of(id(panel_weather_scene).current_option().c_str());
+            flexit::panel::met::options.aurora = flexit::panel::met::aurora_of(id(panel_weather_aurora).current_option().c_str());
+            flexit::panel::met::on_status = [](const std::string &s) { id(panel_weather).publish_state(s); };
+        - wait_until:
+            condition:
+              lambda: return network::is_connected() && id(flexit_panel_time).now().is_valid();
+        - delay: 30s  # let the network and the panel's first transfers settle
+        - script.execute: panel_weather_fetch
+
+interval:
+  - interval: ${update_interval}
+    then:
+      - script.execute: panel_weather_fetch
+  - interval: 1s  # the request's answer, once its task has it
+    then:
+      - lambda: flexit::panel::met::poll();
+  - interval: 50ms  # what the weather animations do next
+    then:
+      - lambda: flexit::panel::met::live::loop(flexit::panel::picture::S.want == flexit::panel::met::name);
+  - interval: ${redraw_interval}
+    then:
+      - lambda: |-
+          flexit::panel::met::options.heater_pct = id(server).read_holding_register(flexit_modbus_server::REG_PERCENTAGE_HEATING);
+          flexit::panel::met::redraw();

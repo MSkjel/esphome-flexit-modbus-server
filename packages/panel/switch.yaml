@@ -1,0 +1,31 @@
+# One of your switches on the panel, on the smart home or comfort page.
+#   - path: packages/panel/switch.yaml
+#     vars: {entity: garden_lights, label: Garden lights|Hagelys, icon: bulb}
+# name, label, help, icon, page, view and menu work as in sensor.yaml, on_text and off_text as in
+# binary_sensor.yaml
+defaults:
+  name: ${entity}
+  on_text: ""
+  off_text: ""
+  icon: circle
+  help: ""
+  page: smart_home
+  view: "true"
+  menu: "true"
+
+esphome:
+  on_boot:
+    - then:
+        - lambda: |-
+            static int i = flexit::panel::Item("${name}", ITEM_TOGGLE)
+                               .vars(R"~(${label})~", R"~(${help})~", "${icon}", "${page}", ${view}, ${menu})
+                               .states(R"~(${on_text})~", R"~(${off_text})~")
+                               .on_set([](float v) {
+                                 if (v)
+                                   id(${entity}).turn_on();
+                                 else
+                                   id(${entity}).turn_off();
+                               })
+                               .add();
+            flexit::panel::follow(i, id(${entity}));
+            flexit::panel::item_value(i, id(${entity}).state);  // a switch is never has_state(), always on or off

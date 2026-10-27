@@ -1,222 +1,45 @@
 # Fireplace mode. Runs max with custom fan speeds for a while, then goes back to what it was.
-# This is done on the ESP, the CS60 doesn't have it.
-# Needs core.yaml, controls.yaml and fan_speeds.yaml
+# This is done on the ESP, the CX60 doesn't have it.
+# Needs core.yaml and controls.yaml. EC fans only, it sets the max fan %
 
-globals:
-  - id: fireplace_mode_active
-    type: bool
-    restore_value: no
-    initial_value: 'false'
+esphome:
+  includes:
+    - code/fireplace.h
+  on_boot:
+    - then:
+        - lambda: id(server).add_on_setting_callback(flexit::fireplace::setting);
 
-  - id: fireplace_duration_minutes
-    type: int
-    restore_value: yes
-    initial_value: '60'
-
-  - id: original_supply_fan_max
-    type: float
-    restore_value: no
-    initial_value: '100.0'
-
-  - id: original_extract_fan_max
-    type: float
-    restore_value: no
-    initial_value: '100.0'
-
-  - id: fireplace_supply_fan_speed
-    type: int
-    restore_value: yes
-    initial_value: '90'
-
-  - id: fireplace_extract_fan_speed
-    type: int
-    restore_value: yes
-    initial_value: '20'
-
-    # When fireplace mode was turned on
-  - id: fireplace_mode_change_timestamp
-    type: unsigned long
-    restore_value: no
-    initial_value: '0'
+packages:
+  fireplace_duration: !include
+    file: parts/config_number.yaml
+    vars: {id: fireplace_duration, name: Fireplace Mode Duration, min: 1, max: 240, initial: 60, unit: min}
+  # The max fan speeds while it's on
+  fireplace_supply_speed_control: !include
+    file: parts/config_number.yaml
+    vars: {id: fireplace_supply_speed_control, name: Fireplace Supply Fan Speed, min: 1, max: 100, initial: 90,
+           unit: "%"}
+  fireplace_extract_speed_control: !include
+    file: parts/config_number.yaml
+    vars: {id: fireplace_extract_speed_control, name: Fireplace Extract Fan Speed, min: 1, max: 100, initial: 20,
+           unit: "%"}
 
 switch:
   - platform: template
     name: "Fireplace Mode"
     id: fireplace_mode_switch
-    optimistic: false
-    lambda: |-
-      return id(fireplace_mode_active);
-
+    restore_mode: DISABLED
+    lambda: return flexit::fireplace::state.active;
     turn_on_action:
-      - lambda: |-
-          // Already on. Keep what we saved, the rest just restarts the timer.
-          if (id(fireplace_mode_active)) {
-            return;
-          }
-
-          // Leave it alone if it's stopped
-          if (id(server)->read_holding_register(flexit_modbus_server::REG_MODE) == 0) {
-            ESP_LOGW("fireplace", "Not starting fireplace mode, the unit is stopped");
-            return;
-          }
-
-          // Remember the max fan speeds so we can put them back.
-          // Keep the old values if we don't know the speeds yet.
-          if (!std::isnan(id(supply_air_percentage_max).state))
-            id(original_supply_fan_max) = id(supply_air_percentage_max).state;
-          if (!std::isnan(id(extract_air_percentage_max).state))
-            id(original_extract_fan_max) = id(extract_air_percentage_max).state;
-
-          ESP_LOGI("fireplace", "Fireplace mode on (max speeds were supply %.0f%%, extract %.0f%%)",
-                   id(original_supply_fan_max),
-                   id(original_extract_fan_max));
-
-          id(fireplace_mode_active) = true;
-          id(fireplace_mode_change_timestamp) = millis();
-
-      # Only continue if it was turned on. A return in the lambda above
-      # doesn't stop the rest of the actions.
-      - if:
-          condition:
-            lambda: "return id(fireplace_mode_active);"
-          then:
-            # Fireplace fan speeds go into the max mode speeds
-            - number.set:
-                id: supply_air_percentage_max
-                value: !lambda "return id(fireplace_supply_fan_speed);"
-            - number.set:
-                id: extract_air_percentage_max
-                value: !lambda "return id(fireplace_extract_fan_speed);"
-
-            - delay: 200ms  # let the fan speeds go out first
-
-            # Ask for max. See mode_arbiter in controls.yaml
-            - lambda: |-
-                id(mode_requests)["fireplace"] = 3;
-                id(mode_arbiter).execute();
-
-            # Turns it off again after the set duration
-            - script.execute: fireplace_timer
-
-            - lambda: |-
-                id(fireplace_mode_switch).publish_state(true);
-
+      - lambda: flexit::fireplace::turn_on();
     turn_off_action:
-      - script.stop: fireplace_timer
-      - if:
-          condition:
-            lambda: "return id(fireplace_mode_active);"
-          else:
-            - lambda: |-
-                ESP_LOGW("fireplace", "Fireplace mode is already off");
-          then:
-            - lambda: |-
-                ESP_LOGI("fireplace", "Fireplace mode off");
-                id(fireplace_mode_active) = false;
-
-            # Put the max mode fan speeds back
-            - number.set:
-                id: supply_air_percentage_max
-                value: !lambda "return id(original_supply_fan_max);"
-            - number.set:
-                id: extract_air_percentage_max
-                value: !lambda "return id(original_extract_fan_max);"
-
-            - delay: 200ms  # let the fan speeds go out first
-
-            # We no longer need max. The arbiter goes back to the old mode if nobody else does.
-            - lambda: |-
-                id(mode_requests).erase("fireplace");
-                id(mode_arbiter).execute();
-
-            - lambda: |-
-                id(fireplace_mode_switch).publish_state(false);
-
-number:
-  - platform: template
-    name: "Fireplace Mode Duration"
-    id: fireplace_duration
-    entity_category: config
-    min_value: 1
-    max_value: 240
-    step: 1
-    unit_of_measurement: "min"
-    mode: box
-    optimistic: false
-    lambda: |-
-      return id(fireplace_duration_minutes);
-    set_action:
-      - lambda: |-
-          id(fireplace_duration_minutes) = (int)x;
-          ESP_LOGI("fireplace", "Fireplace duration set to %d min", (int)x);
-      - component.update: fireplace_duration
-
-  - platform: template
-    name: "Fireplace Supply Fan Speed"
-    id: fireplace_supply_speed_control
-    entity_category: config
-    min_value: 1
-    max_value: 100
-    step: 1
-    unit_of_measurement: "%"
-    mode: box
-    optimistic: false
-    lambda: |-
-      return id(fireplace_supply_fan_speed);
-    set_action:
-      - lambda: |-
-          id(fireplace_supply_fan_speed) = (int)x;
-          ESP_LOGI("fireplace", "Fireplace supply fan speed set to %d%%", (int)x);
-      - component.update: fireplace_supply_speed_control
-
-  - platform: template
-    name: "Fireplace Extract Fan Speed"
-    id: fireplace_extract_speed_control
-    entity_category: config
-    min_value: 1
-    max_value: 100
-    step: 1
-    unit_of_measurement: "%"
-    mode: box
-    optimistic: false
-    lambda: |-
-      return id(fireplace_extract_fan_speed);
-    set_action:
-      - lambda: |-
-          id(fireplace_extract_fan_speed) = (int)x;
-          ESP_LOGI("fireplace", "Fireplace extract fan speed set to %d%%", (int)x);
-      - component.update: fireplace_extract_speed_control
+      - lambda: flexit::fireplace::turn_off();
 
 binary_sensor:
   - platform: template
     name: "Fireplace Mode Conflict Detected"
     id: fireplace_conflict
     internal: true
-    lambda: |-
-      if (!id(fireplace_mode_active)) {
-        return false;
-      }
-
-      // Our request only goes in after the fan speeds, so give it a few seconds
-      if (millis() - id(fireplace_mode_change_timestamp) < 5000) {
-        return false;
-      }
-
-      // The arbiter drops our request when somebody changes the mode by hand
-      return id(mode_requests).count("fireplace") == 0;
+    lambda: return flexit::fireplace::conflict();
     on_press:
-      - lambda: |-
-          ESP_LOGW("fireplace", "Mode was changed by hand, turning fireplace mode off");
-      - switch.turn_off: fireplace_mode_switch
-
-script:
-  - id: fireplace_timer
-    mode: restart
-    then:
-      - lambda: |-
-          int duration = id(fireplace_duration_minutes);
-          ESP_LOGI("fireplace", "Fireplace timer started, %d min", duration);
-      - delay: !lambda "return id(fireplace_duration_minutes) * 60 * 1000;"
-      - lambda: |-
-          ESP_LOGI("fireplace", "Fireplace timer done, turning off");
+      - lambda: ESP_LOGI(flexit::fireplace::TAG, "Changed by hand, turning fireplace mode off");
       - switch.turn_off: fireplace_mode_switch

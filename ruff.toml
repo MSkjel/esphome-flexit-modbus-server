@@ -1,0 +1,2 @@
+# Same as ESPHome: ruff's defaults (88 columns), Python 3.12. Check: ruff format --check; fix: ruff format
+target-version = "py312"
