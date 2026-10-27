@@ -1,5 +1,5 @@
 # Written by make -C sim esp_sync in flexit-ci600-firmware. Don't edit.
-firmware c9072de10fa7d940214cc3ba2a5f7967710d1695
+firmware d21015300e06e90d159a0bae7e439b37420eca7f
 4fc3e629ef6e26f1084b4a64cbd3eca642d004ae72ef4be0adf18a4d317b7cd3  pbulk.c
 68c59953bd24d4b510370f31ecb8f608635d8af58b37e47a4c8998d67d0a3929  pbulk.h
 288a20ecd3e0937e921167f15692f0c93192bf37ce950dccd86ce9a6416e846c  pbus.c
