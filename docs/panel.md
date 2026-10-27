@@ -273,7 +273,8 @@ picks which one. The panel's own menu has the clock styles that go over it.
 `camera.yaml` gives Home Assistant a `Panel Picture` camera with the picture the panel shows, without the clock
 and the animations the panel draws over it, black with none. It's made when Home Assistant asks for it: a JPEG
 picture goes as it is, a 16-colour one like the weather is encoded first. That takes RAM only while someone looks,
-up to 24 KB, freed again 30 s after, and waits while a picture is being made or sent. ESPHome has one camera per ESP.
+up to 24 KB, freed again 30 s after, and waits while a picture or animation is being made or sent. ESPHome has one
+camera per ESP.
 
 A picture is fitted to the screen and converted on the ESP to 16 colours, or to a JPEG when it has more, and sent
 in the gaps on the bus: a 320x240 drawing takes a few seconds, a photo half a minute. Only the rows that changed go

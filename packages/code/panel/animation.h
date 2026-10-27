@@ -596,6 +596,18 @@ inline void restarted() {
       again(a);
 }
 
+// One is being made or sent, or loop() starts one next, so the RAM is wanted here
+inline bool busy() {
+  if (W.phase != IDLE)
+    return true;
+  if (!link::connected)
+    return false;
+  for (auto &a : anims)
+    if (!a.name.empty() && a.state == WANT)
+      return true;
+  return false;
+}
+
 // ---- what to show
 
 // A free place on the panel, -1 with a warning about name's copy if all are taken

@@ -1,7 +1,9 @@
 // The screensaver picture for packages/panel/camera.yaml's camera, made from what the panel shows when Home Assistant
 // asks for it. A JPEG goes as it is, 16 colours are encoded a few MCUs per loop, nothing shown is a black screen.
-// Only while no picture is being made or sent, as that takes the RAM. Without camera.yaml there's nothing here.
+// Only while no picture or animation is being made or sent, as that takes the RAM. Without camera.yaml there's
+// nothing here.
 #pragma once
+#include "animation.h"
 #include "picture.h"
 #include "picture_snap.h"
 
@@ -76,10 +78,16 @@ inline void done(uint32_t n) {
   M.tries = 0;
 }
 
-// Every loop after the pictures and animations, until deadline_us
+// Every loop after the pictures and before the animations, so an animation about to be made finds the RAM free,
+// until deadline_us
 inline void loop(uint32_t deadline_us) {
   if (!cam)
     return;
+  if (anim::busy()) {
+    stop();  // and the JPEG kept for the next requests goes too, the connections sending it keep theirs
+    cam->invalidate();
+    return;
+  }
   if (!cam->wanted() || (S.phase != picture::IDLE && S.phase != picture::START)) {
     stop();  // nobody's asking now, or a picture is being made
     return;

@@ -293,8 +293,8 @@ inline void loop() {
   }
   picture::refresh();
   picture::loop(deadline_us);
-  anim::loop(deadline_us);
   snapshot::loop(deadline_us);
+  anim::loop(deadline_us);
 }
 
 }  // namespace flexit::panel
