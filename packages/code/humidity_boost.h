@@ -15,6 +15,8 @@ inline struct State {
   uint32_t end_ms = 0;                  // 0 until the first boost has ended, so there is no cooldown before that
   uint32_t below_release_since_ms = 0;  // when the humidity got back under the release level, 0 if it hasn't yet
   int baseline_samples = 0;             // how many samples the baseline has so far
+  int rise_samples = 0;                 // how many readings in a row the rise window has, since the last gap
+  bool rise_ready = false;              // the rise window is full of readings
 } state;
 
 inline uint32_t minutes(float m) { return (uint32_t) (m * 60000.0f); }
@@ -64,6 +66,30 @@ template<typename Sensor> optional<float> above_baseline(Sensor *humidity) {
   if (std::isnan(delta))
     return {};
   return delta;
+}
+
+// One sample a minute for the rise window. A gap in the readings starts it over, or the lowest value from before
+// the gap would be taken as the start of a rise.
+template<typename Sensor> optional<float> rise_sample(Sensor *humidity, int window) {
+  if (!humidity->has_state() || std::isnan(humidity->state)) {
+    state.rise_samples = 0;
+    state.rise_ready = false;
+    return {};
+  }
+  if (state.rise_samples < window)
+    state.rise_samples++;
+  state.rise_ready = state.rise_samples >= window;
+  return humidity->state;
+}
+
+// How much the humidity has risen over the rise minutes: now minus the lowest sample in that time
+template<typename Sensor> optional<float> rise(Sensor *humidity) {
+  if (!state.rise_ready || !humidity->has_state() || !id(humidity_rise_low).has_state())
+    return {};
+  float risen = humidity->state - id(humidity_rise_low).state;
+  if (std::isnan(risen))
+    return {};
+  return risen;
 }
 
 // every 10 s
@@ -120,6 +146,15 @@ template<typename Sensor> void tick(Sensor *sensor) {
     if (delta >= id(humidity_trigger_delta).state) {
       ESP_LOGI(TAG, "Humidity %.1f%% is %.1f%% above the baseline (%.1f%%)", sensor->state, delta,
                id(humidity_baseline).state);
+      id(::humidity_boost).turn_on();
+      return;
+    }
+    // Or a fast rise, for when the baseline has followed a humid spell up. Only above the release level, or the
+    // boost would end as soon as it may.
+    const float rise_trigger = id(humidity_rise_trigger).state;  // 0 = off
+    const auto risen = rise(sensor);
+    if (rise_trigger > 0 && risen.has_value() && *risen >= rise_trigger && delta > release) {
+      ESP_LOGI(TAG, "Humidity %.1f%% rose %.1f%% from %.1f%%", sensor->state, *risen, id(humidity_rise_low).state);
       id(::humidity_boost).turn_on();
     }
     return;
