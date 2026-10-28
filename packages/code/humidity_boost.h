@@ -1,6 +1,5 @@
 // Code for packages/humidity_boost.yaml
 #pragma once
-#include <algorithm>
 #include <cmath>
 #include "controls.h"
 
@@ -16,10 +15,8 @@ inline struct State {
   uint32_t end_ms = 0;                  // 0 until the first boost has ended, so there is no cooldown before that
   uint32_t below_release_since_ms = 0;  // when the humidity got back under the release level, 0 if it hasn't yet
   int baseline_samples = 0;             // how many samples the baseline has so far
-  // The last 15 min of the humidity, one sample per tick, for the rise trigger
-  float rise_samples[90];
-  int rise_next = 0;
-  int rise_count = 0;
+  int rise_samples = 0;                 // how many readings in a row the rise window has, since the last gap
+  bool rise_ready = false;              // the rise window is full of readings
 } state;
 
 inline uint32_t minutes(float m) { return (uint32_t) (m * 60000.0f); }
@@ -71,38 +68,33 @@ template<typename Sensor> optional<float> above_baseline(Sensor *humidity) {
   return delta;
 }
 
-// One sample per tick for the rise trigger. A Home Assistant sensor keeps its last value between updates, so
-// samples repeat until the next one comes in.
-template<typename Sensor> void push_rise_sample(Sensor *humidity) {
-  constexpr int size = sizeof(state.rise_samples) / sizeof(state.rise_samples[0]);
-  state.rise_samples[state.rise_next] = humidity->has_state() ? humidity->state : NAN;
-  state.rise_next = (state.rise_next + 1) % size;
-  if (state.rise_count < size)
-    state.rise_count++;
+// One sample a minute for the rise window. A gap in the readings starts it over, or the lowest value from before
+// the gap would be taken as the start of a rise.
+template<typename Sensor> optional<float> rise_sample(Sensor *humidity, int window) {
+  if (!humidity->has_state() || std::isnan(humidity->state)) {
+    state.rise_samples = 0;
+    state.rise_ready = false;
+    return {};
+  }
+  if (state.rise_samples < window)
+    state.rise_samples++;
+  state.rise_ready = state.rise_samples >= window;
+  return humidity->state;
 }
 
-// How much the humidity has risen over the rise minutes: now minus the lowest sample in that time. Nothing
-// until there are that many minutes of samples.
+// How much the humidity has risen over the rise minutes: now minus the lowest sample in that time
 template<typename Sensor> optional<float> rise(Sensor *humidity) {
-  constexpr int size = sizeof(state.rise_samples) / sizeof(state.rise_samples[0]);
-  const int window = std::min(size, std::max(1, (int) lroundf(id(humidity_rise_minutes).state * 6)));  // 10 s ticks
-  if (state.rise_count < window || !humidity->has_state() || std::isnan(humidity->state))
+  if (!state.rise_ready || !humidity->has_state() || !id(humidity_rise_low).has_state())
     return {};
-  float lowest = NAN;
-  for (int i = 1; i <= window; i++) {
-    const float v = state.rise_samples[(state.rise_next - i + size) % size];
-    if (!std::isnan(v) && (std::isnan(lowest) || v < lowest))
-      lowest = v;
-  }
-  if (std::isnan(lowest))
+  float risen = humidity->state - id(humidity_rise_low).state;
+  if (std::isnan(risen))
     return {};
-  return humidity->state - lowest;
+  return risen;
 }
 
 // every 10 s
 template<typename Sensor> void tick(Sensor *sensor) {
   const uint32_t now = millis();
-  push_rise_sample(sensor);
 
   // Reasons to stop come first. They have to work without a humidity reading, otherwise a dead sensor
   // could leave the unit in max forever.
@@ -162,7 +154,7 @@ template<typename Sensor> void tick(Sensor *sensor) {
     const float rise_trigger = id(humidity_rise_trigger).state;  // 0 = off
     const auto risen = rise(sensor);
     if (rise_trigger > 0 && risen.has_value() && *risen >= rise_trigger && delta > release) {
-      ESP_LOGI(TAG, "Humidity %.1f%% rose %.1f%% in %.0f min", sensor->state, *risen, id(humidity_rise_minutes).state);
+      ESP_LOGI(TAG, "Humidity %.1f%% rose %.1f%% from %.1f%%", sensor->state, *risen, id(humidity_rise_low).state);
       id(::humidity_boost).turn_on();
     }
     return;

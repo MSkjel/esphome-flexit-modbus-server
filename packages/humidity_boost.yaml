@@ -5,8 +5,10 @@
 # Needs core.yaml, controls.yaml and your own humidity sensor, with its id in flexit_humidity_sensor
 substitutions:
   flexit_humidity_sensor: inside_humidity
-  # How many minutes of history the baseline looks at
+  # How many minutes of history the baseline looks at, a whole number of at least 2
   flexit_humidity_baseline_window: "60"
+  # How many minutes the rise trigger looks back, a whole number of at least 2
+  flexit_humidity_rise_minutes: "5"
 
 esphome:
   includes:
@@ -27,11 +29,7 @@ packages:
   humidity_rise_trigger: !include
     file: parts/config_number.yaml
     vars: {id: humidity_rise_trigger, name: Humidity Boost Rise Trigger, unit: "%", icon: "mdi:trending-up",
-           min: 0, max: 30, step: 0.5, initial: 5}
-  humidity_rise_minutes: !include
-    file: parts/config_number.yaml
-    vars: {id: humidity_rise_minutes, name: Humidity Boost Rise Minutes, unit: min, min: 1, max: 15, initial: 5,
-           disabled: "true"}
+           min: 0, max: 30, step: 0.5, initial: 0}
   humidity_release_minutes: !include
     file: parts/config_number.yaml
     vars: {id: humidity_release_minutes, name: Humidity Boost Release Minutes, unit: min, min: 1, max: 30,
@@ -98,6 +96,17 @@ sensor:
     accuracy_decimals: 1
     update_interval: 30s
     lambda: return flexit::humidity_boost::above_baseline(id(${flexit_humidity_sensor}));
+
+  # The lowest humidity in the rise minutes, what the rise is measured from
+  - platform: template
+    id: humidity_rise_low
+    internal: true
+    update_interval: 60s
+    lambda: return flexit::humidity_boost::rise_sample(id(${flexit_humidity_sensor}), ${flexit_humidity_rise_minutes});
+    filters:
+      - min:
+          window_size: ${flexit_humidity_rise_minutes}
+          send_every: 1
 
   # How much it rose over the rise minutes, for picking the rise trigger
   - platform: template

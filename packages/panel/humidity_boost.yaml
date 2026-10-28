@@ -41,17 +41,3 @@ packages:
       help: >-
         Boost when humidity is this much above its normal level.|Forsering når fuktigheten er så mye over sitt
         vanlige nivå.
-  humidity_rise: !include
-    file: number.yaml
-    vars:
-      name: humidity_rise
-      entity: humidity_rise_trigger
-      label: Humidity rise|Fuktøkning
-      unit: "%"
-      decimals: "1"
-      icon: humidity
-      page: comfort
-      view: "false"
-      help: >-
-        Boost when humidity rises this much within a few minutes. 0 = off.|Forsering når fuktigheten stiger så
-        mye på noen minutter. 0 = av.
