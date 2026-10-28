@@ -33,10 +33,10 @@ struct Gif {
 
   // A w x h GIF of the n colours in pal (0xRRGGBB) into buf, as much as fits cap
   void begin(int w, int h, const uint32_t *pal, int n, uint8_t *buf, uint32_t cap);
-  // The next frame, the rectangle at x, y, shown for delay_cs hundredths until delay() says otherwise
+  // The next frame, the rectangle at x, y, shown for delay_cs hundredths until set_delay() says otherwise
   void frame(int x, int y, int w, int h, unsigned delay_cs = 0);
   // Changes the delay of the last frame begun
-  void delay(unsigned cs);
+  void set_delay(unsigned cs);
   // Up to count of the frame's pixels, false once the frame is done
   bool step(Pixel px, void *ctx, int count);
   bool full() const { return len + 1 > cap; }  // nothing more fits, with the trailer

@@ -69,7 +69,7 @@ uint32_t Scene::period(int s, size_t i) const {
 
 static uint32_t cs(uint32_t ms) { return (ms + 5) / 10; }
 // The delay from then to t, frames are MIN_CS apart at least
-static unsigned delay(uint32_t then, uint32_t t) { return cs(t) - cs(then); }
+static unsigned cs_between(uint32_t then, uint32_t t) { return cs(t) - cs(then); }
 
 void Scene::start(std::vector<uint8_t> &out) {
   uint32_t pal[BLACK + 1] = {};
@@ -178,10 +178,10 @@ bool Scene::advance() {
   }
   if (shows == UINT32_MAX || shows + MIN_CS * 10 > end_ms) {  // the end, or a change too close to it to show for MIN_CS
     if (end_ms)
-      gif.delay(delay(now, end_ms));
+      gif.set_delay(cs_between(now, end_ms));
     return false;
   }
-  gif.delay(delay(now, shows));
+  gif.set_delay(cs_between(now, shows));
   now = shows;
   gif.frame(x0, y0, x1 - x0, y1 - y0);
   return true;

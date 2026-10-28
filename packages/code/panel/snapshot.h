@@ -87,7 +87,7 @@ inline bool begin() {
 // The GIF's done, n bytes, cut short after a whole frame if it was full
 inline void done(uint32_t n, bool cut) {
   M.on = false;
-  int frames = M.scene.gif.frames;
+  [[maybe_unused]] int frames = M.scene.gif.frames;  // only logged, unused when ESP_LOGD compiles out
   if (n > M.out.size()) {
     ESP_LOGW("panel", "The camera's picture doesn't fit %u bytes", (unsigned) M.out.size());
     M.failed = std::max<uint32_t>(M.failed, (uint32_t) M.out.size());

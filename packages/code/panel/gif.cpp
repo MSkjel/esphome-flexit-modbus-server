@@ -95,7 +95,7 @@ void Gif::frame(int x0, int y0, int w, int h, unsigned delay_cs) {
   code(CLEAR);
 }
 
-void Gif::delay(unsigned cs) {
+void Gif::set_delay(unsigned cs) {
   if (delay_at + 1 < cap) {
     out[delay_at] = (uint8_t) cs;
     out[delay_at + 1] = (uint8_t) (cs >> 8);
