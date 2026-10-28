@@ -22,11 +22,11 @@ void PanelCamera::stop_stream(camera::CameraRequester requester) {
 
 void PanelCamera::loop() {
   uint32_t now = millis();
-  if (!this->jpeg_)
+  if (!this->bytes_)
     return;
   bool stream = this->stream_ && (this->fresh_ || now - this->sent_ms_ >= STREAM_MS);
   if (this->single_ || stream) {
-    auto image = std::make_shared<PanelImage>(this->jpeg_, this->single_ | this->stream_);
+    auto image = std::make_shared<PanelImage>(this->bytes_, this->single_ | this->stream_);
     this->single_ = 0;
     this->stream_ = 0;
     this->fresh_ = false;
@@ -34,7 +34,7 @@ void PanelCamera::loop() {
     for (auto *listener : this->listeners_)
       listener->on_camera_image(image);
   } else if (!this->stream_ && now - this->sent_ms_ > KEEP_MS) {
-    this->jpeg_.reset();  // nobody's looking, the connections still sending it keep theirs
+    this->bytes_.reset();  // nobody's looking, the connections still sending it keep theirs
   }
 }
 

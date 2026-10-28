@@ -49,15 +49,15 @@ jobs:
             tests/update_test.cpp packages/code/panel/update.cpp packages/code/panel/pbus.c -o update_test
           ./update_test
 
-      - name: The camera's JPEG of a 16-colour picture
+      - name: The camera's GIF of a 16-colour picture with animations
         run: |
-          for c in pjpeg plink pdeflate; do
+          for c in plink pdeflate; do
             gcc -std=gnu11 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -c packages/code/panel/$c.c -o $c.o
           done
           g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stubs -Ipackages/code \
-            tests/snapshot_test.cpp packages/code/panel/picture_snap.cpp packages/code/panel/picture_jpeg.cpp \
-            packages/code/panel/pbus.c pjpeg.o plink.o pdeflate.o -o snapshot_test
-          ./snapshot_test
+            tests/gif_test.cpp packages/code/panel/gif.cpp packages/code/panel/picture_gif.cpp \
+            packages/code/panel/pbus.c plink.o pdeflate.o -o gif_test
+          ./gif_test
 
       - uses: actions/checkout@v7
         with:

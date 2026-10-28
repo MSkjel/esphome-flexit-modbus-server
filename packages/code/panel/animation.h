@@ -88,6 +88,12 @@ struct Anim {
   size_t frame_bytes() const { return (size_t) w / 2 * h; }
 };
 inline Anim anims[ANIM_SLOTS];
+inline void (*on_changed)() = nullptr;  // what's shown or where changed, for snapshot.h's camera
+
+inline void changed() {
+  if (on_changed)
+    on_changed();
+}
 
 // count() builds the palette from all frames, make() the records, send() sends them. One animation at a time.
 enum Phase { IDLE, COUNT, MAKE, SEND };
@@ -270,6 +276,8 @@ inline void tell(Anim &a, Copy &c, uint16_t key, std::vector<uint8_t> m) {
   c.told.push_back({key, ch, millis(), std::move(m)});
   if (a.state == SENT && c.placed)
     send_told(c.told.back());
+  if (key == K_ANIM_GLIDE || key == K_ANIM_FLIP)  // the camera's GIF follows these only, see look()
+    changed();
 }
 
 // Copy c's channels from ch on to the values v over ms, in the channels' units, one message
@@ -324,16 +332,56 @@ inline bool own_room(const Anim &a, const Copy *c) {
 
 inline int fade_of(const Anim &a, const Copy &c) { return c.fade >= 0 ? c.fade : a.src->fade_ms; }
 
+// Where copy c of a is placed. One on the screen stays on it, the sizes round up at half size.
+inline void corner(const Anim &a, const Copy &c, int &x, int &y) {
+  const Source &s = *a.src;
+  bool in = c.x >= 0 && c.y >= 0 && c.x + s.w * s.scale <= PIC_MAX_W && c.y + s.h * s.scale <= PIC_MAX_H;
+  x = in ? std::min<int>(c.x, PIC_MAX_W - a.w * a.scale) : c.x;
+  y = in ? std::min<int>(c.y, PIC_MAX_H - a.h * a.scale) : c.y;
+}
+
+// Where copy c of a shows once its glides are done, whether it's flipped, and if it glided out of sight, for
+// snapshot.h's camera. Its drifts, wanders, turns, sizes and waves aren't followed.
+struct Look {
+  int x, y;
+  bool flip_x = false, flip_y = false, hidden = false;
+};
+inline Look look(const Anim &a, const Copy &c) {
+  Look l;
+  corner(a, c, l.x, l.y);
+  for (auto &t : c.told) {
+    if (t.key == K_ANIM_FLIP) {
+      l.flip_x = t.m[ANIM_FLIP_FLAGS] & ANIM_FLIP_X;
+      l.flip_y = t.m[ANIM_FLIP_FLAGS] & ANIM_FLIP_Y;
+    }
+    if (t.key != K_ANIM_GLIDE)
+      continue;
+    int at = ANIM_GLIDE_HEAD;
+    for (int ch = 0; ch < ANIM_CHANNELS; ch++) {
+      if (!(t.ch >> ch & 1))
+        continue;
+      int v = plink_i16(&t.m[at]);
+      at += 2;
+      if (ch == ANIM_X)
+        l.x = v;
+      else if (ch == ANIM_Y)
+        l.y = v;
+      else if (ch == ANIM_OPACITY)
+        l.hidden = !v;
+    }
+  }
+  return l;
+}
+
 // Puts a copy on the panel with what it was told
 inline void send_place(Anim &a, Copy &c) {
   uint8_t m[ANIM_PLACE_LEN];
   m[ANIM_MSG_PLACE] = c.place;
   m[ANIM_PLACE_SLOT] = (uint8_t) (&a - anims);
-  // one on the screen stays on it, the sizes round up at half size
-  const Source &s = *a.src;
-  bool in = c.x >= 0 && c.y >= 0 && c.x + s.w * s.scale <= PIC_MAX_W && c.y + s.h * s.scale <= PIC_MAX_H;
-  plink_put16(m + ANIM_PLACE_X, (uint16_t) (in ? std::min<int>(c.x, PIC_MAX_W - a.w * a.scale) : c.x));
-  plink_put16(m + ANIM_PLACE_Y, (uint16_t) (in ? std::min<int>(c.y, PIC_MAX_H - a.h * a.scale) : c.y));
+  int x, y;
+  corner(a, c, x, y);
+  plink_put16(m + ANIM_PLACE_X, (uint16_t) x);
+  plink_put16(m + ANIM_PLACE_Y, (uint16_t) y);
   m[ANIM_PLACE_OWN] = c.own;
   m[ANIM_PLACE_START] = c.start;
   plink_put16(m + ANIM_PLACE_FADE, (uint16_t) fade_of(a, c));
@@ -559,6 +607,7 @@ inline void done() {
       send_place(a, c);
   }
   status(shown());
+  changed();
 }
 
 // The panel's K_PIC_ACK = status << 24 | id << 16 | bytes received, from panel.h
@@ -689,6 +738,7 @@ inline void free_slot(Anim &a, bool send = true) {
   if (a.src->on_shown)
     a.src->on_shown(false);
   a = Anim();
+  changed();
 }
 
 // Clears one animation and all its copies, or all of them with no name, fading them out
@@ -724,6 +774,7 @@ inline void show(const std::string &name) {
       send_place(*a, *c);
   }
   status(shown());
+  changed();
 }
 
 // An animated GIF from animation.yaml and its switch, shown if the switch was restored on
@@ -777,6 +828,7 @@ inline void place(const std::string &name, int i, int x, int y, bool own, int st
   if (a->state == SENT)
     send_place(*a, *c);
   status(shown());
+  changed();
 }
 
 // Copy i of name's animation and the animation, nulls if it isn't shown. what is the action, panel_<what>_animation,
@@ -801,6 +853,7 @@ inline void remove(const std::string &name, int i, int fade = -1) {
     send_clear(ANIM_PLACE_BIT | c->place, fade >= 0 ? std::min(65535, fade) : fade_of(*a, *c));
   *c = Copy();
   status(shown());
+  changed();
 }
 
 // Which of names s is, or -1 with a warning from panel_<what>_animation
@@ -1026,6 +1079,7 @@ inline void frame_rate(const std::string &name, int percent) {
   a->frame_rate = (uint16_t) std::clamp(percent, 0, ANIM_RATE_MAX);
   if (a->state == SENT)
     send_frame_rate(*a);
+  changed();
 }
 
 // The panel's K_ANIM_GONE = place | tag << 8: a copy played its rounds and went
@@ -1035,6 +1089,7 @@ inline void gone(uint32_t v) {
       if (c.used && c.placed && c.rounds && c.place == (v & 0xFF) && c.tag == (v >> 8 & 0xFF)) {
         c = Copy();
         status(shown());
+        changed();
       }
 }
 

@@ -1,10 +1,13 @@
-# The panel's screensaver picture as a "Panel Picture" camera in Home Assistant, nothing to set up there. It's the
-# picture as the panel has it, without the clock and the animations the panel draws over it. Made when Home Assistant
-# asks: a JPEG picture goes as it is, a 16-colour one like the weather is encoded first, no picture is black.
+# The panel's screensaver as a "Panel Picture" camera in Home Assistant, nothing to set up there. Made when Home
+# Assistant asks, as a GIF of the screen in the panel's own colours: the 16-colour picture like the weather, with the
+# animations playing over it where they were put. Their drifts, wanders, turns, sizes and waves aren't shown, nor is
+# the clock. A photo the panel has as a JPEG is black in it, the ESP doesn't decode JPEGs.
 #   - packages/panel/camera.yaml
-# RAM: nothing while nobody looks. While someone does, a copy of a JPEG picture (up to 14 KB) or 24 KB for a 16-colour
-# one, freed 30 s after the last look. Not while a picture or animation is being made or sent. ESPHome has one camera
-# per ESP.
+# Home Assistant passes the GIF on labelled as a JPEG. Dashboards show it and play it, things that need a real JPEG
+# like HomeKit or camera.snapshot get the GIF.
+# RAM: nothing while nobody looks. While someone does, up to 48 KB for the GIF, a GIF that's longer ends early, and
+# 22 KB more while it's made. Freed 30 s after the last look. Not while a picture or animation is being made or
+# sent. ESPHome has one camera per ESP.
 # component_source: where the camera component comes from, a path for a local checkout
 defaults:
   component_source: github://MSkjel/esphome-flexit-modbus-server@${flexit_ref}

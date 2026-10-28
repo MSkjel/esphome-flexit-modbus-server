@@ -270,11 +270,14 @@ picks which one. The panel's own menu has the clock styles that go over it.
       - packages/panel/camera.yaml                 # the picture as a camera in Home Assistant
 ```
 
-`camera.yaml` gives Home Assistant a `Panel Picture` camera with the picture the panel shows, without the clock
-and the animations the panel draws over it, black with none. It's made when Home Assistant asks for it: a JPEG
-picture goes as it is, a 16-colour one like the weather is encoded first. That takes RAM only while someone looks,
-up to 24 KB, freed again 30 s after, and waits while a picture or animation is being made or sent. ESPHome has one
-camera per ESP.
+`camera.yaml` gives Home Assistant a `Panel Picture` camera with what the panel shows, made when Home Assistant asks
+for it, as a GIF of the screen in the panel's own colours: the 16-colour picture like the weather with the animations
+playing over it where they were put, looping where they all start over or after 30 s. Their drifts, wanders, turns,
+sizes and waves aren't shown, nor is the clock. A photo the panel has as a JPEG is black in it, as the ESP doesn't
+decode JPEGs. Home Assistant passes the GIF on labelled as a JPEG: dashboards show it and play it, while things that
+need a real JPEG, like HomeKit or `camera.snapshot`, get the GIF. It takes RAM only while someone looks, up to 48 KB
+and 22 KB more while it's made, freed again 30 s after, and waits while a picture or animation is being made or
+sent. ESPHome has one camera per ESP.
 
 A picture is fitted to the screen and converted on the ESP to 16 colours, or to a JPEG when it has more, and sent
 in the gaps on the bus: a 320x240 drawing takes a few seconds, a photo half a minute. Only the rows that changed go
