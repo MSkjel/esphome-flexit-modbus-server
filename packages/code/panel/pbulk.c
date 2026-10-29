@@ -111,23 +111,58 @@ static unsigned rx_room(const pbulk_panel_t *p) {
   return (unsigned) (PBULK_RX_BUF - 1 - (p->head - p->tail + PBULK_RX_BUF) % PBULK_RX_BUF);
 }
 
-// Bytes of whole messages from offset at of out that fit in room
-static int out_fit(const pbulk_panel_t *p, int at, int room) {
-  int i = at, j;
-  while ((j = msg_next(p->out, p->out_n, i)) >= 0 && j - at <= room)
-    i = j;
-  return i - at;
-}
-
-static int out_bytes_from(const pbulk_panel_t *p, int from) {  // offset of message `from` in out
-  int i = 0, m = 0;
-  for (int j; m < from && (j = msg_next(p->out, p->out_n, i)) >= 0; i = j)
-    m += count(plink_get16(p->out + i), p->out[i + 2]);
+// Offset in out of message `from`, and in *part the bytes of it the ESP has, only ever part of a DATA
+static int out_bytes_from(const pbulk_panel_t *p, int from, int *part) {
+  int i = 0, m = 0, j;
+  for (; (j = msg_next(p->out, p->out_n, i)) >= 0; i = j) {
+    int c = count(plink_get16(p->out + i), p->out[i + 2]);
+    if (m + c > from)
+      break;
+    m += c;
+  }
+  *part = j >= 0 ? (from - m) * 4 : 0;
   return i;
 }
 
+// The messages from offset at of q[n] into a, at most room bytes, less the first `part` bytes of the one at `at`. A
+// DATA that doesn't fit whole goes as far as it does, the rest comes next time. Returns the bytes in a, and in *end
+// how far into q that went.
+static int answer_msgs(const uint8_t *q, int n, int at, int part, uint8_t *a, int room, int *end) {
+  int o = 0, i = at;
+  for (int j; (j = msg_next(q, n, i)) >= 0; i = j, part = 0) {
+    uint16_t key = plink_get16(q + i);
+    int len = q[i + 2] - part, k = len;
+    if (o + PBULK_MSG_HEAD + len > room) {
+      k = (room - o - PBULK_MSG_HEAD) & ~3;
+      if (key != PBULK_DATA_KEY || k < 4)
+        break;
+    }
+    plink_put16(a + o, key);
+    a[o + 2] = (uint8_t) k;
+    memcpy(a + o + PBULK_MSG_HEAD, q + i + PBULK_MSG_HEAD + part, k);
+    o += PBULK_MSG_HEAD + k;
+    if (k < len) {
+      *end = i + PBULK_MSG_HEAD + part + k;
+      return o;
+    }
+  }
+  *end = i;
+  return o;
+}
+
+// next into out. Only while out_full: the interrupt, or the main loop while the interrupt leaves both alone.
+static void next_out(pbulk_panel_t *p) {
+  memcpy(p->out, p->next, p->next_n);
+  p->out_n = p->next_n;
+  p->out_num = p->next_num;
+  p->next_full = false;
+  __sync_synchronize();  // out is complete before the interrupt may send it
+  p->out_full = true;
+}
+
 // What the ESP has of ours, from frame f: the first of our messages in out that it doesn't have, counted from
-// out_num. Lets the main loop put the next ones once it has them all.
+// out_num. Once it has them all, next goes in their place, some of which it may have too, or the main loop may put
+// the next ones.
 static int acked(pbulk_panel_t *p, const uint8_t *f) {
   if (plink_get16(f + PBULK_PSESS) != p->psess)
     return 0;
@@ -136,12 +171,15 @@ static int acked(pbulk_panel_t *p, const uint8_t *f) {
     p->psess = new_session(p->psess);
     return 0;
   }
-  if (!p->out_full)
-    return 0;
-  int have = diff(pnext, p->out_num);
-  if (have < count_all(p->out, p->out_n))
-    return have > 0 ? have : 0;
-  p->out_full = false;  // it has them all, the main loop can put the next ones
+  while (p->out_full) {
+    int have = diff(pnext, p->out_num);
+    if (have < count_all(p->out, p->out_n))
+      return have > 0 ? have : 0;
+    if (p->next_full)
+      next_out(p);
+    else
+      p->out_full = false;  // it has them all, the main loop can put the next ones
+  }
   return 0;
 }
 
@@ -172,14 +210,19 @@ static uint8_t take(pbulk_panel_t *p, const uint8_t *f) {
   return PB_OK;
 }
 
-// Our answer to the ESP's frame, with as many of our messages from out_from on as fit in left_us
+// Our answer to the ESP's frame, with as many of our messages from out_from on as fit in left_us. Those in next
+// follow on from out's, so once all of out is in it, it goes on with them.
 static int answer(pbulk_panel_t *p, uint8_t *a, uint32_t left_us, uint8_t st, uint32_t end_us, int out_from) {
-  int at = p->out_full ? out_bytes_from(p, out_from) : 0, b = 0;
+  int part = 0, at = p->out_full ? out_bytes_from(p, out_from, &part) : 0, b = 0, end = at + part, end2 = 0;
   if (p->out_full && st != PB_REFUSED && st != PB_NO_GAPS) {
     int room = (int) (left_us - PBUS_PANEL_US) / PBUS_BYTE_US - PBULK_ANSWER(0);
-    b = out_fit(p, at, room < PBULK_ANSWER_MAX ? room : PBULK_ANSWER_MAX);
+    if (room > PBULK_ANSWER_MAX)
+      room = PBULK_ANSWER_MAX;
+    b = answer_msgs(p->out, p->out_n, at, part, a + PBULK_A_PAYLOAD, room, &end);
+    if (end == p->out_n && p->next_full)
+      b += answer_msgs(p->next, p->next_n, 0, 0, a + PBULK_A_PAYLOAD + b, room - b, &end2);
   }
-  unsigned want = p->waiting + (p->out_full ? p->out_n - at - b : 0);
+  unsigned want = p->waiting + (p->out_full ? p->out_n - end : 0) + (p->next_full ? p->next_n - end2 : 0);
   a[0] = PBULK_ADDR;
   a[1] = PBULK_FC_ANSWER;
   a[PBULK_N] = (uint8_t) b;
@@ -192,7 +235,6 @@ static int answer(pbulk_panel_t *p, uint8_t *a, uint32_t left_us, uint8_t st, ui
   // started.
   plink_put16(a + PBULK_A_PNUM, (uint16_t) (p->out_full ? p->out_num + out_from : p->pnum));
   a[PBULK_A_WANT] = want > 255 ? 255 : (uint8_t) want;
-  memcpy(a + PBULK_A_PAYLOAD, p->out + at, b);
   return pbus_put_crc(a, PBULK_A_PAYLOAD + b);
 }
 
@@ -242,13 +284,24 @@ int pbulk_panel_take(pbulk_panel_t *p, uint8_t *out) {
 }
 
 bool pbulk_panel_put(pbulk_panel_t *p, const uint8_t *payload, int n) {
-  if (p->out_full || n <= 0 || n > PBULK_ANSWER_MAX)
+  if (p->next_full || n <= 0 || n > PBULK_ANSWER_MAX)
     return false;
-  memcpy(p->out, payload, n);
-  p->out_n = (uint8_t) n;
-  p->out_num = p->pnum;
-  __sync_synchronize();  // out is complete before the interrupt may send it
-  p->out_full = true;
+  if (!p->out_full) {
+    memcpy(p->out, payload, n);
+    p->out_n = (uint8_t) n;
+    p->out_num = p->pnum;
+    __sync_synchronize();  // out is complete before the interrupt may send it
+    p->out_full = true;
+  } else {
+    memcpy(p->next, payload, n);
+    p->next_n = (uint8_t) n;
+    p->next_num = p->pnum;
+    __sync_synchronize();  // next is complete before the interrupt may move it
+    p->next_full = true;
+    __sync_synchronize();
+    if (!p->out_full && p->next_full)
+      next_out(p);  // the ESP had all of out before next was full, and the interrupt leaves both alone now
+  }
   __sync_synchronize();  // and only then the next number, which empty answers report
   p->pnum = (uint16_t) (p->pnum + count_all(payload, n));
   return true;

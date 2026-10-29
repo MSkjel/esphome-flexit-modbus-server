@@ -299,16 +299,16 @@ static void flag_norway(Scene &s, int x, int y, int dir, uint32_t red, uint32_t 
     }
 }
 
-// The vimpel, a red pennant 9 rows tall at the pole and len long, with a white-blue-white stripe. Points left
-// when dir < 0.
+// The vimpel, a red pennant 9 rows tall at the pole and len long, with a white-blue-white stripe. It narrows to 5
+// rows, then the stripe ends and the red comes to a point. Points left when dir < 0.
 static void pennant(Scene &s, int x, int y, int len, int dir, uint32_t red, uint32_t white, uint32_t blue) {
   Sprite *r = sprite(s, x, y, len, 9, 2, red), *w = sprite(s, x, y, len, 9, 2, white),
          *b = sprite(s, x, y, len, 9, 2, blue);
   for (int col = 0; col < len; col++) {
-    int hi = (int) (4.0f * (1 - (float) col / len) + 0.5f);  // half height at this column
+    int hi = col == len - 1 ? 0 : col == len - 2 ? 1 : (int) (4 - 2.0f * col / (len - 3) + 0.5f);  // half height
     for (int row = 4 - hi; row <= 4 + hi; row++) {
-      int d = abs(row - 4);  // the stripe while there's room for it, the tip all red
-      sprite_set(d == 0 && hi >= 1 ? b : d == 1 && hi >= 2 ? w : r, dir < 0 ? len - 1 - col : col, row);
+      int d = abs(row - 4);
+      sprite_set(hi < 2 || d > 1 ? r : d ? w : b, dir < 0 ? len - 1 - col : col, row);
     }
   }
 }
@@ -1004,7 +1004,7 @@ static void life(Scene &s, const Now &n, Rng &rng) {
   if (n.flag_up && s.pole_x >= 0) {
     flag_norway(s, n.wdir < 0 ? fx - 23 : fx + 2, fy, n.wdir, mix(0x601418, 0xEF2B2D, n.light), white, blue);
   } else if (s.cabin) {
-    int len = std::min(30, 14 + 2 * (int) w.wind);
+    int len = std::min(PENNANT_MAX, 18 + 2 * (int) w.wind);
     pennant(s, n.wdir < 0 ? fx - len - 1 : fx + 2, fy, len, n.wdir, s.rgb[C_CABIN], white, blue);
   }
   s.tag = 0;

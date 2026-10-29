@@ -211,6 +211,14 @@ api:
       variables: &notify {message: string, icon: string, level: string}
       then: &do_notify
         - lambda: flexit::panel::notify(message, icon, level);
+    # Lines on the screensaver in place of the temperatures, in the modes that show them. sizes in px, 16, 20 or 28,
+    # one for each line, 16 for those without. No lines bring the temperatures back.
+    - action: panel_saver_text
+      variables: &saver_text
+        lines: string[]
+        sizes: int[]
+      then: &do_saver_text
+        - lambda: flexit::panel::saver_text(lines, sizes);
     # view is dashboard, airflow, trends, sensors, comfort or smart_home
     - action: panel_show_view
       variables: &show_view {view: string}
@@ -316,6 +324,7 @@ api:
 # The same for your own YAML, like script.execute: {id: panel_notify, message: Hi, icon: bell, level: info}
 script:
   - {id: panel_notify, parameters: *notify, then: *do_notify}
+  - {id: panel_saver_text, parameters: *saver_text, then: *do_saver_text}
   - {id: panel_show_view, parameters: *show_view, then: *do_show_view}
   - {id: panel_set, parameters: *set, then: *do_set}
   - {id: panel_show_picture, parameters: *by_name, then: *do_show_picture}

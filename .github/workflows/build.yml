@@ -49,6 +49,13 @@ jobs:
             tests/update_test.cpp packages/code/panel/update.cpp packages/code/panel/pbus.c -o update_test
           ./update_test
 
+      - name: The panel's camera
+        run: |
+          g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stubs -Ipackages/code \
+            -Iesphome/components/flexit_panel_camera tests/camera_test.cpp \
+            esphome/components/flexit_panel_camera/panel_camera.cpp -o camera_test
+          ./camera_test
+
       - uses: actions/checkout@v7
         with:
           repository: MSkjel/ESP-ModbusRTUServer

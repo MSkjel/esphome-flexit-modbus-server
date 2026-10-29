@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define PLINK_VERSION 3
+#define PLINK_VERSION 4
 
 // Message kinds. A newer VALUE replaces one still waiting, but every EVENT counts. BYTES are texts and pictures,
 // every one counts too.
@@ -42,7 +42,7 @@ static inline uint16_t plink_item_id(const char *name) {
   return (uint16_t) (h & ITEM_ID_MASK ? h & ITEM_ID_MASK : 1);
 }
 
-// ---- The panel's messages to the ESP, numbers only
+// ---- The panel's messages to the ESP, numbers only. Screenshots go alongside, see app/shot.c
 #define PLINK_QUEUE 32
 
 typedef struct {

@@ -9,6 +9,8 @@
 //   0x0A0..0x0FF  panel settings only the panel has, app/values.h. Their keys only name them in its flash
 //   0x100..0x11F  the screensaver picture
 //   0x120..0x13F  screensaver animations
+//   0x140..0x14F  screenshots
+//   0x150..0x15F  the screensaver's lines
 //   0x200..0x3FF  ESP items, 0x40 keys for each kind
 //
 // Copied into esphome-flexit-modbus-server by make -C sim esp_sync, edit it here.
@@ -64,7 +66,8 @@ enum { PIC_BEGIN_FORMAT = 1, PIC_BEGIN_W, PIC_BEGIN_H = 4, PIC_BEGIN_SIZE = 6, P
 // none. With no rows only the palette changes.
 #define K_PIC_PATCH 0x101
 enum { PIC_PATCH_Y = 1, PIC_PATCH_COUNT = 3, PIC_PATCH_SIZE = 5, PIC_PATCH_HEAD = 9 };
-#define K_PIC_DATA 0x102   // the picture's bytes, a multiple of 4 (PBULK_DATA_KEY). Bytes past the end are ignored
+// The picture's bytes, a multiple of 4 (PBULK_DATA_KEY). Bytes past the end are ignored. From the panel: a screenshot's
+#define K_PIC_DATA 0x102
 #define K_PIC_END 0x103    // plink_crc32 of the size bytes of DATA
 #define K_PIC_ACK 0x104    // panel -> ESP: status (PIC_*) << 24 | id << 16 | bytes received
 #define K_PIC_CLEAR 0x105  // forget the picture
@@ -219,6 +222,28 @@ enum { ANIM_ROUNDS_COUNT = 1, ANIM_ROUNDS_FADE = 3, ANIM_ROUNDS_TAG = 5, ANIM_RO
 #define ANIM_PLACE_BIT 0x80
 #define ANIM_ALL 0xFF
 #define ANIM_POOL 6144  // panel memory for the animations, each one inflated frame of w x h / 2 bytes plus records
+
+// ---- Screenshots: what the panel shows as a JPEG, which the ESP puts together from 64x8 tiles, numbered across and
+// then down. Each tile is one restart interval from pjpeg_tile() at the quality SHOT asked for. The ESP writes the
+// headers with pjpeg_head(), then the tiles with RST0..RST7 in turn between them, then EOI.
+// SHOT: quality 1..100, | SHOT_ALL for every tile, else only those that changed since they were last sent. 0 stops.
+// The panel sends the tiles as PIC_DATA, one after the other, each as its number, its length (2) and its bytes. Then
+// SHOT_DONE, after zeros that make the DATA a multiple of 4. Tiles are drawn again one at a time to be sent.
+#define K_SHOT 0x140
+#define SHOT_ALL 0x100
+enum { SHOT_TILE_NUM, SHOT_TILE_LEN, SHOT_TILE_HEAD = 3 };
+#define K_SHOT_DONE 0x141  // panel -> ESP: how many tiles it sent since SHOT
+#define SHOT_TILE_W 64     // 4 MCUs
+#define SHOT_TILE_H 8
+#define SHOT_COLS (PIC_MAX_W / SHOT_TILE_W)
+#define SHOT_ROWS (PIC_MAX_H / SHOT_TILE_H)
+#define SHOT_TILES (SHOT_COLS * SHOT_ROWS)
+
+// ---- The screensaver's lines, which it shows in place of the temperatures. LINE + i, i < SAVER_LINES: the line's
+// size in px, 16, 20 or 28, then its text, empty for a gap. None show after the last with text, nor any that don't
+// fit under those before them. The panel forgets them at a HELLO and shows the temperatures while the ESP is away.
+#define K_SAVER_LINE 0x150
+#define SAVER_LINES 4
 
 // ---- ESP items: anything the ESP adds to the panel, numbered as it likes. Each is on the smart home or comfort
 // page. Any item can be a dashboard tile, and sensors can keep a 24-hour trend.

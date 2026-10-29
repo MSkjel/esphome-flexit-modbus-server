@@ -65,6 +65,7 @@ started. The rest of the panel's settings are in its own menu and [`panel_set`](
 | `panel/fireplace.yaml`, `humidity_boost.yaml`, `co2.yaml`, `summer_cooling.yaml` | That package on the panel's comfort page |
 | `panel/picture.yaml`, `online_picture.yaml`, `ha_picture.yaml`, `animation.yaml`, `met.yaml` | Screensaver pictures |
 | `panel/update.yaml` | Flashes the panel's firmware from Home Assistant |
+| `panel/screen_camera.yaml` | What the panel shows, as a camera in Home Assistant |
 
 ## Your own things on the panel
 
@@ -175,6 +176,7 @@ letters, like the Norwegian ones, take two. Longer texts are cut.
 | `on_text`, `off_text` | 11 each |
 | A text item's state | 15 |
 | A `panel_notify` message | 64 |
+| A `panel_saver_text` line | 64 |
 
 ## The comfort packages
 
@@ -210,8 +212,58 @@ names, like `script.execute: {id: panel_notify, message: Hi, icon: bell, level: 
 | `panel_notify` (`message`, `icon`, `level`: info, warning, alarm) | A message that pops up on the panel and stays until it's closed |
 | `panel_show_view` (`view`: dashboard, airflow, trends, sensors, comfort, smart_home) | Wakes the panel and opens that view |
 | `panel_set` (`setting`, `value`) | One of the panel's [settings](#panel-settings) |
+| `panel_saver_text` (`lines`, `sizes`) | [Lines on the screensaver](#lines-on-the-screensaver) in place of the temperatures |
 
 The pictures and animations have [their own actions](#picture-and-animation-actions).
+
+### Lines on the screensaver
+
+The screensaver shows the indoor and outdoor temperatures in `Clock and temperatures` and `Picture and
+everything`. `panel_saver_text` puts up to 4 lines of your own there instead, each 16, 20 or 28 px tall (`sizes`,
+16 for a line without one). Over a picture there's room for about 72 px, so a 28 px line and two 16 px ones. Lines
+that don't fit are left out, one too wide ends in dots, and an empty one leaves a gap. No lines bring the
+temperatures back, and so does the ESP going away. The ESP keeps the lines through a panel restart, not through
+its own, so update them from an automation that also runs now and then. In Home Assistant, a new automation's
+Edit in YAML:
+
+```yaml
+alias: Panel screensaver lines
+triggers:
+  - trigger: state
+    entity_id: [sensor.living_room_temperature, sensor.living_room_humidity, sensor.living_room_co2]
+  - trigger: time_pattern
+    minutes: /5
+actions:
+  - action: esphome.flexit_panel_saver_text
+    data:
+      lines:
+        - "{{ states('sensor.living_room_temperature') }} °C"
+        - "Humidity {{ states('sensor.living_room_humidity') }} %"
+        - "CO₂ {{ states('sensor.living_room_co2') }} ppm"
+      sizes: [28, 16, 16]
+```
+
+Or in your ESPHome YAML, from the ESP's own sensors. It sends only what changed, so once a minute costs nothing:
+
+```yaml
+interval:
+  - interval: 1min
+    then:
+      - script.execute:
+          id: panel_saver_text
+          lines: !lambda |-
+            return {str_sprintf("%.1f °C", id(extract_air_temperature).state),
+                    str_sprintf("Outdoor %.1f °C", id(outdoor_air_temperature).state),
+                    str_sprintf("Supply %.1f °C", id(supply_air_temperature).state)};
+          sizes: [28, 16, 16]
+```
+
+<table>
+<tr>
+<td align="center"><img src="https://github.com/MSkjel/flexit-ci600-firmware/raw/screens/all/shots/87b_saver_lines.png" width="280" alt="Lines over a picture"><br><sub>Over a picture</sub></td>
+<td align="center"><img src="https://github.com/MSkjel/flexit-ci600-firmware/raw/screens/all/shots/87d_saver_lines_black.png" width="280" alt="Lines on black"><br><sub>On black</sub></td>
+</tr>
+</table>
 
 ### Panel settings
 
@@ -401,6 +453,27 @@ Examples, for an ESP called `flexit`:
 - action: esphome.flexit_panel_frame_rate_animation
   data: {name: fan, percent: "{{ states('sensor.flexit_supply_fan_speed_percentage') | int(0) * 2 }}"}
 ```
+
+## The panel's screen in Home Assistant
+
+`panel/screen_camera.yaml` adds `Panel Screen`, a camera of whatever the panel shows: the home page, a menu, the
+screensaver. ESP32 only, and it needs panel firmware that takes screenshots. It's a diagnostic entity, so Home
+Assistant's own dashboards leave it out: one left open fetches an image every 10 s, and the panel keeps taking
+them. It's on the device's page, or add it to a dashboard of your own.
+
+```yaml
+      - path: packages/panel/screen_camera.yaml
+        vars: {quality: "80"}  # JPEG quality, 1-100: higher is sharper text and slower, 90 at most
+                               # category: "" for an ordinary entity, on the dashboards
+```
+
+The panel doesn't keep a copy of its screen. While someone looks, it draws its screen again in 64x8 tiles and
+sends each one as a bit of JPEG as it goes to the display, after the first time only the tiles that changed. The
+ESP puts them together. The first look shows what came within 4 s, black where nothing has yet, and the live view
+fills in over about 10 s. After that an image takes a second or two, the clock ticking over is 4 tiles. The tiles
+take about 20 KB of the ESP's RAM, let go a minute after the last look; without the RAM it doesn't ask. While the
+ESP sends the panel a picture or an animation, the screen waits. A tile has to fit in about 400 bytes on the panel,
+so above quality 90 the busiest tiles lose their faint detail, and above 95 some are left a flat colour.
 
 ## Flashing the panel
 
