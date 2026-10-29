@@ -58,3 +58,11 @@ packages:
     file: ../packages/panel/met.yaml
     vars: {latitude: "59.9139", longitude: "10.7522"}
   panel_update: !include ../packages/panel/update.yaml
+  panel_screen: !include ../packages/panel/screen_camera.yaml
+
+# After screen_camera.yaml's GitHub source, so the components are these
+external_components:
+  - source:
+      type: local
+      path: ../esphome/components
+    components: [flexit_modbus_server, flexit_panel_camera]

@@ -31,7 +31,7 @@ extern "C" {
 #define PBULK_ADDR PBUS_LINK_ADDR
 #define PBULK_FC_SEND 0x66
 #define PBULK_FC_ANSWER 0x67
-#define PBULK_DATA_KEY 0x102  // plink's K_PIC_DATA
+#define PBULK_DATA_KEY 0x102  // plink's K_PIC_DATA, a picture to the panel or a screenshot from it
 #define PBULK_DATA_MAX 252    // bytes in a DATA message, the most its length byte takes in multiples of 4
 #define PBULK_MSG_HEAD 3      // key (2) and length, before the value
 
@@ -50,7 +50,7 @@ enum { PBULK_PAYLOAD = 12 };
 // Byte offsets in the panel's answer. n is at PBULK_N like in an ESP frame
 enum { PBULK_A_ESESS = 3, PBULK_A_ENEXT = 5, PBULK_A_STATUS = 7, PBULK_A_PSESS = 8, PBULK_A_PNUM = 10 };
 enum { PBULK_A_WANT = 12, PBULK_A_PAYLOAD = 13 };
-#define PBULK_ANSWER_MAX 64
+#define PBULK_ANSWER_MAX 160  // the panel's stream went fastest with this in bulk_test, of 113, 160 and 200
 #define PBULK_ANSWER(n) (PBULK_A_PAYLOAD + (n) + 2)
 #define PBULK_ANSWER_FRAME_MAX PBULK_ANSWER(PBULK_ANSWER_MAX)
 
@@ -72,8 +72,12 @@ typedef struct {
   uint8_t out[PBULK_ANSWER_MAX];  // our messages from out_num on, resent in answers until the ESP has them all
   uint8_t out_n;
   uint16_t out_num;
-  volatile bool out_full;    // set by the main loop when it fills out, cleared by the interrupt
-  volatile uint8_t waiting;  // bytes of messages the main loop has waiting behind out
+  volatile bool out_full;          // set by the main loop when it fills out, cleared by the interrupt
+  uint8_t next[PBULK_ANSWER_MAX];  // the ones after out, which the interrupt moves there once the ESP has out
+  uint8_t next_n;                  // so the answer that says it has them can carry the next ones
+  uint16_t next_num;
+  volatile bool next_full;
+  volatile uint8_t waiting;  // bytes of messages the main loop has waiting behind out and next
   uint16_t psess;            // our session
   volatile uint16_t pnum;    // number for our next message
   uint8_t ahead;             // frames in a row starting after enext, see resyncs
@@ -89,8 +93,10 @@ void pbulk_panel_init(pbulk_panel_t *p, uint16_t session);  // session: a random
 int pbulk_panel_frame(pbulk_panel_t *p, uint8_t addr, const uint8_t *f, int n, uint32_t left_us, uint8_t say,
                       uint32_t end_us, uint8_t *answer);
 int pbulk_panel_take(pbulk_panel_t *p, uint8_t *out);  // next batch of ESP messages, out is PBULK_MAX bytes. 0 = none
-// Queues a payload from plink_pack. False until the previous one has all got through.
+// Queues a payload from plink_pack, in out or else in next. False while both are full. DATA in it is a multiple of
+// 4 bytes, an answer takes as much of it as fits.
 bool pbulk_panel_put(pbulk_panel_t *p, const uint8_t *payload, int n);
+static inline bool pbulk_panel_free(const pbulk_panel_t *p) { return !p->next_full; }  // pbulk_panel_put() takes one
 
 // ---- ESP side
 #define PBULK_ESP_BUF 2048

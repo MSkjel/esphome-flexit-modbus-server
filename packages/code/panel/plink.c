@@ -124,6 +124,8 @@ int plink_kind(uint16_t key) {
     case K_PIC_CLEAR:
     case K_ANIM_CLEAR:
     case K_ANIM_GONE:
+    case K_SHOT:
+    case K_SHOT_DONE:
       return PLINK_EVENT;
     case K_NOTIFY:
     case K_PIC_BEGIN:

@@ -60,8 +60,15 @@ inline void log_refusals(bool was_refused, bool was_no_gaps, bool answered) {
   }
 }
 
-// pbulk callback, queues each message from the panel as a number
-inline void got(void *, uint16_t key, const uint8_t *b, int n) { in.emplace_back(key, plink_number(b, n)); }
+inline void (*got_shot)(const uint8_t *b, int n);  // screenshot.h's, for the tiles
+
+// pbulk callback, queues each message from the panel as a number. A screenshot's tiles go straight on as they are.
+inline void got(void *, uint16_t key, const uint8_t *b, int n) {
+  if (key != PBULK_DATA_KEY)
+    in.emplace_back(key, plink_number(b, n));
+  else if (got_shot)
+    got_shot(b, n);
+}
 
 // left_us is the least time we have before the bus must be clear. The frame starts within PBUS_ESP_START_US.
 inline void send_window(uint32_t left_us, bool in_gap) {

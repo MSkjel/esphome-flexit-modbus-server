@@ -65,6 +65,7 @@ started. The rest of the panel's settings are in its own menu and [`panel_set`](
 | `panel/fireplace.yaml`, `humidity_boost.yaml`, `co2.yaml`, `summer_cooling.yaml` | That package on the panel's comfort page |
 | `panel/picture.yaml`, `online_picture.yaml`, `ha_picture.yaml`, `animation.yaml`, `met.yaml` | Screensaver pictures |
 | `panel/update.yaml` | Flashes the panel's firmware from Home Assistant |
+| `panel/screen_camera.yaml` | What the panel shows, as a camera in Home Assistant |
 
 ## Your own things on the panel
 
@@ -401,6 +402,27 @@ Examples, for an ESP called `flexit`:
 - action: esphome.flexit_panel_frame_rate_animation
   data: {name: fan, percent: "{{ states('sensor.flexit_supply_fan_speed_percentage') | int(0) * 2 }}"}
 ```
+
+## The panel's screen in Home Assistant
+
+`panel/screen_camera.yaml` adds `Panel Screen`, a camera of whatever the panel shows: the home page, a menu, the
+screensaver. ESP32 only, and it needs panel firmware that takes screenshots. It's a diagnostic entity, so Home
+Assistant's own dashboards leave it out: one left open fetches an image every 10 s, and the panel keeps taking
+them. It's on the device's page, or add it to a dashboard of your own.
+
+```yaml
+      - path: packages/panel/screen_camera.yaml
+        vars: {quality: "80"}  # JPEG quality, 1-100: higher is sharper text and slower, 90 at most
+                               # category: "" for an ordinary entity, on the dashboards
+```
+
+The panel doesn't keep a copy of its screen. While someone looks, it draws its screen again in 64x8 tiles and
+sends each one as a bit of JPEG as it goes to the display, after the first time only the tiles that changed. The
+ESP puts them together. The first look shows what came within 4 s, black where nothing has yet, and the live view
+fills in over about 10 s. After that an image takes a second or two, the clock ticking over is 4 tiles. The tiles
+take about 20 KB of the ESP's RAM, let go a minute after the last look; without the RAM it doesn't ask. While the
+ESP sends the panel a picture or an animation, the screen waits. A tile has to fit in about 400 bytes on the panel,
+so above quality 90 the busiest tiles lose their faint detail, and above 95 some are left a flat colour.
 
 ## Flashing the panel
 

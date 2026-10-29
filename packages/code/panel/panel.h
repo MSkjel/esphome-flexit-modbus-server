@@ -14,6 +14,7 @@
 #include "picture_online.h"
 #include "plink.h"
 #include "plink_icons.h"
+#include "screenshot.h"
 #include "settings.h"
 #include "util.h"
 
@@ -123,6 +124,7 @@ inline void after_hello(bool panel_started) {
   items_hello();
   picture::restarted();
   anim::restarted();
+  shot::restarted();
 }
 
 // The panel started or answered our hello. Unsent values follow our HELLO, after_hello() sends the rest again.
@@ -180,6 +182,7 @@ inline void setup(uint8_t panel_address) {
     anim::ack(v);
   };
   h[K_ANIM_GONE] = anim::gone;
+  h[K_SHOT_DONE] = shot::done;
   h[K_SETTINGS] = settings::got;
   for (int i = 0; i < N_ITEMS; i++)
     h[K_ITEM_VALUE + i] = [i](uint32_t v) { item_set(i, v); };
@@ -293,6 +296,7 @@ inline void loop() {
   picture::refresh();
   picture::loop(deadline_us);
   anim::loop(deadline_us);
+  shot::loop();
 }
 
 }  // namespace flexit::panel

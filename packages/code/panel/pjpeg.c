@@ -57,25 +57,47 @@ static const uint8_t AC_CHROMA[162] = {
     0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8, 0xc9, 0xca, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7, 0xd8, 0xd9, 0xda,
     0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa};
 static const uint8_t *const HUFF_SYMBOLS[4] = {DC_SYMBOLS, AC_LUMA, DC_SYMBOLS, AC_CHROMA};
-enum { DC_Y, AC_Y, DC_C, AC_C };
 
-// each table's code and code length per symbol, made from the tables above on first use
-static uint16_t code[4][256];
-static uint8_t code_len[4][256];
+// The codes from the tables above, length << 16 | code, as T.81 Annex C makes them. DC by the value's size, AC by run
+// * 11 + size, luma first. TJpgDec decoding what we write checks them, see sim/unit_test/picture.c.
+static const uint32_t DC_CODES[2][12] = {
+    {0x20000, 0x30002, 0x30003, 0x30004, 0x30005, 0x30006, 0x4000e, 0x5001e, 0x6003e, 0x7007e, 0x800fe, 0x901fe},
+    {0x20000, 0x20001, 0x20002, 0x30006, 0x4000e, 0x5001e, 0x6003e, 0x7007e, 0x800fe, 0x901fe, 0xa03fe, 0xb07fe}};
+static const uint32_t AC_CODES[2][16 * 11] = {
+    {0x4000a, 0x20000,  0x20001,  0x30004,  0x4000b,  0x5001a,  0x70078,  0x800f8,  0xa03f6,  0x10ff82, 0x10ff83,
+     0x00000, 0x4000c,  0x5001b,  0x70079,  0x901f6,  0xb07f6,  0x10ff84, 0x10ff85, 0x10ff86, 0x10ff87, 0x10ff88,
+     0x00000, 0x5001c,  0x800f9,  0xa03f7,  0xc0ff4,  0x10ff89, 0x10ff8a, 0x10ff8b, 0x10ff8c, 0x10ff8d, 0x10ff8e,
+     0x00000, 0x6003a,  0x901f7,  0xc0ff5,  0x10ff8f, 0x10ff90, 0x10ff91, 0x10ff92, 0x10ff93, 0x10ff94, 0x10ff95,
+     0x00000, 0x6003b,  0xa03f8,  0x10ff96, 0x10ff97, 0x10ff98, 0x10ff99, 0x10ff9a, 0x10ff9b, 0x10ff9c, 0x10ff9d,
+     0x00000, 0x7007a,  0xb07f7,  0x10ff9e, 0x10ff9f, 0x10ffa0, 0x10ffa1, 0x10ffa2, 0x10ffa3, 0x10ffa4, 0x10ffa5,
+     0x00000, 0x7007b,  0xc0ff6,  0x10ffa6, 0x10ffa7, 0x10ffa8, 0x10ffa9, 0x10ffaa, 0x10ffab, 0x10ffac, 0x10ffad,
+     0x00000, 0x800fa,  0xc0ff7,  0x10ffae, 0x10ffaf, 0x10ffb0, 0x10ffb1, 0x10ffb2, 0x10ffb3, 0x10ffb4, 0x10ffb5,
+     0x00000, 0x901f8,  0xf7fc0,  0x10ffb6, 0x10ffb7, 0x10ffb8, 0x10ffb9, 0x10ffba, 0x10ffbb, 0x10ffbc, 0x10ffbd,
+     0x00000, 0x901f9,  0x10ffbe, 0x10ffbf, 0x10ffc0, 0x10ffc1, 0x10ffc2, 0x10ffc3, 0x10ffc4, 0x10ffc5, 0x10ffc6,
+     0x00000, 0x901fa,  0x10ffc7, 0x10ffc8, 0x10ffc9, 0x10ffca, 0x10ffcb, 0x10ffcc, 0x10ffcd, 0x10ffce, 0x10ffcf,
+     0x00000, 0xa03f9,  0x10ffd0, 0x10ffd1, 0x10ffd2, 0x10ffd3, 0x10ffd4, 0x10ffd5, 0x10ffd6, 0x10ffd7, 0x10ffd8,
+     0x00000, 0xa03fa,  0x10ffd9, 0x10ffda, 0x10ffdb, 0x10ffdc, 0x10ffdd, 0x10ffde, 0x10ffdf, 0x10ffe0, 0x10ffe1,
+     0x00000, 0xb07f8,  0x10ffe2, 0x10ffe3, 0x10ffe4, 0x10ffe5, 0x10ffe6, 0x10ffe7, 0x10ffe8, 0x10ffe9, 0x10ffea,
+     0x00000, 0x10ffeb, 0x10ffec, 0x10ffed, 0x10ffee, 0x10ffef, 0x10fff0, 0x10fff1, 0x10fff2, 0x10fff3, 0x10fff4,
+     0xb07f9, 0x10fff5, 0x10fff6, 0x10fff7, 0x10fff8, 0x10fff9, 0x10fffa, 0x10fffb, 0x10fffc, 0x10fffd, 0x10fffe},
+    {0x20000, 0x20001, 0x30004,  0x4000a,  0x50018,  0x50019,  0x60038,  0x70078,  0x901f4,  0xa03f6,  0xc0ff4,
+     0x00000, 0x4000b, 0x60039,  0x800f6,  0x901f5,  0xb07f6,  0xc0ff5,  0x10ff88, 0x10ff89, 0x10ff8a, 0x10ff8b,
+     0x00000, 0x5001a, 0x800f7,  0xa03f7,  0xc0ff6,  0xf7fc2,  0x10ff8c, 0x10ff8d, 0x10ff8e, 0x10ff8f, 0x10ff90,
+     0x00000, 0x5001b, 0x800f8,  0xa03f8,  0xc0ff7,  0x10ff91, 0x10ff92, 0x10ff93, 0x10ff94, 0x10ff95, 0x10ff96,
+     0x00000, 0x6003a, 0x901f6,  0x10ff97, 0x10ff98, 0x10ff99, 0x10ff9a, 0x10ff9b, 0x10ff9c, 0x10ff9d, 0x10ff9e,
+     0x00000, 0x6003b, 0xa03f9,  0x10ff9f, 0x10ffa0, 0x10ffa1, 0x10ffa2, 0x10ffa3, 0x10ffa4, 0x10ffa5, 0x10ffa6,
+     0x00000, 0x70079, 0xb07f7,  0x10ffa7, 0x10ffa8, 0x10ffa9, 0x10ffaa, 0x10ffab, 0x10ffac, 0x10ffad, 0x10ffae,
+     0x00000, 0x7007a, 0xb07f8,  0x10ffaf, 0x10ffb0, 0x10ffb1, 0x10ffb2, 0x10ffb3, 0x10ffb4, 0x10ffb5, 0x10ffb6,
+     0x00000, 0x800f9, 0x10ffb7, 0x10ffb8, 0x10ffb9, 0x10ffba, 0x10ffbb, 0x10ffbc, 0x10ffbd, 0x10ffbe, 0x10ffbf,
+     0x00000, 0x901f7, 0x10ffc0, 0x10ffc1, 0x10ffc2, 0x10ffc3, 0x10ffc4, 0x10ffc5, 0x10ffc6, 0x10ffc7, 0x10ffc8,
+     0x00000, 0x901f8, 0x10ffc9, 0x10ffca, 0x10ffcb, 0x10ffcc, 0x10ffcd, 0x10ffce, 0x10ffcf, 0x10ffd0, 0x10ffd1,
+     0x00000, 0x901f9, 0x10ffd2, 0x10ffd3, 0x10ffd4, 0x10ffd5, 0x10ffd6, 0x10ffd7, 0x10ffd8, 0x10ffd9, 0x10ffda,
+     0x00000, 0x901fa, 0x10ffdb, 0x10ffdc, 0x10ffdd, 0x10ffde, 0x10ffdf, 0x10ffe0, 0x10ffe1, 0x10ffe2, 0x10ffe3,
+     0x00000, 0xb07f9, 0x10ffe4, 0x10ffe5, 0x10ffe6, 0x10ffe7, 0x10ffe8, 0x10ffe9, 0x10ffea, 0x10ffeb, 0x10ffec,
+     0x00000, 0xe3fe0, 0x10ffed, 0x10ffee, 0x10ffef, 0x10fff0, 0x10fff1, 0x10fff2, 0x10fff3, 0x10fff4, 0x10fff5,
+     0xa03fa, 0xf7fc3, 0x10fff6, 0x10fff7, 0x10fff8, 0x10fff9, 0x10fffa, 0x10fffb, 0x10fffc, 0x10fffd, 0x10fffe}};
 
-static void make_codes(void) {
-  if (code_len[DC_Y][0])
-    return;
-  for (int t = 0; t < 4; t++) {
-    unsigned c = 0, k = 0;
-    for (int len = 1; len <= 16; len++, c <<= 1)
-      for (int i = 0; i < HUFF_BITS[t][len - 1]; i++) {
-        uint8_t s = HUFF_SYMBOLS[t][k++];
-        code[t][s] = (uint16_t) c++;
-        code_len[t][s] = (uint8_t) len;
-      }
-  }
-}
+static const uint32_t EOB = 0, ZRL = 15 * 11;  // AC_CODES of the rest are zeros and of 16 zeros
 
 // A byte of output o. Only o[0] is kept, as far as there's room
 static void byte(pjpeg_t *j, pjpeg_out_t *o, unsigned b) {
@@ -117,6 +139,8 @@ static int bit_length(int v) {
 
 static void put_value(pjpeg_t *j, pjpeg_out_t *o, int v, int n) { put(j, o, (unsigned) (v < 0 ? v - 1 : v), n); }
 
+static void code(pjpeg_t *j, pjpeg_out_t *o, uint32_t c) { put(j, o, c & 0xFFFF, (int) (c >> 16)); }  // a *_CODES
+
 // One block's coefficients f quantized for output o, in zigzag order, and Huffman coded
 static void quantize(pjpeg_t *j, pjpeg_out_t *o, const int32_t *f, int comp, int weight) {
   const uint8_t *q = o->q[comp ? 1 : 0];
@@ -125,15 +149,17 @@ static void quantize(pjpeg_t *j, pjpeg_out_t *o, const int32_t *f, int comp, int
   for (int k = 0; k < 64; k++) {
     int n = ZIGZAG[k], d = q[n] * 16, v = f[n];
     z[k] = v <= -d / 2 ? -((d / 2 - v) / d) : v >= d / 2 ? (v + d / 2) / d : 0;  // rounded half away from zero
+    if (k && z[k] >= -j->drop && z[k] <= j->drop)
+      z[k] = 0;  // a tile that has to fit, see pjpeg_tile()
     int e = v - z[k] * d;
     err += (uint32_t) (e * e);
   }
   if (o == j->o)
     j->err += (uint64_t) err * weight;
-  int dc = comp ? DC_C : DC_Y, ac = comp ? AC_C : AC_Y;
+  const uint32_t *dc = DC_CODES[comp > 0], *ac = AC_CODES[comp > 0];
   int diff = z[0] - o->dc[comp], n = bit_length(diff);
   o->dc[comp] = z[0];
-  put(j, o, code[dc][n], code_len[dc][n]);
+  code(j, o, dc[n]);
   if (n)
     put_value(j, o, diff, n);
   int run = 0;
@@ -143,20 +169,19 @@ static void quantize(pjpeg_t *j, pjpeg_out_t *o, const int32_t *f, int comp, int
       continue;
     }
     for (; run > 15; run -= 16)
-      put(j, o, code[ac][0xF0], code_len[ac][0xF0]);  // 16 zeros
+      code(j, o, ac[ZRL]);
     n = bit_length(z[k]);
-    int s = run << 4 | n;
-    put(j, o, code[ac][s], code_len[ac][s]);
+    code(j, o, ac[run * 11 + n]);
     put_value(j, o, z[k], n);
     run = 0;
   }
   if (run)
-    put(j, o, code[ac][0], code_len[ac][0]);  // the rest are zeros
+    code(j, o, ac[EOB]);
 }
 
 // One 8x8 block of level-shifted samples in 16ths, coded for each output. comp is 0 Y, 1 Cb, 2 Cr. weight is how
 // many pixels a sample stands for.
-static void block(pjpeg_t *j, const int32_t *in, int comp, int weight) {
+static void block(pjpeg_t *j, const int16_t *in, int comp, int weight) {
   int32_t t[64], f[64];
   for (int y = 0; y < 8; y++)
     for (int u = 0; u < 8; u++) {
@@ -186,10 +211,9 @@ static void quantizers(pjpeg_out_t *o, int quality) {
     }
 }
 
-void pjpeg_begin(pjpeg_t *j, int w, int h, int quality, uint8_t *out, uint32_t cap) {
-  make_codes();
-  *j = (pjpeg_t) {.w = (uint16_t) w, .h = (uint16_t) h, .out = out, .cap = cap, .n = 1};
-  quantizers(j->o, quality);
+// SOI to SOS, a restart marker every restart MCUs
+static void head(pjpeg_t *j, int restart) {
+  int w = j->w, h = j->h;
   word(j, 0xFFD8);  // SOI
   word(j, 0xFFDB);  // DQT: both tables, zigzag order
   word(j, 2 + 2 * 65);
@@ -220,15 +244,32 @@ void pjpeg_begin(pjpeg_t *j, int w, int h, int quality, uint8_t *out, uint32_t c
     for (int i = 0; i < n; i++)
       byte(j, j->o, HUFF_SYMBOLS[t][i]);
   }
-  word(j, 0xFFDD);  // DRI: one MCU row
+  word(j, 0xFFDD);  // DRI
   word(j, 4);
-  word(j, (unsigned) w / 16);
+  word(j, (unsigned) restart);
   word(j, 0xFFDA);  // SOS: Y with tables 0, Cb and Cr with tables 1
   word(j, 12);
   byte(j, j->o, 3);
   static const uint8_t SCAN[9] = {1, 0x00, 2, 0x11, 3, 0x11, 0, 63, 0};
   for (int i = 0; i < 9; i++)
     byte(j, j->o, SCAN[i]);
+}
+
+static void start(pjpeg_t *j, int w, int h, int quality, uint8_t *out, uint32_t cap) {
+  *j = (pjpeg_t) {.w = (uint16_t) w, .h = (uint16_t) h, .out = out, .cap = cap, .n = 1};
+  quantizers(j->o, quality);
+}
+
+void pjpeg_begin(pjpeg_t *j, int w, int h, int quality, uint8_t *out, uint32_t cap) {
+  start(j, w, h, quality, out, cap);
+  head(j, w / 16);
+}
+
+uint32_t pjpeg_head(uint8_t *out, uint32_t cap, int w, int h, int quality, int restart) {
+  pjpeg_t j;
+  start(&j, w, h, quality, out, cap);
+  head(&j, restart);
+  return j.o[0].len;
 }
 
 void pjpeg_also(pjpeg_t *j, int quality) {
@@ -239,11 +280,9 @@ void pjpeg_also(pjpeg_t *j, int quality) {
   o->len = j->o[0].len;  // the same headers, other numbers in the DQT
 }
 
-bool pjpeg_mcu(pjpeg_t *j, pjpeg_pixel_t px, void *ctx) {
-  if (j->row * 8u >= j->h)
-    return false;
-  int x0 = j->col, y0 = j->row * 8;
-  int32_t lum[2][64], cb[64], cr[64];  // level-shifted, in 16ths
+// The 16x8 pixels at x0, y0 coded for each output
+static void mcu(pjpeg_t *j, pjpeg_pixel_t px, void *ctx, int x0, int y0) {
+  int16_t lum[2][64], cb[64], cr[64];  // level-shifted, in 16ths, within +-2048
   for (int y = 0; y < 8; y++)
     for (int x = 0; x < 16; x += 2) {
       int32_t c[2][3];  // level-shifted Y, Cb, Cr in 65536ths, of the two pixels that share a chroma sample
@@ -253,11 +292,11 @@ bool pjpeg_mcu(pjpeg_t *j, pjpeg_pixel_t px, void *ctx) {
         c[k][0] = 19595 * r + 38470 * g + 7471 * b - (128 << 16);
         c[k][1] = -11058 * r - 21710 * g + 32768 * b;
         c[k][2] = 32768 * r - 27439 * g - 5329 * b;
-        lum[(x + k) / 8][y * 8 + (x + k) % 8] = (c[k][0] + 2048) >> 12;
+        lum[(x + k) / 8][y * 8 + (x + k) % 8] = (int16_t) ((c[k][0] + 2048) >> 12);
       }
       int32_t mb = (c[0][1] + c[1][1] + 4096) >> 13, mr = (c[0][2] + c[1][2] + 4096) >> 13;
-      cb[y * 8 + x / 2] = mb;
-      cr[y * 8 + x / 2] = mr;
+      cb[y * 8 + x / 2] = (int16_t) mb;
+      cr[y * 8 + x / 2] = (int16_t) mr;
       for (int k = 0; k < 2; k++) {  // what sharing the chroma sample costs
         int32_t eb = ((c[k][1] + 2048) >> 12) - mb, er = ((c[k][2] + 2048) >> 12) - mr;
         j->err += (uint32_t) (eb * eb + er * er);
@@ -267,6 +306,12 @@ bool pjpeg_mcu(pjpeg_t *j, pjpeg_pixel_t px, void *ctx) {
   block(j, lum[1], 0, 1);
   block(j, cb, 1, 2);
   block(j, cr, 2, 2);
+}
+
+bool pjpeg_mcu(pjpeg_t *j, pjpeg_pixel_t px, void *ctx) {
+  if (j->row * 8u >= j->h)
+    return false;
+  mcu(j, px, ctx, j->col, j->row * 8);
   j->col += 16;
   if (j->col < j->w)
     return true;
@@ -289,6 +334,17 @@ uint32_t pjpeg_end(pjpeg_t *j) {
     byte(j, o, 0xD9);
   }
   return j->o[0].len;
+}
+
+uint32_t pjpeg_tile(uint8_t *out, uint32_t cap, int quality, int drop, pjpeg_pixel_t px, void *ctx, int x, int y,
+                    int mcus) {
+  pjpeg_t j;
+  start(&j, 0, 0, quality, out, cap);
+  j.drop = drop;
+  for (int i = 0; i < mcus && j.o[0].len <= cap; i++)
+    mcu(&j, px, ctx, x + 16 * i, y);
+  flush(&j, j.o);
+  return j.o[0].len;
 }
 
 double pjpeg_mse(const pjpeg_t *j) { return j->w && j->h ? (double) j->err / 256 / ((double) j->w * j->h) : 0; }

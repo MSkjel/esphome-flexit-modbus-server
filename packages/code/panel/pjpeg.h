@@ -1,5 +1,6 @@
-// Baseline JPEG encoder for the screensaver photos. Always 4:2:2 with a restart marker after each MCU row, since
-// the panel's TJpgDec decodes each 8-line strip on its own. Width a multiple of 16, height of 8.
+// Baseline JPEG encoder, always 4:2:2. For the screensaver photos with a restart marker after each MCU row, since the
+// panel's TJpgDec decodes each 8-line strip on its own. Width a multiple of 16, height of 8. For the panel's
+// screenshots a tile at a time, each its own restart interval, see pjpeg_tile().
 // Copied into esphome-flexit-modbus-server by make -C sim esp_sync, edit it here.
 #pragma once
 #include <stdbool.h>
@@ -28,6 +29,7 @@ typedef struct {
   uint32_t cap;  // out's size
   uint64_t err;  // squared error so far, Y + Cb + Cr per pixel, in 256ths
   int n;         // outputs, o[0] goes to out and the others are only counted
+  int drop;      // AC values this small or smaller become 0, see pjpeg_tile()
   pjpeg_out_t o[1 + PJPEG_ALSO];
 } pjpeg_t;
 
@@ -41,6 +43,16 @@ void pjpeg_also(pjpeg_t *j, int quality);
 bool pjpeg_mcu(pjpeg_t *j, pjpeg_pixel_t px, void *ctx);
 // Finishes the JPEG. Returns its length, over cap if it didn't fit. Each output's is in o[i].len.
 uint32_t pjpeg_end(pjpeg_t *j);
+// Only the headers, SOI to SOS, with a restart marker every restart MCUs. Returns their length, written as far as cap
+// goes. A JPEG of tiles is these, the tiles with RST0..RST7 in turn between them and EOI.
+uint32_t pjpeg_head(uint8_t *out, uint32_t cap, int w, int h, int quality, int restart);
+// One restart interval: mcus MCUs from x, y on, rightwards, padded to a whole byte, without its marker. drop > 0
+// makes each block's AC values up to that size 0, for a tile that has to fit cap: faint detail goes first, edges
+// last. Returns its length, over cap if it didn't fit, then it stops. No state outside the call, the rest of the
+// JPEG can be made elsewhere.
+uint32_t pjpeg_tile(uint8_t *out, uint32_t cap, int quality, int drop, pjpeg_pixel_t px, void *ctx, int x, int y,
+                    int mcus);
+#define PJPEG_DC_ONLY 0x7FFF  // a drop that leaves each block only its average
 // Mean squared error per pixel, Y + Cb + Cr. The ESP compares it with the 16-colour version to pick the better one.
 double pjpeg_mse(const pjpeg_t *j);
 
