@@ -136,6 +136,8 @@ int plink_kind(uint16_t key) {
   }
   if (key >= K_ANIM_FRAMES && key <= K_ANIM_ROUNDS)
     return PLINK_BYTES;
+  if (key >= K_SAVER_LINE && key < K_SAVER_LINE + SAVER_LINES)
+    return PLINK_BYTES;
   if (key >= K_ITEM_DEF && key < K_ITEM_HELP + 0x40)  // ESP items, 0x40 keys a kind: all bytes but the values
     return K_ITEM_KIND(key) == K_ITEM_VALUE ? PLINK_VALUE : PLINK_BYTES;
   return PLINK_VALUE;

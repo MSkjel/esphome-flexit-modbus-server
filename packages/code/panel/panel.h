@@ -1,5 +1,6 @@
 // Code for packages/panel.yaml. Icons, views, actions and settings go by their ids in plink_*.h, in lower case.
 #pragma once
+#include <array>
 #include <bitset>
 #include <cctype>
 #include <cmath>
@@ -54,12 +55,35 @@ inline uint16_t note_psess;  // the panel's session at its last hello, the one t
 // Registers the CX60 has written since we started, and those still to go to the panel, see after_hello()
 inline std::bitset<0x200> seen, resend;
 
+// The screensaver's lines as K_SAVER_LINE takes them, each its size then its text, and those still to go
+inline std::array<std::string, SAVER_LINES> saver_lines;
+inline std::bitset<SAVER_LINES> saver_due;
+
 // loop() sends it
 inline void notify(const std::string &message, const std::string &icon_name, const std::string &level) {
   int lv = level == "alarm" ? NOTE_ALARM : level == "warning" ? NOTE_WARNING : NOTE_INFO;
   note = {(char) icon(icon_name.empty() ? "info" : icon_name), (char) lv};
   note += cut(message, PLINK_TEXT_MAX);
   note_queued = false;
+}
+
+// The screensaver's lines in place of the temperatures, each 16, 20 or 28 px, the nearest of those, or 16 without a
+// size. None brings the temperatures back. loop() sends those that changed. sizes is a FixedVector<int32_t> from
+// the API, a std::vector<int> from the script.
+template<typename Ints> void saver_text(const std::vector<std::string> &lines, const Ints &sizes) {
+  if (lines.size() > SAVER_LINES) {
+    ESP_LOGW("panel", "The screensaver shows %d lines at most, not %u", SAVER_LINES, (unsigned) lines.size());
+  }
+  for (size_t i = 0; i < SAVER_LINES; i++) {
+    int size = i < sizes.size() ? sizes[i] : 16;
+    std::string m(1, (char) (size >= 24 ? 28 : size >= 18 ? 20 : 16));
+    if (i < lines.size())
+      m += cut(lines[i], PLINK_TEXT_MAX);
+    if (m != saver_lines[i]) {
+      saver_lines[i] = m;
+      saver_due.set(i);
+    }
+  }
 }
 
 inline void show_view(const std::string &view) {
@@ -121,6 +145,8 @@ inline void after_hello(bool panel_started) {
     resend = seen;
   send_leds();
   send_time();
+  for (int i = 0; i < SAVER_LINES; i++)
+    saver_due[i] = saver_lines[i].size() > 1;  // the panel forgot them at the hello
   items_hello();
   picture::restarted();
   anim::restarted();
@@ -272,6 +298,16 @@ inline void send_note() {
     note.clear();
 }
 
+// The screensaver's lines that changed, as the link has room
+inline void send_saver_lines() {
+  for (int i = 0; i < SAVER_LINES; i++) {
+    const std::string &m = saver_lines[i];
+    if (saver_due[i] && link::fits(m.size()) &&
+        link::send(K_SAVER_LINE + i, (const uint8_t *) m.data(), (int) m.size()))
+      saver_due.reset(i);
+  }
+}
+
 // Every 20 ms. The pictures and animations share one slice, so the bus callbacks don't wait long.
 inline void loop() {
   static int last_hour = -1;  // local hour when the time was last sent
@@ -279,8 +315,10 @@ inline void loop() {
   track_connection();
   dispatch();
   bool connected = link::connected;
-  if (connected)
+  if (connected) {
     send_note();
+    send_saver_lines();
+  }
   // Each new local hour, so a DST change shows right away.
   ESPTime t = id(flexit_panel_time).now();
   if (connected && t.is_valid() && t.hour != last_hour) {
