@@ -214,9 +214,7 @@ api:
     # Lines on the screensaver in place of the temperatures, in the modes that show them. sizes in px, 16, 20 or 28,
     # one for each line, 16 for those without. No lines bring the temperatures back.
     - action: panel_saver_text
-      variables: &saver_text
-        lines: string[]
-        sizes: int[]
+      variables: &saver_text {lines: "string[]", sizes: "int[]"}
       then: &do_saver_text
         - lambda: flexit::panel::saver_text(lines, sizes);
     # view is dashboard, airflow, trends, sensors, comfort or smart_home

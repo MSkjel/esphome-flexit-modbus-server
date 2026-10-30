@@ -14,7 +14,7 @@ defaults:
 external_components:
   - source: github://MSkjel/esphome-flexit-modbus-server@${flexit_ref}
     refresh: ${flexit_refresh}
-    components: all  # by name, a ref without it yet would fail to validate
+    components: [flexit_panel_camera]
 
 flexit_panel_camera:
   id: panel_screen

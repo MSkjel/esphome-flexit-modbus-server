@@ -10,7 +10,9 @@
 extern "C" {
 #endif
 
-#define PJPEG_ALSO 2  // other qualities whose sizes it can count along with the one it writes
+#ifndef PJPEG_ALSO
+#define PJPEG_ALSO 2  // other qualities whose sizes it can count along with the one it writes, 0 on the panel
+#endif
 
 typedef uint32_t (*pjpeg_pixel_t)(void *ctx, int x, int y);  // 0xRRGGBB
 

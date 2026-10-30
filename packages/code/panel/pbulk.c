@@ -457,7 +457,7 @@ void pbulk_esp_no_answer(pbulk_esp_t *t) {
   t->sent = false;
   t->missed++;
   t->end_us = PBUS_END_US;
-  if (t->margin_us < 2000)
+  if (t->margin_us < PBULK_MARGIN_MAX_US)
     t->margin_us += PBULK_MARGIN_US;
 }
 
@@ -469,7 +469,7 @@ int pbulk_esp_window(pbulk_esp_t *t, uint32_t left_us, uint8_t *out) {
     return 0;
   // What fits in left_us minus the margin and turnaround. That's our frame and the panel's answer, at least both
   // empty. Spare room goes first to what the panel has waiting, since it answers with as much as fits, then ours.
-  if (left_us > 100000)
+  if (left_us > 100000)  // longer than a cycle is a clock that jumped, and keeps the int32 maths safe
     left_us = 100000;
   int32_t left = (int32_t) left_us - PBUS_TURN_US - t->margin_us;
   int over = left / PBUS_BYTE_US - PBULK_FRAME(0) - PBULK_ANSWER(0);
@@ -515,8 +515,8 @@ uint32_t pbulk_esp_gap_left(const pbulk_esp_t *t, pbus_gaps_t *g, uint32_t now_u
 void pbulk_esp_took(pbulk_esp_t *t, int32_t over_us) {
   if (over_us <= 0)
     return;
-  if (over_us > 2000)
-    over_us = 2000;
+  if (over_us > PBULK_MARGIN_MAX_US)
+    over_us = PBULK_MARGIN_MAX_US;
   if (t->margin_us < (uint16_t) over_us)
     t->margin_us = (uint16_t) over_us;
 }
@@ -528,8 +528,8 @@ void pbulk_esp_answer(pbulk_esp_t *t, const uint8_t *a, int n,
     return;
   t->sent = false;
   t->answered++;
-  if (t->margin_us >= 50)
-    t->margin_us -= 50;
+  if (t->margin_us >= PBULK_MARGIN_DECAY_US)
+    t->margin_us -= PBULK_MARGIN_DECAY_US;
   uint8_t st = a[PBULK_A_STATUS] & 3;
   uint32_t end = PBUS_END_US + (uint32_t) (a[PBULK_A_STATUS] >> 2) * PBUS_END_STEP_US;
   t->end_us = (uint16_t) (end < PBUS_END_MAX_US ? end : PBUS_END_MAX_US);

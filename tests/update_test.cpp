@@ -1,7 +1,6 @@
 // The panel updater on a PC: the download, the FC4 reply matcher, the stream's name, what each panel gets, a panel
 // left in its bootloader, the reset after a failure and millis() wrapping round.
-//   g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stubs -Ipackages/code
-//     tests/update_test.cpp packages/code/panel/update.cpp packages/code/panel/pbus.c -o update_test
+//   make -C tests update_test
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>

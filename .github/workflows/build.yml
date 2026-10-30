@@ -43,49 +43,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: The panel updater's probe
-        run: |
-          g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stubs -Ipackages/code \
-            tests/update_test.cpp packages/code/panel/update.cpp packages/code/panel/pbus.c -o update_test
-          ./update_test
-
-      - name: The panel's camera
-        run: |
-          g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stubs -Ipackages/code \
-            -Iesphome/components/flexit_panel_camera tests/camera_test.cpp \
-            esphome/components/flexit_panel_camera/panel_camera.cpp -o camera_test
-          ./camera_test
-
       - uses: actions/checkout@v7
         with:
           repository: MSkjel/ESP-ModbusRTUServer
           path: modbus-library
 
-      - name: The component on the bus
-        run: |
-          g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined \
-            -Itests/stubs -Ipackages/code -Iesphome/components/flexit_modbus_server -Imodbus-library tests/server_test.cpp \
-            esphome/components/flexit_modbus_server/flexit_modbus_server.cpp modbus-library/ModbusRTUServer.cpp \
-            packages/code/panel/pbus.c -o server_test
-          ./server_test
-
-      - name: The packages that change the CX60 for a while, across reboots
-        run: |
-          g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined \
-            -Itests/stubs -Ipackages/code -Iesphome/components/flexit_modbus_server -Imodbus-library tests/restart_test.cpp \
-            esphome/components/flexit_modbus_server/flexit_modbus_server.cpp modbus-library/ModbusRTUServer.cpp \
-            packages/code/panel/pbus.c -o restart_test
-          ./restart_test
-
-      - name: Humidity boost and summer cooling, when they start and stop
-        run: |
-          for t in humidity_boost_test summer_cooling_test; do
-            g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined \
-              -Itests/stubs -Ipackages/code -Iesphome/components/flexit_modbus_server -Imodbus-library tests/$t.cpp \
-              esphome/components/flexit_modbus_server/flexit_modbus_server.cpp modbus-library/ModbusRTUServer.cpp \
-              packages/code/panel/pbus.c -o $t
-            ./$t
-          done
+      - name: The host tests, see tests/Makefile
+        run: make -C tests MODBUS=$GITHUB_WORKSPACE/modbus-library
 
   # The panel firmware's tests, esp_test too, against the panel code here, at the firmware commit in
   # packages/code/panel/proto.lock

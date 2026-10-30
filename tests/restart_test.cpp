@@ -1,10 +1,7 @@
 // Reboot test for controls.h, co2.h and fireplace.h, which change CX60 settings for a while, on the component and
 // ESPHome's flash as tests/stubs has them. After hours of CO2, fireplace mode, changes by hand and reboots, the CX60
-// must still have the user's fan speeds and mode. Needs the Modbus library, ESP-ModbusRTUServer, in $LIB.
-//   g++ -std=gnu++20 -O1 -Wall -Wextra -Wno-unused-parameter -Werror -fsanitize=address,undefined -Itests/stubs
-//     -Ipackages/code -Iesphome/components/flexit_modbus_server -I$LIB tests/restart_test.cpp
-//     esphome/components/flexit_modbus_server/flexit_modbus_server.cpp $LIB/ModbusRTUServer.cpp
-//     packages/code/panel/pbus.c -o restart_test && ./restart_test [runs] [quiet] [run to trace]
+// must still have the user's fan speeds and mode. Needs the Modbus library, see the Makefile.
+//   make -C tests restart_test
 #include <cmath>
 #include <cstdint>
 #include <cstdio>

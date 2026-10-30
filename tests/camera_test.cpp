@@ -1,7 +1,5 @@
 // flexit_panel_camera as the API uses it: who waits for an image, who gets it, and its bytes a chunk at a time.
-//   g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stubs -Ipackages/code
-//     -Iesphome/components/flexit_panel_camera tests/camera_test.cpp
-//     esphome/components/flexit_panel_camera/panel_camera.cpp -o camera_test && ./camera_test
+//   make -C tests camera_test
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>

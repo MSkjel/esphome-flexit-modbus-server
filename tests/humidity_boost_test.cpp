@@ -1,9 +1,6 @@
 // humidity_boost.h on the component and a CX60 (cx60.h): when a boost starts and ends, and the CX60's mode.
-// Needs the Modbus library, ESP-ModbusRTUServer, in $LIB.
-//   g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stubs -Ipackages/code
-//     -Iesphome/components/flexit_modbus_server -I$LIB tests/humidity_boost_test.cpp
-//     esphome/components/flexit_modbus_server/flexit_modbus_server.cpp $LIB/ModbusRTUServer.cpp
-//     packages/code/panel/pbus.c -o humidity_boost_test && ./humidity_boost_test
+// Needs the Modbus library, see the Makefile.
+//   make -C tests humidity_boost_test
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
