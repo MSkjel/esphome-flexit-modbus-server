@@ -20,6 +20,8 @@ inline constexpr int16_t BAND[5] = {0, 52, 92, 118, 138};  // first row of each 
 inline constexpr int RB_RX = 100, RB_RY = 96;              // the rainbow's outer radii
 inline constexpr int LH_X = 268;                           // the lighthouse, on the coast's point
 inline constexpr int PENNANT_MAX = 36;                     // the pennant's length in a strong wind
+inline constexpr int PENNANT_LEFT = PENNANT_MAX + 1;       // how far from the pole it reaches blown left,
+inline constexpr int PENNANT_RIGHT = PENNANT_MAX + 3;      // and right
 inline constexpr uint8_t NONE = 255;                       // a row in the per-column arrays: none in this column
 // Radii of the sun's disc and its rings, and of the moon's disc and its glow
 inline constexpr int SUN_R = 13, RING1_R = 21, RING2_R = 30;
@@ -145,13 +147,14 @@ struct Cloud {
 // A one-colour bitmap. Layer 0 is drawn in the sky behind the ground, 1 in front of it, 2 on top of everything.
 struct Sprite {
   int16_t x, y;
-  uint8_t w, h;                  // at most 32 by 24
+  uint8_t w, h;                  // at most 64 by 24
   uint16_t layer : 2, tag : 14;  // tag: the L_* it's left out for, or 0
   uint32_t c : 24, ix : 8;       // 0xRRGGBB, and its place in the palette
-  uint32_t rows[24];             // leftmost pixel in the highest of w bits
+  uint64_t rows[24];             // leftmost pixel in the highest of w bits
 };
 inline constexpr int SPRITES = 32;
 static_assert(L_BOAT < 1 << 14, "the L_* fit Sprite::tag");
+static_assert(PENNANT_MAX + 4 <= 64, "the pennant's sprite fits its rows");
 
 // The land's shape, which only depends on the place and the landscape, so it's kept from one scene to the next
 struct Land {

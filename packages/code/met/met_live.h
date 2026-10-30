@@ -262,7 +262,7 @@ inline void skyline(const Scene &s, uint8_t top[W], bool far = true) {
   if (s.cabin)
     up(s.cabin_x - 17, s.cabin_x + 17, s.cabin_y - 32);
   if (s.pole_x >= 0)
-    up(s.pole_x - PENNANT_MAX - 1, s.pole_x + PENNANT_MAX + 3, s.pole_top);
+    up(s.pole_x - PENNANT_LEFT, s.pole_x + PENNANT_RIGHT, s.pole_top);
   if (s.lighthouse)
     up(LH_X - 6, LH_X + 6, s.lh_y - 34);
   static constexpr int8_t ROOF[] = {0, 5, 12, 14};  // a flat roof, a box on it, an antenna, a spire
