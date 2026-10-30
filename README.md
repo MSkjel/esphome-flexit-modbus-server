@@ -27,7 +27,7 @@ This project implements a Modbus server for Flexit ventilation systems using ESP
 
 | MCU             | RS485 Breakout Board | Notes                                                                 |
 |-----------------|---------------------|-----------------------------------------------------------------------|
-| XIAO-ESP32-C3   | XIAO-RS485-Expansion-Board  | [Details](hardware/xiao-esp32-c3-rs485-breakout-board-for-seeed-studio-xiao-tp8485e.md) |
+| XIAO ESP32-C3, or any other XIAO | XIAO RS485 Expansion Board | [Details](hardware/xiao-esp32-c3-rs485-breakout-board-for-seeed-studio-xiao-tp8485e.md) |
 
 ---
 
@@ -37,7 +37,8 @@ This project implements a Modbus server for Flexit ventilation systems using ESP
    (see [Recommended hardware](#recommended-hardware)).
 
 2. **Create your ESPHome config.** Start from [`example.yaml`](example.yaml). It's set up for a XIAO ESP32-C3 on
-   the XIAO RS485 board, so change the board and pins to match your hardware.
+   the XIAO RS485 board. Another XIAO (C6, S3, ...) only needs its board name, the pins are the same. Other
+   hardware needs its pins too.
 
 3. **Pick the packages you want** from the [table below](#packages) for the `files:` list, then flash. In
    `example.yaml` that's:

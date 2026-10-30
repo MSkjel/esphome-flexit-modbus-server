@@ -1,5 +1,6 @@
-# Example config. Board and pins are for a XIAO ESP32-C3 on the XIAO RS485 board (see hardware/),
-# change them to whatever you're using. Any ESP32/ESP8266 with an RS485 transceiver should work.
+# Example config. Board and pins are for a XIAO ESP32-C3 on the XIAO RS485 board (see hardware/). Another XIAO
+# only needs its board name, the pins are the same. Anything else, change them to whatever you're using. Any
+# ESP32/ESP8266 with an RS485 transceiver should work.
 esphome:
   name: flexit
   friendly_name: Flexit
@@ -22,11 +23,11 @@ wifi:
   fast_connect: true             # needed if powered from the CX60
 
 substitutions:
-  # XIAO RS485 board pins, change these for your hardware
-  flexit_tx_pin: GPIO6
-  flexit_rx_pin: GPIO7
+  # XIAO RS485 board pins, the D names are the same on every XIAO. Change these for other hardware
+  flexit_tx_pin: D4
+  flexit_rx_pin: D5
   # DE/RE pin. Remove if your RS485 board doesn't have one
-  flexit_tx_enable_pin: GPIO4
+  flexit_tx_enable_pin: D2
   # flexit_tx_enable_direct: "false"   # if your board wants DE active low
   flexit_address: "3"
   # branch/tag for packages and component, e.g. dev for testing
