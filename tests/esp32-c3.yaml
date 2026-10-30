@@ -17,6 +17,7 @@ substitutions:
   flexit_rx_pin: D5
   flexit_tx_enable_pin: D2
   flexit_tx_enable_direct: "false"  # builds the inverted DE pin, esp32.yaml has the direct one
+  flexit_address: "1"  # panel.yaml wants the ESP at 1
 
 packages:
   common: !include common.yaml

@@ -414,7 +414,7 @@ int main(int argc, char **argv) {
        }},
   };
   global_preferences = &flash;
-  log_on = argc <= 2;
+  log_on = getenv("LOG") != nullptr;
   for (auto &c : cases) {
     start_over();
     case_bad = 0;

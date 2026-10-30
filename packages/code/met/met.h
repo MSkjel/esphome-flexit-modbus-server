@@ -132,7 +132,8 @@ inline bool new_drawing() {
   if (!picture::has_ram(sizeof(Drawing) + SPRITES * sizeof(Sprite) + ov_bytes + (land ? 0 : sizeof(Land)),
                         sizeof(Drawing)))
     return false;
-  if (!land && (land = RAMAllocator<Land>().allocate(1)))
+  bool new_land = !land;
+  if (new_land && (land = RAMAllocator<Land>().allocate(1)))
     land->made = false;
   Drawing *c = RAMAllocator<Drawing>().allocate(1);
   Sprite *sprite = RAMAllocator<Sprite>().allocate(SPRITES);
@@ -141,6 +142,10 @@ inline bool new_drawing() {
     RAMAllocator<Drawing>().deallocate(c, 1);
     RAMAllocator<Sprite>().deallocate(sprite, SPRITES);
     RAMAllocator<uint8_t>().deallocate(ov, ov_bytes);
+    if (new_land) {
+      RAMAllocator<Land>().deallocate(land, 1);
+      land = nullptr;
+    }
     return false;
   }
   c->scene.sprite = sprite;

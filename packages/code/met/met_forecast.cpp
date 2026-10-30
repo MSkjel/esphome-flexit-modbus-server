@@ -79,7 +79,7 @@ bool Reader::hour(std::string_view e) {
   };
   auto symbol = [&](size_t from, char *out, size_t size) {  // out stays "" without one
     size_t s = at("symbol_code", from);
-    if (s == std::string_view::npos || e[s] != '"')
+    if (s == std::string_view::npos || s >= e.size() || e[s] != '"')
       return;
     size_t end = e.find('"', s + 1);
     if (end != std::string_view::npos) {

@@ -21,7 +21,7 @@ template<typename T> void drop(std::vector<T> &v) { std::vector<T>().swap(v); } 
 
 // Whether the ESP has `bytes` free with some to spare, `block` of it in one piece
 inline bool has_ram(size_t bytes, size_t block) {
-  RAMAllocator<uint8_t> ram;
+  RAMAllocator<uint8_t> ram(RAMAllocator<uint8_t>::ALLOC_INTERNAL);  // vectors and new come from there, not PSRAM
   return ram.get_free_heap_size() >= bytes + 8192 && ram.get_max_free_block_size() >= block;
 }
 

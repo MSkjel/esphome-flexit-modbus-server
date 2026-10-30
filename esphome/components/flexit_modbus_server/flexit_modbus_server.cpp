@@ -22,8 +22,9 @@ static constexpr size_t MAX_WRITE_REGS = 123;     // most registers in an FC16
 static constexpr size_t MAX_UPDATE_DATA = 249;    // most data in a 0x64 frame
 static constexpr size_t NUM_INPUT_REGISTERS = 4;  // the CX60 reads 4 with FC4 to find its panels
 
-static constexpr uint32_t ISR_US = 150;   // UART interrupt latency, worst case
-static constexpr uint32_t T35_US = 1900;  // Modbus t3.5 above 19200 baud is 1.75 ms, plus a bit
+static constexpr uint32_t ISR_US = 150;          // UART interrupt latency, worst case
+static constexpr size_t RX_THRESHOLD_MAX = 128;  // the ESP8266's FIFO, and what we take when the UART doesn't say
+static constexpr uint32_t T35_US = 1900;         // Modbus t3.5 above 19200 baud is 1.75 ms, plus a bit
 
 #ifdef USE_FLEXIT_TCP_BRIDGE
 static constexpr uint8_t FRAME_DIR_TX = 'T';  // block header, ours
@@ -35,7 +36,7 @@ static constexpr uint32_t TCP_RETRY_MS = 10000;  // between tries at listening
 // frame[1]), given `available` bytes are present. The CX60 blasts frames with no
 // interframe gap, so we size each one by its function code and let the CRC confirm
 // the boundary. Every frame on this bus is 8 bytes except the 0x10 register
-// broadcasts (sized by their byte-count field) and exceptions (5). Returns 0 for
+// broadcasts and the 0x64 update frames (sized by their length byte) and exceptions (5). Returns 0 for
 // a function code we don't handle, so the caller resyncs.
 static size_t expected_frame_length(const uint8_t *frame, size_t available) {
   const uint8_t function = frame[1];
@@ -251,7 +252,8 @@ void FlexitModbusServer::on_fc65_(uint8_t *data, size_t, bool broadcast) {
 
   // Ours changed again after the CX60 read it, it reads the new one at its next poll
   bool newer = mb_.getCoil(address) && address == read_reg_ && before != read_value_;
-  read_reg_ = UINT16_MAX;
+  if (address == read_reg_)  // another panel's register passed on in between doesn't end the read
+    read_reg_ = UINT16_MAX;
   if (newer)
     return;
   mb_.setHoldingRegister(address, value);
@@ -317,7 +319,7 @@ uint32_t FlexitModbusServer::status_age_us() {
 
 size_t FlexitModbusServer::rx_threshold_() {
   size_t threshold = this->parent_->get_rx_full_threshold();
-  return threshold == 0 || threshold > 128 ? 128 : threshold;
+  return threshold == 0 || threshold > RX_THRESHOLD_MAX ? RX_THRESHOLD_MAX : threshold;
 }
 
 // The UART hands bytes over at its RX threshold, or 2 byte times after the line goes quiet if nothing follows

@@ -25,7 +25,7 @@ struct Show {
 // clouds of the high layer, or of the middle and low ones
 inline bool has_clouds(const Scene &s, bool high) {
   for (int i = 0; i < s.nclouds; i++)
-    if ((s.cloud_layer[i] == 0) == high)
+    if (high_cloud(s, i) == high)
       return true;
   return false;
 }
@@ -54,7 +54,7 @@ inline const Show SHOWS[] = {
      [](const Scene &s) { return s.at.thunder; }},
     {"Gentle snowfall", L_PREC, snowfall, prec_redo, in_gale,
      [](const Scene &s) { return s.at.snow; }},
-    {"Light rain", L_PREC, light_rain, prec_redo, in_gale,
+    {"Light rain", L_PREC, snowfall, prec_redo, in_gale,
      [](const Scene &s) { return s.at.rain; }},
     {"Fog in the valley", L_FLAG, valley_fog, nullptr, nullptr,
      [](const Scene &s) { return s.at.fog > 30 && !s.at.dark; }},

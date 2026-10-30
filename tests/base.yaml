@@ -1,0 +1,26 @@
+# What every test config has: stricter warnings than a normal build (CI fails on any warning from our own code, see
+# check_warnings.sh), the network, and the component from this checkout.
+esphome:
+  build_flags:
+    - -Wall
+    - -Wextra
+    - -Wno-unused-parameter
+    - -Wsign-compare
+    - -Wunused-but-set-variable
+    - -Wunused-variable
+
+api:
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: "ci"
+  password: "ci-password"
+
+# Included after core.yaml, so this is listed after its GitHub source and is the one built
+external_components:
+  - source:
+      type: local
+      path: ../esphome/components
+    components: [flexit_modbus_server]
+

@@ -672,8 +672,10 @@ unsigned pzip(pzip_t *z, uint8_t *out) {
   // hist goes into the table over the first pieces, top first, so no piece takes long. Without taking a place from
   // the data, which is nearer.
   for (uint32_t stop = z->ins + PZIP_TABLE; z->table && z->ins < z->nh && z->ins < stop; z->ins++) {
+    if (z->ins + 2 >= z->nh + z->n)
+      break;  // the hash reads 3 bytes
     uint16_t *t = &z->table[pz_hash(z, z->ins)];
-    if (!*t && z->ins + 2 < z->nh + z->n)
+    if (!*t)
       *t = (uint16_t) (z->ins + 1);
   }
   put(&w, 1, 1);

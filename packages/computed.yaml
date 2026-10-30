@@ -18,6 +18,8 @@ sensor:
     accuracy_decimals: 0
     update_interval: 60s
     lambda: |-
+      if (!id(server)->fresh())
+        return {};
       if (id(server)->read_holding_register(flexit_modbus_server::REG_PERCENTAGE_HEAT_EXCHANGER) == 0 ||
           id(server)->read_holding_register(flexit_modbus_server::REG_PERCENTAGE_HEATING) != 0 ||
           id(server)->read_holding_register(flexit_modbus_server::REG_PERCENTAGE_COOLING) != 0) {
@@ -44,6 +46,8 @@ sensor:
     accuracy_decimals: 0
     update_interval: 20s
     lambda: |-
+      if (!id(server)->fresh())
+        return NAN;  // the integration below skips it, so a bus outage adds no energy
       return id(server)->read_holding_register(flexit_modbus_server::REG_PERCENTAGE_HEATING)
              * (${flexit_heater_power}) / 100.0f;
 
@@ -84,6 +88,8 @@ binary_sensor:
     name: "Alarm"
     device_class: problem
     lambda: |-
+      if (!id(server)->fresh())
+        return {};
       for (int reg = flexit_modbus_server::REG_ALARM_SENSOR_SUPPLY_FAULTY;
            reg <= flexit_modbus_server::REG_ALARM_FILTER_CHANGE; reg++) {
         if (id(server)->read_holding_register(reg) != 0) {

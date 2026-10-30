@@ -146,7 +146,7 @@ inline void after_hello(bool panel_started) {
   send_leds();
   send_time();
   for (int i = 0; i < SAVER_LINES; i++)
-    saver_due[i] = saver_lines[i].size() > 1;  // the panel forgot them at the hello
+    saver_due[i] = !saver_lines[i].empty();  // the panel forgot them at the hello, an empty one is its gap
   items_hello();
   picture::restarted();
   anim::restarted();

@@ -509,7 +509,7 @@ static void sun_moon(Scene &s, const Now &n) {
   if (n.sun.el > -1) {
     s.sun = true;
     s.sun_x = (int16_t) sky_x(n.sun.az);
-    s.sun_y = (int16_t) sky_y(n.sun.el);
+    s.sun_y = (int16_t) std::max(SUN_R + 2, sky_y(n.sun.el));  // stays in the picture south of Norway
     uint32_t behind = s.rgb[C_SKY + std::min(band_of(s.sun_y), 3)];
     if (n.grey > 0.75f) {
       s.rgb[C_SUN] = mix(behind, 0xFFFFFF, 0.3f);  // a pale disc through the clouds
@@ -523,7 +523,7 @@ static void sun_moon(Scene &s, const Now &n) {
   if (n.moon.el > 1 && n.sun.el < 10) {
     s.moon = true;
     s.moon_x = (int16_t) sky_x(n.moon.az);
-    s.moon_y = (int16_t) sky_y(n.moon.el);
+    s.moon_y = (int16_t) std::max(MOON_R + 2, sky_y(n.moon.el));
     s.moon_phase = n.moon_phase;
     s.rgb[C_MOON] = mix(0xDCE6F2, 0xF4F6FA, 1 - n.light);
     // No glow round a new moon or a thin crescent, which show little or no disc
@@ -543,7 +543,7 @@ static void aurora(Scene &s, const Now &n) {
     return;
   s.aurora = true;
   s.moon_glow = false;  // the ribbons take three of the 16 colours
-  float p0 = a.f() * 6.283f, p1 = a.f() * 6.283f, p2 = a.f() * 6.283f, lift = (float) ((n.t / 3600) % 7) * 2;
+  float p0 = a.f() * 2 * kPiF, p1 = a.f() * 2 * kPiF, p2 = a.f() * 2 * kPiF, lift = (float) ((n.t / 3600) % 7) * 2;
   int x1 = a.in(40, 120), x2 = a.in(W - 60, W + 80);  // where the lower ribbon starts and ends
   for (int x = 0; x < W; x++) {                       // ribbons thinning out towards their ends
     float mid = 44 + lift + 16 * sinf(x / 58.0f + p0) + 5 * sinf(x / 23.0f + p1);
@@ -559,7 +559,8 @@ static void aurora(Scene &s, const Now &n) {
   // mostly green under violet, some nights teal under pink, now and then green under red
   static const uint32_t HUES[3][3] = {
       {0x40B878, 0x7858A8, 0x98E0B8}, {0x38A8A0, 0xB05890, 0x90D8D0}, {0x58B860, 0xB04848, 0xA0E0A0}};
-  const uint32_t *hue = HUES[a.f() < 0.6f ? 0 : a.f() < 0.6f ? 1 : 2];
+  float pick = a.f();
+  const uint32_t *hue = HUES[pick < 0.6f ? 0 : pick < 0.85f ? 1 : 2];
   s.rgb[C_AUR] = mix(s.rgb[C_SKY], hue[0], 0.42f);
   s.rgb[C_AUR_TOP] = mix(s.rgb[C_SKY], hue[1], 0.4f);
   s.rgb[C_AUR_EDGE] = mix(s.rgb[C_SKY], hue[2], 0.5f);
@@ -615,7 +616,8 @@ static void clouds(Scene &s, const Now &n) {
     // A layer moves a quarter of an hour's way at a time, each a third of that apart, so a redraw every five
     // minutes moves one layer and the rows only the others are in stay the same
     float minutes = floorf((into_hour / 60.0f + 5 * l) / 15) * 15;
-    s.drift[l] = (int) (minutes * (0.3f + w.wind * 0.12f) * (l + 1)) % FIELD;
+    s.drift[l] = ((int) (minutes * (0.3f + w.wind * 0.12f) * (l + 1)) * n.wdir % FIELD + FIELD) %
+                 FIELD;  // with the wind, as live
     int count = (int) (layer[l] / 100 * (l == 0 ? 5 : 7) + 0.5f), first = s.nclouds;
     for (int k = 0; k < count && s.nclouds < (int) std::size(s.cloud); k++) {
       Cloud &c = s.cloud[s.nclouds];
@@ -918,7 +920,7 @@ static void ground(Scene &s, const Now &n) {
   Rng h{seed};
   float ph[8];
   for (float &v : ph)
-    v = h.f() * 6.283f;
+    v = h.f() * 2 * kPiF;
   Land &land = *s.land;
   if (!land.made || land.seed != seed || land.ground != n.o.ground) {
     shape(land, n.o.ground, ph);
@@ -1041,7 +1043,7 @@ static void fireworks(Scene &s, const Now &n) {
   uint32_t cols[3] = {rgb4(255, 100, 170), rgb4(100, 220, 255), rgb4(255, 230, 120)};
   s.tag = L_FIREWORKS;
   for (int i = 0; i < 4; i++)
-    burst(s, fw.in(30, W - 30), fw.in(24, 100), fw.in(9, 12), cols[(i + fw.in(0, 1)) % 3],
+    burst(s, fw.in(30, W - 30), fw.in(24, 100), fw.in(9, 11), cols[(i + fw.in(0, 1)) % 3],  // 23 rows, a sprite's 24
           s.nstars ? s.rgb[C_STAR] : 0xFFFFFF);
   s.tag = 0;
 }

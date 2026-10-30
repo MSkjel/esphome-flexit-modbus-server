@@ -90,10 +90,11 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        config: [esp32, esp32-c3, esp8266, esp32-panel-minimal]
+        config: [esp32, esp32-c3, esp8266, esp8266-minimal, esp32-panel-minimal]
     steps:
       - uses: actions/checkout@v7
 
@@ -121,3 +122,11 @@ jobs:
 
       - name: Check for warnings in our code
         run: tests/check_warnings.sh build.log
+
+      - name: The component built is this checkout's, not the one core.yaml fetches
+        run: |
+          name=$(sed -n 's/^  name: //p' tests/${{ matrix.config }}.yaml)
+          for f in flexit_modbus_server.cpp flexit_modbus_server.h; do
+            cmp "tests/.esphome/build/$name/src/esphome/components/flexit_modbus_server/$f" \
+                "esphome/components/flexit_modbus_server/$f"
+          done

@@ -25,9 +25,8 @@ with this firmware works fine without the ESP, just switch ESP off under System 
 ```yaml
 substitutions:
   flexit_address: "1"
-  flexit_ref: panel
+  flexit_ref: main
   flexit_refresh: 1d
-  modbus_library_ref: dev
 
 packages:
   flexit:
@@ -47,9 +46,8 @@ packages:
         vars: {latitude: "59.9139", longitude: "10.7522"}
 ```
 
-The panel packages are on the `panel` branch, and they need the Modbus library's `dev` branch, which switches the
-RS-485 direction pin in hardware. The panel's bootloader needs that. If the ESP was built with the library's
-`main` before, do a Clean Build Files, or ESPHome keeps the old library.
+The panel packages need the current Modbus library, its `main`. If the ESP was built before October 2026, do a
+Clean Build Files, or ESPHome keeps the old library.
 
 `panel.yaml` gives Home Assistant `Panel Connected`, `Panel Temperature` (the panel's own sensor),
 `Panel Firmware`, `Panel Action` (filter reset and the like, picked on the panel), the screensaver and LED

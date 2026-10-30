@@ -283,11 +283,15 @@ inline void count(uint32_t deadline_us) {
   uint32_t pal[16] = {};
   median_cut(S.hist, 16, pal, bins);
   S.colours = (int) std::min<size_t>(bins.size(), 17);
-  S.kept = S.shown.format == PIC_PALETTE && S.shown.w == S.made.w && S.shown.h == S.made.h &&
+  S.kept = S.shown.name == S.name && S.shown.format == PIC_PALETTE && S.shown.w == S.made.w && S.shown.h == S.made.h &&
            nearly_as_good(S.shown.pal, pal, S.hist, bins);
   memcpy(S.made.pal, S.kept ? S.shown.pal : pal, sizeof S.made.pal);
   fill_lut(S.lut, S.hist, S.made.pal, 16);
   drop(S.hist);
+  if (!has_ram(POOL + PIC_MAX_W, POOL + PIC_MAX_W)) {  // the rows, which start() didn't count
+    no_ram();
+    return;
+  }
   S.sums = Sums();
   S.made.data.reserve(POOL + PIC_MAX_W);  // all it needs, past POOL it's a JPEG anyway
   S.made.rows.push_back(0);
@@ -481,7 +485,7 @@ inline bool plan() {
   return true;
 }
 
-// The panel's K_PIC_ACK = status << 24 | id << 16 | bytes received, from panel.h
+// The panel's K_PIC_ACK = status << 24 | id << 16 | bytes received, see plink_keys.h
 inline void ack(uint32_t a) {
   uint8_t st = a >> 24;
   if (S.phase != SEND || !S.t.answers(a))
@@ -513,11 +517,14 @@ inline void ack(uint32_t a) {
   }
 }
 
-// The panel restarted. It keeps the picture in RAM, so it goes again.
+// The panel restarted. It keeps the picture in RAM, so it goes again. One it never took (no answer, no RAM) is
+// made again.
 inline void restarted() {
   if (S.phase == IDLE && S.name == S.want && !S.shown.data.empty()) {
     S.made = std::move(S.shown);
     S.phase = PLAN;
+  } else if (S.phase == IDLE && S.name == S.want) {
+    S.redo = true;
   } else if (S.phase == SEND) {
     S.phase = PLAN;
   }
