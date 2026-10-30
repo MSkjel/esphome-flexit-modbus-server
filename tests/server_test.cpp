@@ -1,9 +1,6 @@
 // The component on a PC, ESPHome stood in by tests/stubs: frames in from the bus, what it answers and keeps.
-// Needs the Modbus library, ESP-ModbusRTUServer, in $LIB.
-//   g++ -std=gnu++20 -O1 -Wall -Wextra -Wno-unused-parameter -Werror -fsanitize=address,undefined -Itests/stubs
-//     -Ipackages/code -Iesphome/components/flexit_modbus_server -I$LIB tests/server_test.cpp
-//     esphome/components/flexit_modbus_server/flexit_modbus_server.cpp $LIB/ModbusRTUServer.cpp
-//     packages/code/panel/pbus.c -o server_test
+// Needs the Modbus library, see the Makefile.
+//   make -C tests server_test
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>

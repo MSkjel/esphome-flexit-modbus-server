@@ -220,11 +220,11 @@ The pictures and animations have [their own actions](#picture-and-animation-acti
 
 The screensaver shows the indoor and outdoor temperatures in `Clock and temperatures` and `Picture and
 everything`. `panel_saver_text` puts up to 4 lines of your own there instead, each 16, 20 or 28 px tall (`sizes`,
-16 for a line without one). Over a picture there's room for about 72 px, so a 28 px line and two 16 px ones. Lines
-that don't fit are left out, one too wide ends in dots, and an empty one leaves a gap. No lines bring the
-temperatures back, and so does the ESP going away. The ESP keeps the lines through a panel restart, not through
-its own, so update them from an automation that also runs now and then. In Home Assistant, a new automation's
-Edit in YAML:
+16 for a line without one, other sizes go to the nearest). Over a picture there's room for about 72 px, so a 28 px
+line and two 16 px ones. Lines that don't fit are left out, one too wide ends in dots, and an empty one leaves a
+gap. No lines bring the temperatures back, and so does the ESP going away. The ESP keeps the lines through a panel
+restart, not through its own, so update them from an automation that also runs now and then. In Home Assistant, a
+new automation's Edit in YAML:
 
 ```yaml
 alias: Panel screensaver lines
@@ -463,7 +463,7 @@ them. It's on the device's page, or add it to a dashboard of your own.
 
 ```yaml
       - path: packages/panel/screen_camera.yaml
-        vars: {quality: "80"}  # JPEG quality, 1-100: higher is sharper text and slower, 90 at most
+        vars: {quality: "80"}  # JPEG quality, 1-100: higher is sharper text and slower, best kept at 90 or under
                                # category: "" for an ordinary entity, on the dashboards
 ```
 

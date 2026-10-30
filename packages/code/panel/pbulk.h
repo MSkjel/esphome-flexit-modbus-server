@@ -53,6 +53,7 @@ enum { PBULK_A_WANT = 12, PBULK_A_PAYLOAD = 13 };
 #define PBULK_ANSWER_MAX 160  // the panel's stream went fastest with this in bulk_test, of 113, 160 and 200
 #define PBULK_ANSWER(n) (PBULK_A_PAYLOAD + (n) + 2)
 #define PBULK_ANSWER_FRAME_MAX PBULK_ANSWER(PBULK_ANSWER_MAX)
+#define PBULK_PAYLOAD_MAX (PBULK_ANSWER_MAX > PBULK_MAX ? PBULK_ANSWER_MAX : PBULK_MAX)  // either way's longest
 
 // Answer status. The bus status from pbus.h, or PB_BUSY when the panel had no room for the ESP's messages
 enum { PB_OK = PBUS_OK, PB_REFUSED = PBUS_REFUSED, PB_NO_GAPS = PBUS_NO_GAPS, PB_BUSY };
@@ -100,7 +101,9 @@ static inline bool pbulk_panel_free(const pbulk_panel_t *p) { return !p->next_fu
 
 // ---- ESP side
 #define PBULK_ESP_BUF 2048
-#define PBULK_MARGIN_US 250  // extra margin after each frame that wasn't answered, up to 2 ms
+#define PBULK_MARGIN_US 250       // extra margin after each frame that wasn't answered
+#define PBULK_MARGIN_MAX_US 2000  // the most margin it builds up
+#define PBULK_MARGIN_DECAY_US 50  // and what each answer takes off it again
 
 typedef struct {
   uint8_t q[PBULK_ESP_BUF];  // waiting messages in payload format, the first one numbered num

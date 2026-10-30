@@ -36,7 +36,7 @@ static void sprites(const Scene &s, int y, uint8_t *out, int layer) {
     const Sprite &p = s.sprite[i];
     if (p.layer != layer || (p.tag & s.live) || y < p.y || y >= p.y + p.h)
       continue;
-    uint32_t bits = p.rows[y - p.y];
+    uint64_t bits = p.rows[y - p.y];
     for (int c = 0; c < p.w; c++)
       if (bits >> (p.w - 1 - c) & 1) {
         int x = p.x + c;

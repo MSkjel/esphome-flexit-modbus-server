@@ -66,7 +66,8 @@ enum { PIC_BEGIN_FORMAT = 1, PIC_BEGIN_W, PIC_BEGIN_H = 4, PIC_BEGIN_SIZE = 6, P
 // none. With no rows only the palette changes.
 #define K_PIC_PATCH 0x101
 enum { PIC_PATCH_Y = 1, PIC_PATCH_COUNT = 3, PIC_PATCH_SIZE = 5, PIC_PATCH_HEAD = 9 };
-// The picture's bytes, a multiple of 4 (PBULK_DATA_KEY). Bytes past the end are ignored. From the panel: a screenshot's
+// The picture's bytes, a multiple of 4 (PBULK_DATA_KEY). Bytes past the end are ignored. From the panel: a
+// screenshot's tiles, see K_SHOT
 #define K_PIC_DATA 0x102
 #define K_PIC_END 0x103    // plink_crc32 of the size bytes of DATA
 #define K_PIC_ACK 0x104    // panel -> ESP: status (PIC_*) << 24 | id << 16 | bytes received

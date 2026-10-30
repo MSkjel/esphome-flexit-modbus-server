@@ -13,9 +13,9 @@ logger:
   level: ERROR
 
 substitutions:
-  flexit_tx_pin: GPIO6
-  flexit_rx_pin: GPIO7
-  flexit_tx_enable_pin: GPIO4
+  flexit_tx_pin: D4
+  flexit_rx_pin: D5
+  flexit_tx_enable_pin: D2
   flexit_tx_enable_direct: "false"  # builds the inverted DE pin, esp32.yaml has the direct one
 
 packages:

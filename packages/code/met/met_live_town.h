@@ -22,7 +22,7 @@ inline Cols water(const Scene &s, int y0, int y1, bool pass) {
     row(s, y, r);
     for (int x = 0; x < W; x++) {
       int d = x - s.pole_x;
-      bool pole = pass && s.pole_x >= 0 && d >= -PENNANT_MAX - 1 && d <= PENNANT_MAX + 3 &&
+      bool pole = pass && s.pole_x >= 0 && d >= -PENNANT_LEFT && d <= PENNANT_RIGHT &&
                   (y < s.pole_top + 16 || d == 0 || d == 1);
       if ((r[x] != s.ix[C_SEA] && r[x] != s.ix[C_WAVE] && !pole) ||
           (s.lighthouse && abs(x - LH_X) < 5 && y > s.lh_y - 34))

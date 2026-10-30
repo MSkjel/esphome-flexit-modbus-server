@@ -1,9 +1,6 @@
 // summer_cooling.h on the component and a CX60 (cx60.h): when cooling starts and stops, and the CX60's mode.
-// Needs the Modbus library, ESP-ModbusRTUServer, in $LIB.
-//   g++ -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stubs -Ipackages/code
-//     -Iesphome/components/flexit_modbus_server -I$LIB tests/summer_cooling_test.cpp
-//     esphome/components/flexit_modbus_server/flexit_modbus_server.cpp $LIB/ModbusRTUServer.cpp
-//     packages/code/panel/pbus.c -o summer_cooling_test && ./summer_cooling_test
+// Needs the Modbus library, see the Makefile.
+//   make -C tests summer_cooling_test
 #include <cstdio>
 #include <cstdlib>
 #include "cx60.h"

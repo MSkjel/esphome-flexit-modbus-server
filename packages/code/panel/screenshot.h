@@ -132,7 +132,7 @@ inline void done([[maybe_unused]] uint32_t n) {
     give();
 }
 
-// The panel or we started, so it doesn't know what we have. Unsent asks are gone.
+// The panel or we started, or it never finished: it doesn't know what we have, and unsent asks are gone.
 inline void restarted() {
   S.asked = false;
   S.all = true;
@@ -165,8 +165,8 @@ inline void loop() {
     if (now - S.asked_ms > PANEL_MS) {
       if (!S.warned) {
         ESP_LOGW("panel", "The panel didn't finish a screenshot, asking again");
+        S.warned = true;
       }
-      S.warned = true;
       restarted();
     }
     return;

@@ -2,6 +2,7 @@
 // each frame after the first is the deflated rectangle that changed. The panel keeps up to ANIM_SLOTS of them in
 // 6 KB and shows each in up to ANIM_PLACES places, the copies of one in step unless a copy gets a frame of its own.
 #pragma once
+#include <strings.h>
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -791,11 +792,11 @@ inline void remove(const std::string &name, int i, int fade = -1) {
   status(shown());
 }
 
-// Which of names s is, or -1 with a warning from panel_<what>_animation
+// Which of names s is, in any case, or -1 with a warning from panel_<what>_animation
 template<size_t N> int option(const char *const (&names)[N], const std::string &s, const char *what) {
   std::string all;
   for (size_t i = 0; i < N; i++) {
-    if (s == names[i])
+    if (!strcasecmp(s.c_str(), names[i]))
       return (int) i;
     all += (i ? ", " : "") + std::string(names[i]);
   }
