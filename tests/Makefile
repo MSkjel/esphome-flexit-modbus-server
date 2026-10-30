@@ -3,13 +3,15 @@
 # ../modbus-library unless told. CI runs this too.
 MODBUS ?= ../modbus-library
 CXX    := g++
-CXXFLAGS := -std=gnu++20 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined -Istubs -I../packages/code
+CXXFLAGS := -std=gnu++20 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+  -Istubs -I../packages/code
 BUILD  := build
 CODE   := ../packages/code
 SERVER := ../esphome/components/flexit_modbus_server
 CAMERA := ../esphome/components/flexit_panel_camera
 SERVER_SRC := $(SERVER)/flexit_modbus_server.cpp $(MODBUS)/ModbusRTUServer.cpp $(CODE)/panel/pbus.c
-HEADERS := $(wildcard stubs/*.h stubs/*/*.h stubs/*/*/*.h $(CODE)/*/*.h $(SERVER)/*.h $(CAMERA)/*.h)
+HEADERS := $(wildcard *.h stubs/*.h stubs/*/*.h stubs/*/*/*.h $(CODE)/*.h $(CODE)/*/*.h $(SERVER)/*.h $(CAMERA)/*.h \
+  $(MODBUS)/*.h)
 TESTS  := update_test camera_test server_test restart_test humidity_boost_test summer_cooling_test
 
 all: $(TESTS)

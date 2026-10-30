@@ -349,8 +349,9 @@ static void remove_msg(pbulk_esp_t *t, int at) {
 }
 
 bool pbulk_esp_send(pbulk_esp_t *t, uint16_t key, const uint8_t *b, int n, unsigned flags) {
-  if (n < 0 || n > (key == PBULK_DATA_KEY ? PBULK_DATA_MAX : PBULK_MSG_MAX) || (key == PBULK_DATA_KEY && n % 4))
-    return false;  // DATA can be split, anything else has to fit the best window, or it would wait forever
+  if (n < 0 || n > (key == PBULK_DATA_KEY ? PBULK_DATA_MAX : PBULK_MSG_MAX) || (key == PBULK_DATA_KEY && (n % 4 || !n)))
+    return false;  // DATA can be split, anything else has to fit the best window, or it would wait forever. Empty
+                   // DATA has no number, so it would never be acked and sit at the head of the queue
   // a newer value or HELLO replaces one still waiting
   int old = flags & (PBULK_REPLACE | PBULK_FIRST) ? find(t, sent_bytes(t), key) : -1;
   if (old >= 0 && !(flags & PBULK_FIRST) && t->q[old + 2] == n) {

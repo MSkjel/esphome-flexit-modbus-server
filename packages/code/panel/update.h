@@ -42,9 +42,19 @@ inline const esp_partition_t *staging = nullptr;
 inline std::function<void(const std::string &)> on_status;
 inline std::function<void(int)> on_progress;  // 0..100
 inline int last_pct = -1;
+inline std::function<void()> on_change;  // the flash moved or a version changed, for the Panel Firmware entity
 
 void status(const std::string &s);
 void progress(int pct);
+
+// ---- the versions, for the Panel Firmware entity -------------------------------------------------------
+inline int32_t panel_version = -1;   // what the panel reports over the link, -1 = not known, like a stock one
+inline int32_t latest_version = -1;  // in the file at the URL, -1 = not known
+inline bool installing = false;      // the entity started it and it's still downloading
+inline std::string link_note;        // which one to update if the panel has another link version, else empty
+
+// A status when it changes, so it's still the last one there after the flash that caused it
+void set_link_note(const std::string &note);
 
 // ---- the Modbus function 0x64 bootloader protocol -----------------------------------------------------
 inline constexpr uint8_t BL_ADDR = 1;  // the bootloader always answers here
@@ -170,6 +180,19 @@ template<typename Response> void download(Response &r) {
          [&r]() { return r->is_read_complete(); }});
 }
 
+// The check asks for just the start of the file, the version is in its name. A server that sends it all anyway gets
+// cut off after this.
+inline constexpr size_t HEAD_LEN = 64;
+
+// Reads the version from the start of the download into latest_version. Leaves it be if there's none.
+void check_head(const Download &d);
+
+// update.yaml's check passes its response here
+template<typename Response> void checked(Response &r) {
+  check_head({r->status_code, r->content_length, [&r](uint8_t *buf, size_t max) { return r->read(buf, max); },
+              [&r]() { return r->is_read_complete(); }});
+}
+
 // With the firmware staged
 void begin();
 
@@ -191,5 +214,7 @@ bool probe_reply(uint8_t addr, uint16_t *ir);
 
 // The version in the stream's name field, "ci600 X.Y.Z" from mkupdate.py, as maj<<16 | min<<8 | patch. -1 if none.
 int32_t name_version(const uint8_t *s, size_t n);
+
+std::string version_text(uint32_t v);  // X.Y.Z
 
 }  // namespace flexit::panel::update

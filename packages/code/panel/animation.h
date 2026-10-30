@@ -167,15 +167,16 @@ inline void status(const std::string &s) { panel::status(id(panel_animation_stat
 inline bool opaque(uint32_t c) { return c >> 24 >= 128; }  // 0xAARRGGBB, at least half opaque
 
 // 0xAARRGGBB of the animation being made. At half size the 2x2 average, transparent if 3 or more of the 4 are.
+// The column that pads the width to even repeats the last one, so it doesn't count as transparent.
 inline uint32_t px(int f, int x, int y) {
   const Source &s = *W.a->src;
   if (!W.a->half)
-    return x < s.w && y < s.h ? s.pixel(f, x, y) : 0;
+    return y < s.h ? s.pixel(f, std::min(x, s.w - 1), y) : 0;
   uint32_t r = 0, g = 0, b = 0, n = 0;
   for (int dy = 0; dy < 2; dy++)
     for (int dx = 0; dx < 2; dx++) {
-      int sx = 2 * x + dx, sy = 2 * y + dy;
-      uint32_t c = sx < s.w && sy < s.h ? s.pixel(f, sx, sy) : 0;
+      int sx = std::min(2 * x + dx, s.w - 1), sy = 2 * y + dy;
+      uint32_t c = sy < s.h ? s.pixel(f, sx, sy) : 0;
       if (!opaque(c))
         continue;
       r += c >> 16 & 255;
@@ -562,7 +563,7 @@ inline void done() {
   status(shown());
 }
 
-// The panel's K_PIC_ACK = status << 24 | id << 16 | bytes received, from panel.h
+// The panel's K_PIC_ACK = status << 24 | id << 16 | bytes received, see plink_keys.h
 inline void ack(uint32_t v) {
   if (W.phase != SEND || !W.t.answers(v))
     return;  // for a picture or an earlier transfer

@@ -163,9 +163,8 @@ inline void thunderstorm(const Scene &s) {
   sometimes(minutes(3), 40000, flash);
 }
 
-// In a gale a copy fewer, for what blows by
+// Snow or light rain. In a gale a copy fewer, for what blows by
 inline void snowfall(const Scene &s) { prec_start(s, gale(s.at) ? 46 : 40, prec_room(s)); }
-inline void light_rain(const Scene &s) { prec_start(s, gale(s.at) ? 46 : 40, prec_room(s)); }
 
 // The clouds moved: the tiles go to their new bases, or are made again if they're too short now or the rain or wind
 // changed.
@@ -369,7 +368,7 @@ inline void starry_night(const Scene &s) {
 inline uint32_t cloud_sig(const Scene &s, bool high) {
   uint32_t h = 1;
   for (int i = 0; i < s.nclouds; i++)
-    if (!s.cloud_layer[i] == high)
+    if (high_cloud(s, i) == high)
       h = h * 31 + (uint32_t) (s.cloud[i].x * 1000 + s.cloud[i].base * 8 + s.cloud[i].n);
   return h;
 }
@@ -400,7 +399,7 @@ inline bool clouds_fit(const Scene &s, bool high) {
   bool flag = s.at.flag_up && s.pole_x >= 0;
   int n = 0, bytes = (flag ? FLAG_BYTES : 0) + (high ? 0 : GULLS_FAR_BYTES);
   for (int i = 0; i < s.nclouds; i++)
-    if (!s.cloud_layer[i] == high) {
+    if (high_cloud(s, i) == high) {
       int x, y;
       Frames sp = cloud(s, i, &x, &y);
       int frame = (sp.w + 1) / 2 * sp.h;

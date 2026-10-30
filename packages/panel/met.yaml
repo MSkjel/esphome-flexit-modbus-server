@@ -16,9 +16,11 @@ defaults:
   scene: hills
   aurora: auto
 
-# ESP-IDF's HTTP client and the root certificates for met.h, and its timeout
+# ESP-IDF's HTTP client and the root certificates for met.h, and its timeout. The TLS handshake with the full
+# bundle takes a few seconds on a busy ESP, more than the default 4.5 s right after boot.
 http_request:
   id: panel_http
+  timeout: 15s
 
 # api.met.no's certificate is from HARICA, which ESPHome's usual root bundle doesn't have, so we take the full one.
 # About 70 KB more flash.
@@ -111,19 +113,23 @@ esphome:
             flexit::panel::met::options.ground = flexit::panel::met::ground_of(id(panel_weather_scene).current_option().c_str());
             flexit::panel::met::options.aurora = flexit::panel::met::aurora_of(id(panel_weather_aurora).current_option().c_str());
             flexit::panel::met::on_status = [](const std::string &s) { id(panel_weather).publish_state(s); };
+        # the network, the time, and the panel's first picture sent, so the request isn't starved by the making of it
         - wait_until:
             condition:
-              lambda: return network::is_connected() && id(flexit_panel_time).now().is_valid();
-        - delay: 30s  # let the network and the panel's first transfers settle
+              lambda: |-
+                return network::is_connected() && id(flexit_panel_time).now().is_valid() &&
+                       flexit::panel::picture::S.phase == flexit::panel::picture::IDLE;
+            timeout: 3min
+        - delay: 10s
         - script.execute: panel_weather_fetch
 
 interval:
   - interval: ${update_interval}
     then:
       - script.execute: panel_weather_fetch
-  - interval: 1s  # the request's answer, once its task has it
+  - interval: 1s  # the request's answer, once its task has it, and the early retries
     then:
-      - lambda: flexit::panel::met::poll();
+      - lambda: flexit::panel::met::tick();
   - interval: 50ms  # what the weather animations do next
     then:
       - lambda: flexit::panel::met::live::loop(flexit::panel::picture::S.want == flexit::panel::met::name);

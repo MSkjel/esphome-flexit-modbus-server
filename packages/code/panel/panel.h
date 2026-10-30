@@ -43,6 +43,8 @@ inline constexpr Value VALUES[] = {PLINK_VALUES(VALUE)};
 // What to do with each key from the panel. update_yaml.h adds K_BUS_ADDR.
 inline std::map<uint16_t, std::function<void(uint32_t)>> handlers;
 
+// Which one to update when the panel's HELLO has another link version, empty when it's ours. For update.yaml.
+inline std::function<void(const std::string &)> on_link_note;
 // Set when the panel's HELLO has our link version. We ignore its other messages until then.
 inline bool compatible;
 
@@ -146,7 +148,7 @@ inline void after_hello(bool panel_started) {
   send_leds();
   send_time();
   for (int i = 0; i < SAVER_LINES; i++)
-    saver_due[i] = saver_lines[i].size() > 1;  // the panel forgot them at the hello
+    saver_due[i] = !saver_lines[i].empty();  // the panel forgot them at the hello, an empty one is its gap
   items_hello();
   picture::restarted();
   anim::restarted();
@@ -162,9 +164,14 @@ inline void got_hello(uint32_t v) {
   if (v & HELLO_ASK)
     link::send(K_HELLO, (uint32_t) PLINK_VERSION << 16);
   compatible = version == PLINK_VERSION;
+  char other[64] = "";
+  if (!compatible)
+    snprintf(other, sizeof other, "The panel has link version %u, this ESP %u: update the %s", version,
+             (unsigned) PLINK_VERSION, version > PLINK_VERSION ? "ESP" : "panel");
+  if (on_link_note)
+    on_link_note(other);
   if (!compatible) {
-    ESP_LOGE("panel", "The panel's firmware has link version %u, this ESP %u: update the older one", version,
-             (unsigned) PLINK_VERSION);
+    ESP_LOGE("panel", "%s", other);
     return;
   }
   ESP_LOGI("panel", "Panel says hello");

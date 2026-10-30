@@ -8,11 +8,21 @@
 # one-off. "Flash Panel Firmware" starts the update, "Panel Firmware Update" and "Panel Firmware Progress" show how
 # it goes.
 #
+# "Panel Firmware", the update entity, shows up under Settings > Updates in Home Assistant when the file at the URL
+# is newer than the panel, with its own install button. check_interval: how often it looks. Each look reads only the
+# start of the file, and holds up the main loop until the server answers.
+#
 # The ESP downloads the file a few KB at a time into its spare app slot, where its own next OTA update goes, and
 # streams it to the panel's ROM bootloader. What it checks and how the flash goes: docs/flashing.md in the firmware
 # repo.
 defaults:
   url: "https://github.com/MSkjel/flexit-ci600-firmware/releases/latest/download/ci600.fxup"
+  check_interval: 6h
+
+update:
+  - platform: flexit_modbus_server
+    id: panel_firmware_entity
+    name: "Panel Firmware"
 
 http_request:
   # GitHub's release download redirects to a URL about 1.7 KB long, longer than the default 512-byte buffers
@@ -87,6 +97,30 @@ sensor:
     accuracy_decimals: 0
     icon: "mdi:percent"
 
+script:
+  - id: panel_firmware_check
+    then:
+      - if:
+          condition:
+            lambda: return !flexit::panel::update::running();
+          then:
+            - http_request.get:
+                url: !lambda return id(panel_firmware_url).state;
+                request_headers:
+                  Range: "bytes=0-63"  # flexit::panel::update::HEAD_LEN
+                on_response:
+                  then:
+                    - lambda: flexit::panel::update::checked(response);
+                on_error:
+                  then:
+                    - logger.log: "Couldn't check the panel firmware's URL"
+
+interval:
+  - interval: ${check_interval}
+    startup_delay: 2min  # the network's up, and the panel has its first pictures
+    then:
+      - script.execute: panel_firmware_check
+
 esphome:
   on_boot:
     - priority: 500
@@ -94,3 +128,6 @@ esphome:
         - lambda: |-
             flexit::panel::update::setup([](const std::string &s) { id(panel_firmware_update).publish_state(s); },
                                          [](int pct) { id(panel_firmware_progress).publish_state(pct); });
+            flexit::panel::update::attach(
+                id(panel_firmware_entity), []() { id(panel_firmware_check).execute(); },
+                []() { id(panel_firmware_flash).press(); });

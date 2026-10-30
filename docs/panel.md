@@ -25,9 +25,8 @@ with this firmware works fine without the ESP, just switch ESP off under System 
 ```yaml
 substitutions:
   flexit_address: "1"
-  flexit_ref: panel
+  flexit_ref: main
   flexit_refresh: 1d
-  modbus_library_ref: dev
 
 packages:
   flexit:
@@ -47,9 +46,8 @@ packages:
         vars: {latitude: "59.9139", longitude: "10.7522"}
 ```
 
-The panel packages are on the `panel` branch, and they need the Modbus library's `dev` branch, which switches the
-RS-485 direction pin in hardware. The panel's bootloader needs that. If the ESP was built with the library's
-`main` before, do a Clean Build Files, or ESPHome keeps the old library.
+The panel packages need the current Modbus library, its `main`. If the ESP was built before October 2026, do a
+Clean Build Files, or ESPHome keeps the old library.
 
 `panel.yaml` gives Home Assistant `Panel Connected`, `Panel Temperature` (the panel's own sensor),
 `Panel Firmware`, `Panel Action` (filter reset and the like, picked on the panel), the screensaver and LED
@@ -480,6 +478,14 @@ so above quality 90 the busiest tiles lose their faint detail, and above 95 some
 `panel/update.yaml` flashes the panel's firmware from Home Assistant: press `Flash Panel Firmware` and watch
 `Panel Firmware Update`. The steps, and what to do when it doesn't work, are in the firmware's
 [flashing docs](https://github.com/MSkjel/flexit-ci600-firmware/blob/main/docs/flashing.md#from-home-assistant).
+
+`Panel Firmware` is the same thing as an update in Home Assistant. Every 6 h (`check_interval`) the ESP reads the
+version from the start of the file at `Panel Firmware URL`, and when that's newer than the panel it shows up under
+Settings > Updates, where Install does what the button does. It compares version numbers only, and a panel that
+doesn't report one, like a stock panel or one with another link version, shows as unknown. The button works for those.
+
+The file doesn't say which link version it has. If a flash leaves the panel on another one than the ESP,
+`Panel Firmware Update` says which of the two to update, and so does `Panel Firmware`'s summary.
 
 ## Icons
 

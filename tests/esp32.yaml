@@ -13,6 +13,7 @@ substitutions:
   flexit_tx_pin: GPIO17
   flexit_rx_pin: GPIO16
   flexit_tx_enable_pin: GPIO4
+  flexit_address: "1"  # panel.yaml wants the ESP at 1
 
 packages:
   common: !include common.yaml

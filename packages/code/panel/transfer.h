@@ -16,7 +16,7 @@ inline uint8_t transfer_ids;
 struct Transfer {
   static constexpr int TRIES = 2;            // goes again this often when lost or refused
   static constexpr unsigned CHUNK = 64;      // bytes of DATA at a time
-  static constexpr uint32_t ACK_MS = 10000;  // the panel answers END within a second or so
+  static constexpr uint32_t ACK_MS = 10000;  // the panel answers END within a second or so, unless it's refusing
   static inline const Transfer *on_link;     // the last one opened, the one on its way while its head is set
   enum Pumped { GOING, AGAIN, GAVE_UP };     // what pump() did, see there
 

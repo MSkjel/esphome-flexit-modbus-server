@@ -298,6 +298,8 @@ inline int cloud_x(const Scene &s, int i) {
   return (s.cloud[i].x + s.drift[s.cloud_layer[i]]) % FIELD - (FIELD - W) / 2;
 }
 
+inline bool high_cloud(const Scene &s, int i) { return s.cloud_layer[i] == 0; }  // the rest are middle and low
+
 // Half width of an ellipse dy rows from its centre, -1 if outside
 inline int half(int dy, int rx, int ry) {
   if (dy < -ry || dy > ry || ry <= 0)

@@ -1,29 +1,4 @@
-# Stricter warnings than a normal build. CI fails on any warning from our own
-# code, see check_warnings.sh.
-esphome:
-  build_flags:
-    - -Wall
-    - -Wextra
-    - -Wno-unused-parameter
-    - -Wsign-compare
-    - -Wunused-but-set-variable
-    - -Wunused-variable
-
-api:
-ota:
-  - platform: esphome
-
-wifi:
-  ssid: "ci"
-  password: "ci-password"
-
-# Listed after core.yaml's GitHub source
-external_components:
-  - source:
-      type: local
-      path: ../esphome/components
-    components: [flexit_modbus_server]
-
+# Every package there is, with stand-ins for the sensors they want
 packages:
   core: !include ../packages/core.yaml
   controls: !include ../packages/controls.yaml
@@ -37,6 +12,7 @@ packages:
   computed: !include ../packages/computed.yaml
   advanced: !include ../packages/advanced.yaml
   health: !include ../packages/health.yaml
+  base: !include base.yaml
 
 # Stand-ins for the sensors
 sensor:

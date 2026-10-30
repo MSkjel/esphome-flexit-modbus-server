@@ -224,6 +224,75 @@ int main() {
   s[0] = 0x12;
   CHECK(name_version(s.data(), s.size()) == -1);
 
+  // The check: the version from the start of the file, with or without the server minding the range
+  auto check = [](Http h) {
+    Http *r = &h;
+    latest_version = -1;
+    checked(r);
+    return latest_version;
+  };
+  Http whole;
+  whole.body = stream("ci600 1.2.3");
+  whole.body.resize(100000, 0x55);
+  Http at_most = whole;
+  CHECK(check(whole) == 0x010203);
+  Http *cut = &at_most;
+  checked(cut);
+  CHECK(at_most.pos == HEAD_LEN);  // it stopped there
+  Http part;
+  part.status_code = 206;
+  part.body = stream("ci600 1.2.4");
+  part.body.resize(HEAD_LEN, 0x55);
+  CHECK(check(part) == 0x010204);
+  Http slow = part;
+  slow.pause_at = 4;
+  slow.pauses = 2;
+  CHECK(check(slow) == 0x010204);
+  Http missing = part;
+  missing.status_code = 404;
+  CHECK(check(missing) == -1);
+  Http page = part;
+  page.status_code = 200;
+  page.body = {'<', 'h', 't', 'm', 'l', '>'};
+  CHECK(check(page) == -1);
+  Http empty = part;
+  empty.body.clear();
+  CHECK(check(empty) == -1);
+  Http silent = part;
+  silent.stop = 4;
+  silent.then = READ_AGAIN;
+  CHECK(check(silent) == -1);
+  latest_version = 0x010203;  // a failed check keeps what it knew
+  Http *gone = &missing;
+  missing.pos = 0;
+  checked(gone);
+  CHECK(latest_version == 0x010203);
+  int changes = 0;
+  on_change = [&changes]() { changes++; };
+  checked(gone);
+  CHECK(!changes);
+  Http again = part;
+  Http *found = &again;
+  checked(found);
+  CHECK(changes == 1 && latest_version == 0x010204);
+  status("Testing");
+  CHECK(changes == 2);
+  on_change = nullptr;
+  latest_version = -1;
+  CHECK(version_text(0x00020A) == "0.2.10");
+
+  // Another link version: said once, so it stays the last status, and gone when it's sorted
+  on_change = [&changes]() { changes++; };
+  changes = 0;
+  set_link_note("update the ESP");
+  CHECK(link_note == "update the ESP" && last_status == "update the ESP" && changes == 1);
+  last_status = "Later";
+  set_link_note("update the ESP");
+  CHECK(last_status == "Later" && changes == 1);
+  set_link_note("");
+  CHECK(link_note.empty() && last_status == "Later" && changes == 2);
+  on_change = nullptr;
+
   // Nobody home: every address twice, the ESP's own 1 skipped, the bootloader twice, then a refusal
   std::vector<std::vector<uint8_t>> none(4);
   probe("ci600 0.2.0", none);
@@ -369,6 +438,7 @@ int main() {
     now_ms += 100;
   }
   CHECK(F.phase == DONE && last_status == "Done, the panel is restarting" && resets() == 1 && answered);
+  CHECK(panel_version == F.file_version && F.file_version >= 0);  // known even if the panel can't say so
 
   // the poll after a busy-looking tail gets "starting" or an exception, that ends it right away
   for (const auto &odd : {frame({BL_ADDR, FC, SUB_STATUS, 2, ST_BOOT, 0}), frame({BL_ADDR, FC | 0x80, EXC_BUSY})}) {

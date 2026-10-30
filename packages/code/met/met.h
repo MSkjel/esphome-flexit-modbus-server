@@ -49,6 +49,8 @@ inline uint32_t not_before;   // no request before this (Unix time): the last an
 inline uint32_t backoff_s;    // doubles with each failure in a row
 inline bool answered;         // MET Norway has answered since boot
 inline uint8_t early_tries;   // quick retries before that
+inline bool retry_soon;       // one of those is due, tick() makes it
+inline constexpr uint32_t EARLY_RETRY_S = 30;
 inline char url[128];
 inline double lat, lon;
 inline int timeout_ms;  // http_request's
@@ -132,7 +134,8 @@ inline bool new_drawing() {
   if (!picture::has_ram(sizeof(Drawing) + SPRITES * sizeof(Sprite) + ov_bytes + (land ? 0 : sizeof(Land)),
                         sizeof(Drawing)))
     return false;
-  if (!land && (land = RAMAllocator<Land>().allocate(1)))
+  bool new_land = !land;
+  if (new_land && (land = RAMAllocator<Land>().allocate(1)))
     land->made = false;
   Drawing *c = RAMAllocator<Drawing>().allocate(1);
   Sprite *sprite = RAMAllocator<Sprite>().allocate(SPRITES);
@@ -141,6 +144,10 @@ inline bool new_drawing() {
     RAMAllocator<Drawing>().deallocate(c, 1);
     RAMAllocator<Sprite>().deallocate(sprite, SPRITES);
     RAMAllocator<uint8_t>().deallocate(ov, ov_bytes);
+    if (new_land) {
+      RAMAllocator<Land>().deallocate(land, 1);
+      land = nullptr;
+    }
     return false;
   }
   c->scene.sprite = sprite;
@@ -232,13 +239,16 @@ inline void back_off(uint32_t first, uint32_t most) {
 }
 
 // No answer, or one cut off: more likely our own network than MET Norway, so ten minutes and up to an hour.
-// Right after boot the network often isn't quite there yet, so the first few tries just go again at the next check.
+// Right after boot the network often isn't quite there yet and the ESP is busy, so the first few tries go again
+// EARLY_RETRY_S later rather than at the next check.
 inline void unreachable() {
   if (!answered && early_tries < 3) {
     early_tries++;
-    not_before = 0;
+    not_before = now_s() + EARLY_RETRY_S;
+    retry_soon = true;
   } else {
     back_off(600, 3600);
+    retry_soon = false;
   }
   on_status("Couldn't reach MET Norway");
 }
@@ -259,6 +269,7 @@ struct Fetch {
 // that's deprecated, its data is still good. Refused, it waits an hour, then twice as long each time up to 12.
 inline void fetched(const Fetch &f) {
   answered = true;
+  retry_soon = false;
   bool ok = f.status >= 200 && f.status < 300 && f.w.ok;
   if (ok || f.status == 304) {
     backoff_s = 0;
@@ -384,6 +395,15 @@ inline void poll() {
     unreachable();
   f->~Fetch();
   RAMAllocator<Fetch>().deallocate(f, 1);
+}
+
+// Every second from met.yaml: the answer once the task has it, and an early retry when it's time
+inline void tick() {
+  poll();
+  if (retry_soon && !fetching && due()) {
+    retry_soon = false;
+    fetch();
+  }
 }
 
 // From met.yaml's on_boot, with http_request's timeout

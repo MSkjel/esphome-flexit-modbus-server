@@ -22,6 +22,18 @@ void status(const std::string &s) {
   ESP_LOGI(TAG, "%s", s.c_str());
   if (on_status)
     on_status(s);
+  if (on_change)
+    on_change();
+}
+
+void set_link_note(const std::string &note) {
+  if (note == link_note)
+    return;
+  link_note = note;
+  if (!note.empty())
+    status(note);
+  else if (on_change)
+    on_change();
 }
 
 void progress(int pct) {
@@ -30,6 +42,8 @@ void progress(int pct) {
   last_pct = pct;
   if (on_progress)
     on_progress(pct);
+  if (on_change)
+    on_change();
 }
 
 // Whether now is at or past next_ms, across millis()'s wrap
@@ -135,7 +149,7 @@ int32_t name_version(const uint8_t *s, size_t n) {
   return (int32_t) (maj << 16 | min << 8 | patch);
 }
 
-static std::string version_text(uint32_t v) {
+std::string version_text(uint32_t v) {
   return std::to_string(v >> 16 & 0xFF) + "." + std::to_string(v >> 8 & 0xFF) + "." + std::to_string(v & 0xFF);
 }
 
@@ -315,6 +329,31 @@ void stage(const Download &d) {
   ram.deallocate(buf, BLK);
 }
 
+void check_head(const Download &d) {
+  uint8_t head[HEAD_LEN];
+  size_t got = 0;
+  uint32_t heard = millis();
+  while ((d.status_code == 200 || d.status_code == 206) && got < sizeof head) {
+    int n = d.read(head + got, sizeof head - got);
+    App.feed_wdt();
+    if (n == READ_AGAIN && millis() - heard < STALL_MS)
+      continue;
+    if (n <= 0)
+      break;
+    heard = millis();
+    got += n;
+  }
+  int32_t v = name_version(head, got);
+  if (v < 0) {
+    ESP_LOGW(TAG, "No panel firmware version at the URL (HTTP %d)", d.status_code);
+    return;
+  }
+  ESP_LOGI(TAG, "The firmware at the URL is %s", version_text(v).c_str());
+  latest_version = v;
+  if (on_change)
+    on_change();
+}
+
 // Ends the flash, gives the bus back
 static void stop(Phase end, const std::string &why) {
   hooks->set_updating(false);
@@ -326,6 +365,8 @@ static void stop(Phase end, const std::string &why) {
 void finish(bool ok, const std::string &why) {
   if (ok) {
     hooks->settings_flashed();
+    if (F.file_version >= 0)
+      panel_version = F.file_version;  // it can't say so itself if the file has another link version
     stop(DONE, why.empty() ? "Done, the panel is restarting" : why);
     return;
   }

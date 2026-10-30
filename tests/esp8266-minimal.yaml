@@ -1,0 +1,21 @@
+# The README's quick start on an ESP8266: the five packages, no DE pin (a board that switches direction itself)
+esphome:
+  name: flexit-ci-esp8266-minimal
+
+esp8266:
+  board: d1_mini
+
+logger:
+  hardware_uart: UART1
+
+substitutions:
+  flexit_tx_pin: GPIO1
+  flexit_rx_pin: GPIO3
+
+packages:
+  core: !include ../packages/core.yaml
+  controls: !include ../packages/controls.yaml
+  sensors: !include ../packages/sensors.yaml
+  diagnostics: !include ../packages/diagnostics.yaml
+  fan_speeds: !include ../packages/fan_speeds.yaml
+  base: !include base.yaml
