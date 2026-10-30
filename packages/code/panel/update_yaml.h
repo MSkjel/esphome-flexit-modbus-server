@@ -31,9 +31,34 @@ inline void setup(std::function<void(const std::string &)> status_fn, std::funct
     if (v >= 1 && v <= 247)
       panel_addr = (uint8_t) v;
   };
+  handlers[K_FW_VERSION] = [firmware = handlers[K_FW_VERSION]](uint32_t v) {
+    firmware(v);
+    panel_version = (int32_t) v;
+    if (on_change)
+      on_change();
+  };
+  on_link_note = set_link_note;
   id(server).add_on_status_callback(pump);
   id(server).add_on_read_callback(pump);
   id(server).add_on_frame_callback(on_frame);
+}
+
+// update.yaml's Panel Firmware entity. It has no state until both versions are known, so a stock panel's says unknown
+// rather than offer an update. press is the Flash Panel Firmware button, which holds up the loop through the download.
+template<typename Entity> inline void attach(Entity *entity, std::function<void()> check, std::function<void()> press) {
+  entity->on_check(std::move(check));
+  entity->on_install([press = std::move(press)]() {
+    installing = true;
+    on_change();
+    press();
+    installing = false;
+    on_change();
+  });
+  on_change = [entity]() {
+    if (panel_version >= 0 && latest_version >= 0)
+      entity->show(version_text(panel_version), version_text(latest_version), latest_version > panel_version,
+                   installing || running(), running() ? last_pct : -1, link_note);
+  };
 }
 
 }  // namespace flexit::panel::update
