@@ -188,8 +188,8 @@ static void sea_row(const Scene &s, int y, uint8_t *out) {
   for (int i = 0; i < s.nwaves; i++)
     if (s.wave_y[i] == y && y < hill[1][s.wave_x[i]])
       span(out, s.wave_x[i], s.wave_x[i] + s.wave_w[i], s.ix[C_WAVE]);
-  if (s.shine_x >= 0 && (y & 1) && y < hill[1][s.shine_x]) {
-    int spread = 1 + (y - s.sea_top) / 6;
+  if (s.shine_x >= 0 && (y & 1) && (y / 2) % 3 != 2 && y < hill[1][s.shine_x]) {  // a broken path of light
+    int spread = std::min(3, 1 + (y - s.sea_top) / 6);
     span(out, s.shine_x - spread, s.shine_x + spread, s.ix[C_WAVE]);
   }
 }
@@ -323,6 +323,7 @@ void row(const Scene &s, int y, uint8_t *out) {
   sea_row(s, y, out);
   fog_row(s, y, out, 0);
   hill_row(s, y, out, 1);
+  bolt_row(s, y, out);  // behind the town and the land it strikes
   city_row(s, y, out);
   lighthouse_row(s, y, out);
   trees_row(s, y, out, 1);
@@ -330,11 +331,10 @@ void row(const Scene &s, int y, uint8_t *out) {
   hill_row(s, y, out, 2);
   trees_row(s, y, out, 2);
   cabin_row(s, y, out);
-  if (s.pole_x >= 0 && y >= s.pole_top && y <= s.pole_base)  // the flagpole
-    span(out, s.pole_x, s.pole_x + 1, s.ix[C_DARK]);
+  if (s.pole_x >= 0 && y >= s.pole_top && y <= s.pole_base)  // the flagpole, dark against the town's green
+    span(out, s.pole_x, s.pole_x + 1, s.ix[s.ground == G_CITY ? C_BLD_EDGE : C_DARK]);
   sprites(s, y, out, 1);
   prec_row(s, y, out);
-  bolt_row(s, y, out);
   sprites(s, y, out, 2);
   if (s.overlay && y < OV_H)  // the forecast
     for (int x = 0; x < W; x++) {

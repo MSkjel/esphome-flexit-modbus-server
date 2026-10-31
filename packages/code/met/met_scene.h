@@ -13,8 +13,12 @@
 namespace flexit::panel::met {
 
 inline constexpr int W = 320, H = 240;
-inline constexpr int HORIZON = 156;                        // just above the panel's clock band, the bottom 74 rows
-inline constexpr int CABIN_X = 178;                        // in the band's gap between the clock and the temperatures
+inline constexpr int HORIZON = 156;  // just above the panel's clock band, the bottom 74 rows
+inline constexpr int CABIN_X = 178;  // in the band's gap between the clock and the temperatures
+// The panel's clock and date go over the bottom left of the picture, its temperatures over the bottom right, with
+// the texts where most have them. What a show parks on the land goes in the gap between them, or under the
+// temperatures right of the date.
+inline constexpr int GAP_L = 126, GAP_R = 228, DATE_R = 154, TEMPS_BOT = 222;
 inline constexpr int OV_H = 64;                            // rows of the forecast overlay, at the top
 inline constexpr int16_t BAND[5] = {0, 52, 92, 118, 138};  // first row of each sky band
 inline constexpr int RB_RX = 100, RB_RY = 96;              // the rainbow's outer radii
