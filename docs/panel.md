@@ -348,8 +348,8 @@ Like the [other actions](#messages-views-and-settings), in Home Assistant and as
 | Action | Does |
 |---|---|
 | `panel_show_picture` (`name`), `panel_clear_picture` | The screensaver picture, same as the `Panel Picture` select |
-| `panel_show_animation` (`name`), `panel_clear_animation` (`name`, or none for all) | An animation over it, where its yaml puts it, the same as its `Panel Animation <name>` switch. Showing it again puts copy 0 back there if it went. Any combination of them, within the panel's 6 KB |
-| `panel_place_animation` (`name`, `copy`, `x`, `y`, `own`, `start`), `panel_remove_animation` (`name`, `copy`) | The same animation in more places, which can start off the screen to come in. Copy 0 is the one `panel_show_animation` shows, copy 1 and up are extra. They play in step and cost nothing extra, unless `own: true` gives the copy a frame of its own, which takes another w x h / 2 bytes of the 6 KB and starts `start` frames in |
+| `panel_show_animation` (`name`), `panel_clear_animation` (`name`, or none for all) | An animation over it, where its yaml puts it, the same as its `Panel Animation <name>` switch. Showing it again puts copy 0 back there if it went. Any combination of them, within the panel's 8 KB |
+| `panel_place_animation` (`name`, `copy`, `x`, `y`, `own`, `start`), `panel_remove_animation` (`name`, `copy`) | The same animation in more places, which can start off the screen to come in. Copy 0 is the one `panel_show_animation` shows, copy 1 and up are extra. They play in step and cost nothing extra, unless `own: true` gives the copy a frame of its own, which takes another w x h / 2 bytes of the 8 KB and starts `start` frames in |
 | `panel_move_animation` (`name`, `copy`, `x`, `y`, `ms`, `ease`), `panel_drift_animation` (`name`, `copy`, `vx`, `vy`) | Glide a copy to `x`, `y` over `ms` (0 jumps, 65535 at most), or drift it at `vx`, `vy` pixels per second (to a tenth, like 0.5), round the screen or as its area says; 0, 0 stops it. Drifting over a JPEG photo costs more redraws than over a palette picture, so keep it slow there |
 | `panel_glide_animation` (`name`, `copy`, `what`, `to`, `ms`, `ease`) | One of a copy's `x`, `y`, `turn`, `size`, `opacity` or `speed` to `to` over `ms`. A turn goes the short way round, size is 10 to 400, opacity 0 to 100, speed 0 to 1000 |
 | `panel_spin_animation` (`name`, `copy`, `speed`), `panel_flip_animation` (`name`, `copy`, `horizontal`, `vertical`) | Spin a copy at `speed` degrees per second, negative the other way, 0 stops it where it is. Flip mirrors it left to right, upside down or both. Quarter turns and flips stay sharp, other angles look rougher |
@@ -461,7 +461,7 @@ them. It's on the device's page, or add it to a dashboard of your own.
 
 ```yaml
       - path: packages/panel/screen_camera.yaml
-        vars: {quality: "80"}  # JPEG quality, 1-100: higher is sharper text and slower, best kept at 90 or under
+        vars: {quality: "90"}  # JPEG quality, 1-100: higher is sharper text and slower, best kept at 95 or under
                                # category: "" for an ordinary entity, on the dashboards
 ```
 
@@ -469,9 +469,9 @@ The panel doesn't keep a copy of its screen. While someone looks, it draws its s
 sends each one as a bit of JPEG as it goes to the display, after the first time only the tiles that changed. The
 ESP puts them together. The first look shows what came within 4 s, black where nothing has yet, and the live view
 fills in over about 10 s. After that an image takes a second or two, the clock ticking over is 4 tiles. The tiles
-take about 20 KB of the ESP's RAM, let go a minute after the last look; without the RAM it doesn't ask. While the
-ESP sends the panel a picture or an animation, the screen waits. A tile has to fit in about 400 bytes on the panel,
-so above quality 90 the busiest tiles lose their faint detail, and above 95 some are left a flat colour.
+take about 25 KB of the ESP's RAM, let go a minute after the last look; without the RAM it doesn't ask. While the
+ESP sends the panel a picture or an animation, the screen waits. A tile has to fit in about 700 bytes on the panel,
+so above quality 95 the busiest tiles lose their faint detail.
 
 ## Flashing the panel
 

@@ -1079,14 +1079,13 @@ static void bonfire(Scene &s, const Now &n, Rng &rng) {
   s.tag = 0;
 }
 
-// A pumpkin by the door, or by the pole in the park, its face lit after dark
-static void pumpkin(Scene &s, const Now &n) {
+// A pumpkin by the door, or by the pole in the park, its face cut out and dark inside, lit after dark
+static void pumpkin(Scene &s) {
   int px = s.cabin ? s.cabin_x - 22 : s.home_x + 36, py = (s.cabin ? s.cabin_y : s.pole_base) - 5;
   s.pumpkin = {(int16_t) px, (int16_t) py};
   blob(s, px, py, 7, 6, 1, rgb4(255, 130, 40));
   box(s, px - 1, py - 8, 3, 3, 1, s.rgb[C_DARK]);  // its stalk
-  if (n.dark)
-    sprite_rows(sprite(s, px - 5, py - 3, 11, 7, 2, rgb4(17, 17, 34)), FACE.row);
+  sprite_rows(sprite(s, px - 5, py - 3, 11, 7, 2, rgb4(17, 17, 34)), FACE.row);
 }
 
 // What the days bring to the picture
@@ -1100,7 +1099,7 @@ static void holidays(Scene &s, const Now &n, Rng &rng) {
   if (n.midsummer)
     bonfire(s, n, rng);
   if (n.halloween)
-    pumpkin(s, n);
+    pumpkin(s);
 }
 
 // The forecast over the picture, in white with an outline
