@@ -217,12 +217,12 @@ enum { ANIM_MAP_CHANNEL = 1, ANIM_MAP_VALUES, ANIM_MAP_LEN = 10 };  // VALUES: l
 enum { ANIM_ROUNDS_COUNT = 1, ANIM_ROUNDS_FADE = 3, ANIM_ROUNDS_TAG = 5, ANIM_ROUNDS_LEN };
 #define K_ANIM_GONE 0x12D  // panel -> ESP: place | tag << 8 of one that went after its rounds
 #define ANIM_OPAQUE 16
-#define ANIM_SLOTS 4
+#define ANIM_SLOTS 6
 #define ANIM_PLACES 8
 #define ANIM_WAVES 12  // waves the panel runs at a time, of all places together
 #define ANIM_PLACE_BIT 0x80
 #define ANIM_ALL 0xFF
-#define ANIM_POOL 6144  // panel memory for the animations, each one inflated frame of w x h / 2 bytes plus records
+#define ANIM_POOL 8192  // panel memory for the animations, each one inflated frame of w x h / 2 bytes plus records
 
 // ---- Screenshots: what the panel shows as a JPEG, which the ESP puts together from 64x8 tiles, numbered across and
 // then down. Each tile is one restart interval from pjpeg_tile() at the quality SHOT asked for. The ESP writes the

@@ -14,7 +14,7 @@ inline constexpr int SKY_POOL = ANIM_POOL - 144;
 struct TileCost {
   int start, row, each, slant;
 };
-inline constexpr TileCost TILE_COST[] = {{650, 1, 32, 13}, {930, 4, 76, 0}, {1400, 1, 123, 32}};
+inline constexpr TileCost TILE_COST[] = {{650, 1, 32, 13}, {930, 5, 78, 0}, {1400, 1, 123, 32}};
 // The bolt: to start with, and a row
 inline constexpr int BOLT_START = 100, BOLT_ROW = 4;
 // A cloud: fifths of its frame, and to start with
