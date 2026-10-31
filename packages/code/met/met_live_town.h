@@ -55,6 +55,29 @@ inline bool stretch(const Cols &c, int x, int &l, int &r) {
   return true;
 }
 
+// Columns l to r cut to the gap between the clock and the temperatures, if least px of them are in it
+inline void in_gap(int &l, int &r, int least = 40) {
+  int gl = std::max<int>(l, GAP_L), gr = std::min<int>(r, GAP_R);
+  if (gr - gl >= least) {
+    l = gl;
+    r = gr;
+  }
+}
+// The run of c with the most columns in the gap, cut to it, if that's least or more. False if none has.
+inline bool gap_stretch(const Cols &c, int &l, int &r, int least) {
+  int best = 0;
+  for (int a = GAP_L, b; a <= GAP_R; a = b + 1) {
+    for (b = a; b <= GAP_R && c[b]; b++) {
+    }
+    if (b - a > best) {
+      best = b - a;
+      l = a;
+      r = b - 1;
+    }
+  }
+  return best >= least;
+}
+
 // The boat's turning points and row, as the sprite's left and top, and which way the wind blows it
 struct Course {
   int16_t a, b, y;
@@ -109,20 +132,25 @@ inline void sail(const Scene &s) {
   int x = s.boat.x - 6, y = s.boat.y - 14, l, r;  // the picture's mast and waterline
   bool left = s.at.wdir < 0;
   preload("tack");
-  // it turns where the open water at its rows ends, off a skerry, a tree or the point
+  // it turns where the open water at its rows ends, off a skerry, a tree or the point, and stays between the
+  // clock and the temperatures when there's room for that
   bool room = stretch(water(s, std::max<int>(s.sea_top, y), s.boat.y, true), s.boat.x, l, r) && r - l > 40;
+  if (room)
+    in_gap(l, r);
   if (room)
     x = std::clamp(x, l + 1, r - 13);
   place_flipped("boat", 0, x, y, !left);
   if (room)
     sail_on({(int16_t) (l + 1), (int16_t) (r - 13), (int16_t) y, left}, x, left);
   glitter(s);
-  // a pair of eiders bobbing about on the longest open stretch off the shore, not the point's
+  // a pair of eiders bobbing about on the open water off the shore, not the point's: the stretch in the gap between
+  // the clock and the temperatures, or the longest
   int shore = H;
   for (int i = 0; i < W; i++)
     if (s.land->hill[1][i] >= s.sea_top + 20)
       shore = std::min<int>(shore, s.land->hill[1][i]);
-  if (!stretch(water(s, shore - 10, shore - 1, false), -1, l, r) || r - l < 40)
+  Cols open = water(s, shore - 10, shore - 1, false);
+  if (!gap_stretch(open, l, r, 30) && (!stretch(open, -1, l, r) || r - l < 40))
     return;
   place("eiders", 0, (l + r) / 2 - 7, shore - 8, {true});
   area("eiders", 0, l, shore - 10, r + 1, shore, "bounce", "bounce");

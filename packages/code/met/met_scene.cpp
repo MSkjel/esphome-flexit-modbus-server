@@ -894,12 +894,18 @@ static void trees(Scene &s, const Now &n, Rng &h, int count, int nfront) {
     int x = h.in(0, W - 1), l = front ? 2 : 1;
     if (front && x > s.home_x - 36 && x < s.home_x + 44)  // keep a clearing around home
       x = (x + W / 2) % W;
+    // the tall one with the lights, at the edge of the clearing in the gap, past the flag in town
+    bool xmas_spruce = n.xmas && i == nfront - 1;
+    if (xmas_spruce)
+      x = s.home_x + (s.cabin ? -32 : 62);
     Tree &t = s.tree[s.ntrees++];
     t.x = (int16_t) x;
     t.base = (int16_t) (hill[l][x] + 3);
-    t.top = (int16_t) (t.base - (front ? h.in(18, 40) : h.in(8, 16)));
+    int height = front ? h.in(18, 40) : h.in(8, 16);
+    t.top = (int16_t) (t.base - (xmas_spruce ? 40 : height));
     t.layer = (uint8_t) l;
-    t.kind = (uint8_t) (i % 5 == 3 ? (n.season <= 1 ? 2 : 1) : 0);  // every fifth a birch, bare in winter
+    t.kind =
+        (uint8_t) (i % 5 == 3 && !xmas_spruce ? (n.season <= 1 ? 2 : 1) : 0);  // every fifth a birch, bare in winter
   }
 }
 
@@ -946,8 +952,9 @@ static void ground(Scene &s, const Now &n) {
   if (s.sea)
     sea(s, n);
   s.cabin_y = (int16_t) (land.hill[2][s.cabin_x] + 6);
-  // flagpole by the cabin, or in the city's park on flag days
-  int park = h.in(90, 130);
+  // flagpole by the cabin, or in the city's park on flag days, where the flag shows beside the clock either way it
+  // blows
+  int park = h.in(GAP_L + 20, GAP_L + 36);
   s.pole_x = (int16_t) (s.cabin ? s.cabin_x + 24 : n.flag_day ? park : -1);  // the park's pole stands all day
   s.pole_base = (int16_t) (s.cabin ? s.cabin_y - 2 : land.hill[2][park] + 4);
   s.pole_top = (int16_t) (s.pole_base - 48);
@@ -1015,8 +1022,10 @@ static void life(Scene &s, const Now &n, Rng &rng) {
 // Lights on the spruce nearest home, on either side, and a star on top
 static void xmas_lights(Scene &s) {
   int best = -1;
-  for (int i : near_trees(s, 0))
-    if (best < 0 || abs(s.tree[i].x - s.home_x) < abs(s.tree[best].x - s.home_x))
+  auto in_gap = [&s](int i) { return s.tree[i].x >= GAP_L + 10 && s.tree[i].x <= GAP_R - 10; };
+  for (int i : near_trees(s, 0))  // the nearest home, in the gap if any is
+    if (best < 0 || (in_gap(i) && !in_gap(best)) ||
+        (in_gap(i) == in_gap(best) && abs(s.tree[i].x - s.home_x) < abs(s.tree[best].x - s.home_x)))
       best = i;
   if (best < 0)
     return;
@@ -1048,12 +1057,12 @@ static void fireworks(Scene &s, const Now &n) {
   s.tag = 0;
 }
 
-// Striped eggs in the grass in front of home
+// Striped eggs in the grass in front of home, in the gap so the chicks show
 static void eggs(Scene &s, const Now &n) {
   uint32_t cols[3] = {s.rgb[C_WINDOW], rgb4(230, 100, 170), rgb4(100, 190, 230)};
   Rng eg{(uint32_t) n.year * 7u};
   for (int i = 0; i < (int) std::size(s.egg); i++) {
-    int x = (s.home_x - 84 + i * 19 + eg.in(-3, 3) + W) % W, y = s.land->hill[2][x] + 12 + eg.in(0, 8);
+    int x = GAP_L + 36 + i * 16 + eg.in(-3, 3), y = s.land->hill[2][x] + 12 + eg.in(0, 8);
     s.egg[s.neggs++] = {(int16_t) x, (int16_t) y};
     blob(s, x, y, 4, 5, 1, cols[i % 3]);
     Sprite *stripes = sprite(s, x - 3, y - 2, 7, 4, 1, s.rgb[C_WHITE]);  // both in one, sprites are scarce at Easter
@@ -1062,9 +1071,11 @@ static void eggs(Scene &s, const Now &n) {
   }
 }
 
-// The bonfire on the near hill away from home: its logs, its flames, sparks and smoke
+// The bonfire in the meadow below the cabin, its flames up to the cabin's floor, or on the near hill in the middle of
+// the gap in town: its logs, its flames, sparks and smoke
 static void bonfire(Scene &s, const Now &n, Rng &rng) {
-  int bx = (s.home_x + W / 2) % W, by = s.land->hill[2][bx] + 14;
+  int bx = s.cabin ? s.cabin_x - 2 : (GAP_L + GAP_R) / 2;
+  int by = s.cabin ? std::min<int>(s.land->hill[2][bx] + 30, H - 8) : s.land->hill[2][bx] + 14;
   s.fire = {(int16_t) bx, (int16_t) by};
   box(s, bx - 9, by - 2, 19, 3, 2, s.rgb[C_DARK]);
   s.tag = L_BONFIRE;
@@ -1079,14 +1090,13 @@ static void bonfire(Scene &s, const Now &n, Rng &rng) {
   s.tag = 0;
 }
 
-// A pumpkin by the door, or by the pole in the park, its face lit after dark
-static void pumpkin(Scene &s, const Now &n) {
+// A pumpkin by the door, or by the pole in the park, its face cut out and dark inside, lit after dark
+static void pumpkin(Scene &s) {
   int px = s.cabin ? s.cabin_x - 22 : s.home_x + 36, py = (s.cabin ? s.cabin_y : s.pole_base) - 5;
   s.pumpkin = {(int16_t) px, (int16_t) py};
   blob(s, px, py, 7, 6, 1, rgb4(255, 130, 40));
   box(s, px - 1, py - 8, 3, 3, 1, s.rgb[C_DARK]);  // its stalk
-  if (n.dark)
-    sprite_rows(sprite(s, px - 5, py - 3, 11, 7, 2, rgb4(17, 17, 34)), FACE.row);
+  sprite_rows(sprite(s, px - 5, py - 3, 11, 7, 2, rgb4(17, 17, 34)), FACE.row);
 }
 
 // What the days bring to the picture
@@ -1100,7 +1110,7 @@ static void holidays(Scene &s, const Now &n, Rng &rng) {
   if (n.midsummer)
     bonfire(s, n, rng);
   if (n.halloween)
-    pumpkin(s, n);
+    pumpkin(s);
 }
 
 // The forecast over the picture, in white with an outline

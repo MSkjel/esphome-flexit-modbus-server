@@ -784,11 +784,12 @@ static constexpr Fixed FIXED[] = {
        for (int x = left ? 1 : 0; !glide && x <= (left ? 5 : 4); x++)
          c.put(x, 11, 0xAA6633);
      }},
-    // Snow slipping off the end of a spruce's tier: the clump sags, drops in a puff of powder that drifts down and
-    // thins, and the bare branch springs up. Its top row lies on the tier's last 4 px
+    // Snow slipping off the end of a spruce's tier or the eaves: the clump sags, drops in a puff of powder that
+    // drifts down and thins, and the bare branch springs up. Its top row lies on the tier's last 4 px. The clump
+    // is in shadow, so it shows against snow too.
     {"snowdrop", 9, 22, SNOWDROP_MS,
      [](int f, const Canvas &c) {
-       const uint32_t T = 0x224444, S = 0xBBCCDD, P = 0xDDDDEE;
+       const uint32_t T = 0x224444, S = 0x98A8C4, P = 0xCCD6E8;
        for (int x = 0; x < 4; x++)
          c.put(x, 0, f ? T : S);
        if (f <= 1) {  // the clump, then sagging

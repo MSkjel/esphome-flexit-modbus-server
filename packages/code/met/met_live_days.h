@@ -111,10 +111,11 @@ inline void new_year(const Scene &s) {
 // ---- Easter
 
 // Chicks peck and potter about in front of the eggs, and now and then a hare three chicks long hops along the near
-// hill a leg at a time, stopping to sit up and look around
+// hill a leg at a time, stopping to sit up and look around just left of the cabin, between the clock and it
 inline void easter(const Scene &s) {
   for (int i = 0; i < 3; i++) {  // around eggs 0, 2 and 4, below every egg there
-    int e = std::min(i * 2, s.neggs - 1), l = std::max(0, s.egg[e].x - 14), r = std::min(W, s.egg[e].x + 14), top = 0;
+    int e = std::min(i * 2, s.neggs - 1), l = std::max<int>(DATE_R, s.egg[e].x - 14),
+        r = std::min<int>(GAP_R, s.egg[e].x + 14), top = 0;
     for (int k = 0; k < s.neggs; k++)
       if (s.egg[k].x + 5 > l && s.egg[k].x - 5 < r)
         top = std::max(top, s.egg[k].y + 6);
@@ -125,7 +126,7 @@ inline void easter(const Scene &s) {
     face("chick", i);
   }
   sometimes(minutes(8), minutes(1, 6), [hill = NearHill(s)] {
-    int stop = (int) rnd(40, 110), y = hill.at(stop + 10) - 8;
+    int stop = (int) rnd(GAP_L + 2, GAP_L + 14), y = hill.at(stop + 10) - 8;
     place("hare", 0, -22, hill.at(-12) - 8);
     later(amble("hare", 0, hill, -22, stop, 14, 10, 8, 0, 32), [=] {  // hops 32 px long
       swap("hare", 0, "haresit", stop, y);
@@ -176,7 +177,8 @@ inline void sankthans(const Scene &s) {
 // ---- Halloween
 
 // The pumpkin's candle flickers, a witch on her broomstick flies across the moon now and then, or across the sky
-// without it, and an owl glides in, perches on a spruce top, turns its head and hoots, and flies off
+// without it, and an owl glides in, perches on the cabin's ridge, a flat roof in town or a spruce top, turns its
+// head and hoots, and flies off
 inline void halloween(const Scene &s) {
   place("pumpkin", 0, s.pumpkin.x - 5, s.pumpkin.y - 3);
   sometimes(minutes(10), minutes(4, 30), [] {  // where the moon is by then
@@ -186,9 +188,23 @@ inline void halloween(const Scene &s) {
       flip("witch", 0, true, false);
     return remove_later(ride("witch", r), "witch", 0);
   });
-  std::vector<int16_t> tops;  // the near spruces' x and top
+  // Where it perches, x and the row under its feet: the ridge, the town's flat roofs and the near spruces in the gap
+  // between the clock and the temperatures, or any near spruce if there's none of those
+  std::vector<int16_t> tops;
+  if (s.cabin)
+    tops.insert(tops.end(), {(int16_t) (s.cabin_x - 1), (int16_t) (s.cabin_y - 40)});
+  for (int i = 0; i < s.nbld; i++) {
+    const Bld &b = s.bld[i];
+    int l = std::max<int>(b.x, GAP_L), r = std::min<int>(b.x + b.w - 1, GAP_R);
+    if (!b.back && b.kind == 0 && r - l >= 12)
+      tops.insert(tops.end(), {(int16_t) ((l + r) / 2), (int16_t) (b.top - 1)});
+  }
   for (int i : near_trees(s, 0))
-    tops.insert(tops.end(), {s.tree[i].x, s.tree[i].top});
+    if (s.tree[i].x - 4 >= GAP_L && s.tree[i].x + 6 <= GAP_R)
+      tops.insert(tops.end(), {s.tree[i].x, s.tree[i].top});
+  if (tops.empty())
+    for (int i : near_trees(s, 0))
+      tops.insert(tops.end(), {s.tree[i].x, s.tree[i].top});
   if (tops.empty())
     return;
   sometimes(minutes(12), minutes(2, 10), [tops] {
