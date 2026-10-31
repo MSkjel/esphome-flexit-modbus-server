@@ -18,7 +18,7 @@ inline constexpr uint32_t PARTIAL_MS = 4000;    // a request waits this long for
 inline constexpr uint32_t PANEL_MS = 120000;    // a shot not done by then isn't coming, the panel lost the ask
 inline constexpr uint32_t KEEP_MS = 60000;      // the tiles are let go this long after the last look
 inline constexpr size_t TILES_RAM = 24 * 1024;  // about what the tiles take
-inline constexpr int TILE_BYTES = 1024;         // more than a tile can be, the panel keeps it in 400
+inline constexpr int TILE_BYTES = 1024;         // more than a tile can be, the panel keeps it in 720
 
 // A part of the JPEG, as flexit_panel_camera takes them. A tile that changes is a new one, so an image being sent
 // keeps the old.

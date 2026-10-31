@@ -461,7 +461,7 @@ them. It's on the device's page, or add it to a dashboard of your own.
 
 ```yaml
       - path: packages/panel/screen_camera.yaml
-        vars: {quality: "80"}  # JPEG quality, 1-100: higher is sharper text and slower, best kept at 90 or under
+        vars: {quality: "90"}  # JPEG quality, 1-100: higher is sharper text and slower, best kept at 95 or under
                                # category: "" for an ordinary entity, on the dashboards
 ```
 
@@ -469,9 +469,9 @@ The panel doesn't keep a copy of its screen. While someone looks, it draws its s
 sends each one as a bit of JPEG as it goes to the display, after the first time only the tiles that changed. The
 ESP puts them together. The first look shows what came within 4 s, black where nothing has yet, and the live view
 fills in over about 10 s. After that an image takes a second or two, the clock ticking over is 4 tiles. The tiles
-take about 20 KB of the ESP's RAM, let go a minute after the last look; without the RAM it doesn't ask. While the
-ESP sends the panel a picture or an animation, the screen waits. A tile has to fit in about 400 bytes on the panel,
-so above quality 90 the busiest tiles lose their faint detail, and above 95 some are left a flat colour.
+take about 25 KB of the ESP's RAM, let go a minute after the last look; without the RAM it doesn't ask. While the
+ESP sends the panel a picture or an animation, the screen waits. A tile has to fit in about 700 bytes on the panel,
+so above quality 95 the busiest tiles lose their faint detail.
 
 ## Flashing the panel
 

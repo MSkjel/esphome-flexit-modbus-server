@@ -1,14 +1,14 @@
 # What the panel shows, as a camera in Home Assistant, "Panel Screen". While someone looks, the panel sends its screen
 # as 64x8 tiles, after the first time only those that changed, and the ESP puts them together as a JPEG. The first
 # look fills in over about 10 s, black where no tile has come yet. After that an image takes a second or two. The
-# tiles take about 20 KB of the ESP's RAM, let go a minute after the last look. Needs panel firmware with screenshots.
+# tiles take about 25 KB of the ESP's RAM, let go a minute after the last look. Needs panel firmware with screenshots.
 #   - path: packages/panel/screen_camera.yaml
-# quality: JPEG quality, 1-100. Higher is sharper text and slower. A tile has to fit in about 400 bytes on the panel:
-# above 90 the busiest lose their faint detail to fit, above 95 some are left a flat colour.
+# quality: JPEG quality, 1-100. Higher is sharper text and slower. A tile has to fit in about 700 bytes on the panel:
+# above 95 the busiest lose their faint detail to fit.
 # category: diagnostic keeps it off Home Assistant's own dashboards, which would fetch an image every 10 s while
 # open. "" puts it there.
 defaults:
-  quality: "80"
+  quality: "90"
   category: diagnostic
 
 external_components:
