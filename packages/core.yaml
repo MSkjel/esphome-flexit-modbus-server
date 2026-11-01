@@ -25,8 +25,9 @@ uart:
   tx_pin: ${flexit_tx_pin}
   rx_pin: ${flexit_rx_pin}
   baud_rate: 115200
-  # Saving a setting to flash stalls the loop for tens of ms. 256 bytes is 22 ms of the bus, and the CX60's
-  # status alone is 180 bytes every ~110 ms.
+  # Saving to flash stalls the loop for tens of ms, and the CX60's status alone is 180 bytes every ~110 ms. The
+  # driver's interrupt only fills this meanwhile if it runs from IRAM, CONFIG_UART_ISR_IN_IRAM on an ESP32 (see
+  # example.yaml), else what's past the UART's 128-byte FIFO is lost.
   rx_buffer_size: 1024
 
 flexit_modbus_server:

@@ -10,6 +10,13 @@
 defaults:
   panel_address: "3"
 
+# The UART's interrupt from IRAM, so it keeps taking the bus's bytes while the flash is written, like a setting
+# being saved. Else what's past its 128-byte FIFO is lost, and with it the status broadcast and the link's window.
+esp32:
+  framework:
+    sdkconfig_options:
+      CONFIG_UART_ISR_IN_IRAM: "y"
+
 globals:
   - id: panel_language  # the panel's language, so its items' texts are right straight after a restart
     type: int
