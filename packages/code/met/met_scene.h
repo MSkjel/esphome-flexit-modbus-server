@@ -304,12 +304,22 @@ inline int cloud_x(const Scene &s, int i) {
 
 inline bool high_cloud(const Scene &s, int i) { return s.cloud_layer[i] == 0; }  // the rest are middle and low
 
-// Half width of an ellipse dy rows from its centre, -1 if outside
+// Half width of an ellipse dy rows from its centre, -1 if outside: rx * sqrt(1 - dy^2 / ry^2) rounded, so the
+// largest h with (2h - 1)^2 ry^2 <= 4 rx^2 (ry^2 - dy^2). In integers, an ESP32-C3 has no FPU.
 inline int half(int dy, int rx, int ry) {
   if (dy < -ry || dy > ry || ry <= 0)
     return -1;
-  float v = 1 - (float) (dy * dy) / (float) (ry * ry);
-  return (int) (rx * sqrtf(v) + 0.5f);
+  uint64_t most = 4ull * (uint32_t) (rx * rx) * (uint32_t) (ry * ry - dy * dy);
+  int lo = 0, hi = std::max(rx, 0);
+  while (lo < hi) {
+    int h = (lo + hi + 1) / 2;
+    uint64_t q = (uint64_t) (2 * h - 1) * (uint32_t) ry;
+    if (q * q <= most)
+      lo = h;
+    else
+      hi = h - 1;
+  }
+  return lo;
 }
 
 // A spruce's half width d rows below its top, a narrow cone with ragged tiers, and whether snow lies on it there

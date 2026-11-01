@@ -109,10 +109,12 @@ struct Drawing {
   Scene scene;
   uint8_t row[W];  // the last row pixel() drew
   int row_y;
+  Palette colours;  // its colours counted, while built is still false
 };
 inline Drawing *drawing;
 inline Land *land;
-inline bool built;  // drawing has the scene for now
+inline bool built;     // drawing has the scene for now
+inline bool counting;  // drawing has it but its colours, see prepare()
 
 inline void free_drawing() {
   if (drawing) {
@@ -122,7 +124,7 @@ inline void free_drawing() {
     RAMAllocator<Drawing>().deallocate(drawing, 1);
   }
   drawing = nullptr;
-  built = false;
+  built = counting = false;
   if (land && picture::S.want != name) {
     RAMAllocator<Land>().deallocate(land, 1);
     land = nullptr;
@@ -157,10 +159,8 @@ inline bool new_drawing() {
   return true;
 }
 
-// Builds the scene for now if it isn't. False without the time or the RAM, picture.h asks again a second later.
-inline bool draw() {
-  if (built)
-    return true;
+// Builds the scene for now and starts counting its colours. False without the time or the RAM.
+inline bool begin() {
   ESPTime t = id(flexit_panel_time).now();
   if (!t.is_valid())
     return false;
@@ -178,20 +178,54 @@ inline bool draw() {
   options.frame++;
   Scene &s = drawing->scene;
   build(s, weather, lat, lon, (uint32_t) t.timestamp, with_forecast, utc_offset, options);
-  s.live = live::leaves_out(s);                  // what the animations that fit it draw themselves
-  const picture::Pic &shown = picture::S.shown;  // the panel's palette, if it's this picture
-  palette(s, shown.name == name && shown.format == PIC_PALETTE ? shown.pal : nullptr);
+  s.live = live::leaves_out(s);  // what the animations that fit it draw themselves
+  drawing->colours.start(s);
+  counting = true;
+  return true;
+}
+
+// Once the colours are counted: the 16 of them, keeping the panel's where they're the same if it's this picture
+inline void finish() {
+  Scene &s = drawing->scene;
+  const picture::Pic &shown = picture::S.shown;
+  drawing->colours.end(s, shown.name == name && shown.format == PIC_PALETTE ? shown.pal : nullptr);
   live::apply(s);
   memcpy(pal, s.pal, sizeof pal);
   drawing->row_y = -1;
+  counting = false;
   built = true;
+}
+
+inline constexpr int COUNT_ROWS = 8;  // rows prepare() counts between looks at the time
+
+// picture.h's prepare: the scene for now built, then its colours counted a few rows at a time until deadline_us.
+// True once there's nothing more to do now, built or not to be built yet, which draw() then says.
+inline bool prepare(uint32_t deadline_us) {
+  if (built || (!counting && !begin()))
+    return true;
+  while (!drawing->colours.count(drawing->scene, COUNT_ROWS))
+    if (!before(deadline_us))
+      return false;
+  finish();
+  return true;
+}
+
+// The scene for now, all of it at once if prepare() hasn't. False without the time or the RAM, picture.h asks
+// again a second later.
+inline bool draw() {
+  if (built)
+    return true;
+  if (!counting && !begin())
+    return false;
+  drawing->colours.count(drawing->scene, H);
+  finish();
   return true;
 }
 
 // The time, the weather or a setting changed. Drawn again if it's the panel's picture.
 inline void redraw() {
   send_now();
-  built = false;
+  built = counting = false;
   picture::changed(name);
 }
 
@@ -430,6 +464,7 @@ inline void setup(double latitude, double longitude, const char *picture, const 
     h = H;
     return draw();
   };
+  s.prepare = prepare;
   s.pixel = pixel;
   s.pal = pal;
   s.row = [](int y, uint8_t *idx) {
