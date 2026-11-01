@@ -315,10 +315,11 @@ inline void send_saver_lines() {
   }
 }
 
-// Every 20 ms. The pictures and animations share one slice, so the bus callbacks don't wait long.
+// Every 20 ms. The pictures and animations share one slice, so the bus callbacks don't wait long, and it ends before
+// the CX60's status broadcast does, so the link's window after it isn't held up.
 inline void loop() {
   static int last_hour = -1;  // local hour when the time was last sent
-  uint32_t deadline_us = micros() + SLICE_US;
+  uint32_t deadline_us = slice_deadline_us();
   track_connection();
   dispatch();
   bool connected = link::connected;

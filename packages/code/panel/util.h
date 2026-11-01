@@ -9,9 +9,21 @@ namespace flexit::panel {
 
 // Max time a loop spends on pictures and animations together, so the main loop and the bus callbacks keep running
 inline constexpr uint32_t SLICE_US = 5000;
+// Kept clear of the end of the CX60's status broadcast, so the link's window right after it isn't held up: the UART
+// interrupt, the task wake and the piece of work under way
+inline constexpr uint32_t STATUS_MARGIN_US = 1500;
 
 // Whether micros() hasn't reached deadline_us yet
 inline bool before(uint32_t deadline_us) { return (int32_t) (micros() - deadline_us) < 0; }
+
+// The deadline for this loop's slice of work: SLICE_US from now, or less so it ends STATUS_MARGIN_US before the status
+// broadcast does. Now, so only the quick bits run, when the broadcast is about to end.
+inline uint32_t slice_deadline_us() {
+  uint32_t until = id(server).until_status_end_us(), now = micros();
+  if (until < STATUS_MARGIN_US + 1000)
+    return now;
+  return now + std::min<uint32_t>(SLICE_US, until - STATUS_MARGIN_US);
+}
 
 // id() is a pointer in ESPHome's lambdas and a reference in the sim's harness
 template<typename T> T *ptr_of(T *p) { return p; }

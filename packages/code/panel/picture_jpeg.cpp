@@ -39,20 +39,23 @@ void Search::attempt(int q, std::initializer_list<int> also) {
     if (a >= 1 && a <= top && a != q)
       pjpeg_also(&enc, a);
   lines.resize((size_t) w * 8 * 3);
-  line = 0;
+  line = x = 0;
 }
 
 bool Search::step(uint32_t (*pixel)(int x, int y)) {
-  if (line < 8) {  // the next line for this row of MCUs
-    int y = enc.row * 8 + line;
-    uint8_t *l = &lines[(size_t) line * enc.w * 3];
-    for (int x = 0; x < enc.w; x++, l += 3) {
+  if (line < 8) {  // more of the next line for this row of MCUs
+    int y = enc.row * 8 + line, end = std::min<int>(enc.w, x + STEP_PX);
+    uint8_t *l = &lines[((size_t) line * enc.w + x) * 3];
+    for (; x < end; x++, l += 3) {
       uint32_t c = pixel(x, y);
       l[0] = (uint8_t) (c >> 16);
       l[1] = (uint8_t) (c >> 8);
       l[2] = (uint8_t) c;
     }
-    line++;
+    if (x == enc.w) {
+      line++;
+      x = 0;
+    }
     return true;
   }
   bool more = pjpeg_mcu(

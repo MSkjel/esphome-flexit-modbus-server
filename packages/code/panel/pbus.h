@@ -48,9 +48,10 @@ extern const uint8_t PBUS_STATUS_HEAD[7];
 
 uint16_t pbus_crc16(const uint8_t *p, int n);  // Modbus CRC
 bool pbus_crc_ok(const uint8_t *f, int n);
-int pbus_put_crc(uint8_t *f, int n);              // appends the CRC of f[n], returns n + 2
-bool pbus_is_status(const uint8_t *f, int n);     // the CX60's status broadcast? Caller checks the CRC
-bool pbus_is_cx60(const uint8_t *f, int n);       // f starts with a CX60 frame, not a server's reply. CRC checked
+int pbus_put_crc(uint8_t *f, int n);           // appends the CRC of f[n], returns n + 2
+bool pbus_is_status(const uint8_t *f, int n);  // the CX60's status broadcast? Caller checks the CRC
+// f starts with a CX60 frame, not a server's reply. crc_ok is pbus_crc_ok(f, n), see pbus_gaps_frame
+bool pbus_is_cx60(const uint8_t *f, int n, bool crc_ok);
 int pbus_status_part(const uint8_t *buf, int n);  // length of an unfinished status frame at the end of buf, 0 = none
 
 // Upper bound on how long ago the status broadcast ended, for an ESP that reads its UART from a loop. The
@@ -103,9 +104,10 @@ typedef struct {
   bool end_known;
 } pbus_gaps_t;
 
-// Feed it every frame on the bus in order, ours too, and any bytes that aren't a frame, n < 4 is fine. The frame
-// started between start_lo_us and start_hi_us, equal when the time is known.
-void pbus_gaps_frame(pbus_gaps_t *g, const uint8_t *f, int n, uint32_t start_lo_us, uint32_t start_hi_us);
+// Feed it every frame on the bus in order, ours too, and any bytes that aren't a frame, n < 4 is fine. crc_ok is
+// pbus_crc_ok(f, n): the caller computes it once, the panel does this in its UART interrupt and the CRC of a
+// status frame takes it 25 us. The frame started between start_lo_us and start_hi_us, equal when the time is known.
+void pbus_gaps_frame(pbus_gaps_t *g, const uint8_t *f, int n, bool crc_ok, uint32_t start_lo_us, uint32_t start_hi_us);
 uint32_t pbus_gaps_left(pbus_gaps_t *g, uint32_t now_us);  // time left in a gap, 0 = none
 
 // ---- Panel side, called from its RX interrupt (it knows the time to the microsecond)
@@ -128,10 +130,11 @@ typedef struct {
 } pbus_panel_t;
 
 void pbus_panel_init(pbus_panel_t *w);
-// A burst on the bus that isn't a link frame, from the CX60, another server or our own reply. It started at
-// start_us and the line went idle at idle_us, one byte time after its end. now_ms is the 1 ms tick, to cross-check the
-// microsecond clock.
-void pbus_panel_burst(pbus_panel_t *w, const uint8_t *b, int n, uint32_t start_us, uint32_t idle_us, uint32_t now_ms);
+// A burst on the bus that isn't a link frame, from the CX60, another server or our own reply. crc_ok is
+// pbus_crc_ok(b, n), computed once by the caller. It started at start_us and the line went idle at idle_us, one byte
+// time after its end. now_ms is the 1 ms tick, to cross-check the microsecond clock.
+void pbus_panel_burst(pbus_panel_t *w, const uint8_t *b, int n, bool crc_ok, uint32_t start_us, uint32_t idle_us,
+                      uint32_t now_ms);
 // A link frame, the line idle after it at idle_us. Returns the time from then until everything has to be off the
 // bus, 0 outside the quiet time and the gaps. *say gets the PBUS_* status to report.
 uint32_t pbus_panel_window(pbus_panel_t *w, uint32_t idle_us, uint32_t now_ms, uint8_t *say);
