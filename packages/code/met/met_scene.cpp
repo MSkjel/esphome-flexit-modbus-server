@@ -273,14 +273,14 @@ static Sprite *box(Scene &s, int x, int y, int w, int h, int layer, uint32_t c) 
 
 // a firework of rays around a bright middle
 static void burst(Scene &s, int cx, int cy, int r, uint32_t c, uint32_t heart) {
-  Sprite *p = sprite(s, cx - r, cy - r, 2 * r + 1, 2 * r + 1, 0, c);
+  Sprite *p = sprite(s, cx - r, cy - r, 2 * r + 1, 2 * r + 1, 1, c);
   for (int k = 0; k < 12; k++) {
     float a = k * 2 * kPiF / 12;
     for (int d = 3; d <= r; d++)
       if ((d + k) % 3 != 2)  // gaps so the rays look like they're burning out
         sprite_set(p, r + iround(d * cosf(a)), r + iround(d * sinf(a)));
   }
-  Sprite *in = sprite(s, cx - 2, cy - 2, 5, 5, 0, heart);
+  Sprite *in = sprite(s, cx - 2, cy - 2, 5, 5, 1, heart);
   for (int d = -2; d <= 2; d++) {
     sprite_set(in, 2 + d, 2);
     sprite_set(in, 2, 2 + d);
@@ -442,7 +442,7 @@ Now::Now(const Weather &weather, const Options &options, double la, double lo, u
   dark = sun.el < -6;
   wind = w.wind;
   gust = w.gust;
-  fair = sun.el > 3 && cover < 60 && !rain && !snow && !thunder && fog < 30 && wind < 12;
+  fair = w.ok && sun.el > 3 && cover < 60 && !rain && !snow && !thunder && fog < 30 && wind < 12;
   fireplace = o.fireplace;
   // The picture faces south, east on the left. A wind from the east half blows things to the right.
   wdir = (int8_t) (w.wind_from > 180 && w.wind_from < 360 ? -1 : 1);
@@ -486,7 +486,7 @@ static void sky(Scene &s, const Now &n) {
   float darken = std::min(0.4f, (n.w.ok ? n.w.rain : 0) / 12);
   top = mix(top, 0x2A2F38, darken);
   bottom = mix(bottom, 0x4A505A, darken);
-  s.rgb[C_FOG] = mix(mix(0x262C38, 0xC6CCD4, n.light), bottom, 0.3f);
+  s.rgb[C_FOG] = mix(mix(0x2A3040, 0xDEE2E8, n.light), bottom, 0.2f);
   if (n.fog >= 60) {
     top = mix(top, s.rgb[C_FOG], (n.fog - 60) / 80);
     bottom = mix(bottom, s.rgb[C_FOG], (n.fog - 60) / 60);
@@ -510,9 +510,9 @@ static void sun_moon(Scene &s, const Now &n) {
     s.sun = true;
     s.sun_x = (int16_t) sky_x(n.sun.az);
     s.sun_y = (int16_t) std::max(SUN_R + 2, sky_y(n.sun.el));  // stays in the picture south of Norway
-    uint32_t behind = s.rgb[C_SKY + std::min(band_of(s.sun_y), 3)];
-    if (n.grey > 0.75f) {
-      s.rgb[C_SUN] = mix(behind, 0xFFFFFF, 0.3f);  // a pale disc through the clouds
+    uint32_t behind = s.glow ? s.rgb[C_GLOW] : s.rgb[C_SKY + band_of(s.sun_y)];
+    if (n.grey > 0.75f || n.fog >= 60) {
+      s.rgb[C_SUN] = mix(n.fog >= 60 ? s.rgb[C_FOG] : behind, 0xFFFFFF, 0.3f);  // a pale disc through cloud or fog
     } else {
       s.rgb[C_SUN] = n.sun.el < 6 ? mix(0xFF9A50, 0xFFE0A0, n.sun.el / 6) : rgb4(255, 246, 210);
       s.sun_rings = true;
@@ -526,6 +526,8 @@ static void sun_moon(Scene &s, const Now &n) {
     s.moon_y = (int16_t) std::max(MOON_R + 2, sky_y(n.moon.el));
     s.moon_phase = n.moon_phase;
     s.rgb[C_MOON] = mix(0xDCE6F2, 0xF4F6FA, 1 - n.light);
+    if (n.sun.el > -6)  // paler by day and in the twilight, so it isn't a second sun
+      s.rgb[C_MOON] = mix(s.rgb[C_MOON], s.rgb[C_SKY + band_of(s.moon_y)], 0.4f);
     // No glow round a new moon or a thin crescent, which show little or no disc
     if (n.sun.el < -6 && n.grey < 0.6f && n.moon_phase > 0.1f && n.moon_phase < 0.9f) {
       s.moon_glow = true;
@@ -700,9 +702,10 @@ static void precipitation(Scene &s, const Now &n) {
       int x = p.in(0, W - 1);
       s.prec_x[i] = (int16_t) x;
       s.prec_y[i] = (int16_t) p.in(s.prec_top[x], H - 1);
-      s.prec_kind[i] = (uint8_t) (n.snow && (!both || i % 2) ? (p.in(0, 3) ? 1 : 2) : 0);
+      // more of the 2 x 2 flakes while the ground's still bare, so the snow shows
+      s.prec_kind[i] = (uint8_t) (n.snow && (!both || i % 2) ? (p.in(0, n.white ? 3 : 1) ? 1 : 2) : 0);
     }
-    s.rgb[C_RAIN] = mix(0x4A5C78, 0x9EBAD6, n.light);
+    s.rgb[C_RAIN] = mix(0x4A5C78, 0x86A4C6, n.light);
     s.rgb[C_SNOW] = mix(0xAAB4C6, 0xF6FAFF, n.light);
   }
   if (n.thunder) {
@@ -831,14 +834,6 @@ static void city(Scene &s, const Now &n, Rng &h) {
       s.tag = 0;
     }
   }
-  if (n.dark) {  // a street lamp in the park
-    Sprite *lamp = sprite(s, 60, 180, 5, 3, 2, WARM_LIGHT);
-    if (lamp) {
-      lamp->rows[0] = 0x0E;
-      lamp->rows[1] = 0x1F;
-      lamp->rows[2] = 0x0E;
-    }
-  }
 }
 
 // The sea's waves and the sun's or moon's reflection
@@ -853,9 +848,11 @@ static void sea(Scene &s, const Now &n) {
     s.wave_y[i] = (int16_t) wv.in(s.sea_top + 2, 182);
     s.wave_w[i] = (int16_t) wv.in(2, 3 + (int) w.wind);
   }
+  // the moon's, or the sun's while its disc shows over the land behind the water
+  int over = s.sun ? std::min<int>(s.land->hill[0][s.sun_x], s.ridge ? s.land->ridge[s.sun_x] : H) : 0;
   if (s.moon && n.dark)
     s.shine_x = s.moon_x;
-  else if (s.sun && n.sun.el < 20 && n.grey < 0.5f)
+  else if (s.sun && n.sun.el < 20 && n.grey < 0.5f && s.sun_y < over)
     s.shine_x = s.sun_x;
 }
 
@@ -875,7 +872,7 @@ static void hill_colours(Scene &s, const Now &n) {
     if (l == 0)
       c = mix(c, s.rgb[C_SKY + 4], 0.3f);
     if (n.fog > 15)
-      c = mix(c, s.rgb[C_FOG], n.fog / 100 * (0.5f - l * 0.15f));
+      c = mix(c, s.rgb[C_FOG], n.fog / 100 * (0.5f - l * 0.1f));
     if (l > 0)
       s.rgb[C_TREE + l - 1] = c;
   }
@@ -890,16 +887,25 @@ static void hill_colours(Scene &s, const Now &n) {
 static void trees(Scene &s, const Now &n, Rng &h, int count, int nfront) {
   const uint8_t (*hill)[W] = s.land->hill;
   for (int i = 0; i < count; i++) {
-    bool front = i < nfront;
+    bool front = i < nfront, birch = i % 5 == 3;
     int x = h.in(0, W - 1), l = front ? 2 : 1;
     if (front && x > s.home_x - 36 && x < s.home_x + 44)  // keep a clearing around home
       x = (x + W / 2) % W;
+    if (!front && s.pole_x >= 0 && abs(x - s.pole_x) < 12)  // and the flag clear of a crown behind it
+      x = (x + W / 2) % W;
+    if (birch)  // a whole crown, not half of one at an edge
+      x = std::clamp(x, 8, W - 9);
+    // the tall one with the lights, at the edge of the clearing in the gap, past the flag in town
+    bool xmas_spruce = n.xmas && i == nfront - 1;
+    if (xmas_spruce)
+      x = s.home_x + (s.cabin ? -32 : 62);
     Tree &t = s.tree[s.ntrees++];
     t.x = (int16_t) x;
     t.base = (int16_t) (hill[l][x] + 3);
-    t.top = (int16_t) (t.base - (front ? h.in(18, 40) : h.in(8, 16)));
+    int height = front ? h.in(18, 40) : h.in(8, 16);
+    t.top = (int16_t) (t.base - (xmas_spruce ? 40 : height));
     t.layer = (uint8_t) l;
-    t.kind = (uint8_t) (i % 5 == 3 ? (n.season <= 1 ? 2 : 1) : 0);  // every fifth a birch, bare in winter
+    t.kind = (uint8_t) (birch && !xmas_spruce ? (n.season <= 1 ? 2 : 1) : 0);  // every fifth a birch, bare in winter
   }
 }
 
@@ -946,12 +952,24 @@ static void ground(Scene &s, const Now &n) {
   if (s.sea)
     sea(s, n);
   s.cabin_y = (int16_t) (land.hill[2][s.cabin_x] + 6);
-  // flagpole by the cabin, or in the city's park on flag days
-  int park = h.in(90, 130);
-  s.pole_x = (int16_t) (s.cabin ? s.cabin_x + 24 : n.flag_day ? park : -1);  // the park's pole stands all day
+  // flagpole by the cabin, or in the city's park on flag days, where the flag shows beside the clock either way it
+  // blows
+  int park = h.in(GAP_L + 20, GAP_L + 36);
+  // The park's pole stands all day. The cabin's is far enough off for the flag to clear the chimney's smoke.
+  s.pole_x = (int16_t) (s.cabin ? s.cabin_x + 28 : n.flag_day ? park : -1);
   s.pole_base = (int16_t) (s.cabin ? s.cabin_y - 2 : land.hill[2][park] + 4);
   s.pole_top = (int16_t) (s.pole_base - 48);
   s.home_x = (int16_t) (s.cabin ? s.cabin_x : park - 24);
+  if (n.o.ground == G_CITY && n.dark) {  // a street lamp on its post in the park
+    int lx = park - 14, ly = land.hill[2][park] - 4;
+    box(s, lx + 2, ly, 1, 10, 2, s.rgb[C_BLD_EDGE]);
+    Sprite *lamp = sprite(s, lx, ly - 3, 5, 3, 2, WARM_LIGHT);
+    if (lamp) {
+      lamp->rows[0] = 0x0E;
+      lamp->rows[1] = 0x1F;
+      lamp->rows[2] = 0x0E;
+    }
+  }
   trees(s, n, h, ntrees, nfront);
   s.window_lit = n.sun.el < -3 && ((n.hour >= 6 && n.hour < 23) || n.xmas || n.newyear);  // asleep after eleven
   s.rgb[C_WINDOW] = n.halloween ? rgb4(255, 140, 40) : WARM_LIGHT;
@@ -975,7 +993,7 @@ static void life(Scene &s, const Now &n, Rng &rng) {
     int bx = s.moon ? s.moon_x - 40 : rng.in(40, W - 100), by = s.moon ? s.moon_y - 16 : rng.in(70, 110);
     for (int i = 0; i < 7; i++) {
       int x = bx + rng.in(-10, 90), y = by + rng.in(-20, 36);
-      sprite_rows(sprite(s, x, y, 9, 4, 0, rgb4(0, 0, 0)), BAT.row);
+      sprite_rows(sprite(s, x, y, 9, 4, 1, rgb4(0, 0, 0)), BAT.row);
     }
   }
   uint32_t white = s.rgb[C_WHITE];
@@ -988,6 +1006,10 @@ static void life(Scene &s, const Now &n, Rng &rng) {
     puffs = 0;
   s.puffs = (uint8_t) puffs;
   int cx = s.cabin ? s.cabin_x + 9 : s.home_x, cy = s.cabin ? s.cabin_y - 32 : s.pole_base - 10;
+  if (!s.cabin)  // in town from the roof of the near building over home
+    for (int i = 0; i < s.nbld; i++)
+      if (!s.bld[i].back && cx >= s.bld[i].x && cx < s.bld[i].x + s.bld[i].w)
+        cy = s.bld[i].top - 2;
   s.chimney = {(int16_t) cx, (int16_t) cy};
   s.tag = L_SMOKE;
   for (int i = 0; i < puffs; i++) {
@@ -1015,8 +1037,10 @@ static void life(Scene &s, const Now &n, Rng &rng) {
 // Lights on the spruce nearest home, on either side, and a star on top
 static void xmas_lights(Scene &s) {
   int best = -1;
-  for (int i : near_trees(s, 0))
-    if (best < 0 || abs(s.tree[i].x - s.home_x) < abs(s.tree[best].x - s.home_x))
+  auto in_gap = [&s](int i) { return s.tree[i].x >= GAP_L + 10 && s.tree[i].x <= GAP_R - 10; };
+  for (int i : near_trees(s, 0))  // the nearest home, in the gap if any is
+    if (best < 0 || (in_gap(i) && !in_gap(best)) ||
+        (in_gap(i) == in_gap(best) && abs(s.tree[i].x - s.home_x) < abs(s.tree[best].x - s.home_x)))
       best = i;
   if (best < 0)
     return;
@@ -1048,12 +1072,12 @@ static void fireworks(Scene &s, const Now &n) {
   s.tag = 0;
 }
 
-// Striped eggs in the grass in front of home
+// Striped eggs in the grass in front of home, in the gap so the chicks show
 static void eggs(Scene &s, const Now &n) {
   uint32_t cols[3] = {s.rgb[C_WINDOW], rgb4(230, 100, 170), rgb4(100, 190, 230)};
   Rng eg{(uint32_t) n.year * 7u};
   for (int i = 0; i < (int) std::size(s.egg); i++) {
-    int x = (s.home_x - 84 + i * 19 + eg.in(-3, 3) + W) % W, y = s.land->hill[2][x] + 12 + eg.in(0, 8);
+    int x = GAP_L + 30 + i * 14 + eg.in(-3, 3), y = s.land->hill[2][x] + 12 + eg.in(0, 8);
     s.egg[s.neggs++] = {(int16_t) x, (int16_t) y};
     blob(s, x, y, 4, 5, 1, cols[i % 3]);
     Sprite *stripes = sprite(s, x - 3, y - 2, 7, 4, 1, s.rgb[C_WHITE]);  // both in one, sprites are scarce at Easter
@@ -1062,9 +1086,11 @@ static void eggs(Scene &s, const Now &n) {
   }
 }
 
-// The bonfire on the near hill away from home: its logs, its flames, sparks and smoke
+// The bonfire in the meadow below the cabin, its flames up to the cabin's floor, or on the near hill in the middle of
+// the gap in town: its logs, its flames, sparks and smoke
 static void bonfire(Scene &s, const Now &n, Rng &rng) {
-  int bx = (s.home_x + W / 2) % W, by = s.land->hill[2][bx] + 14;
+  int bx = s.cabin ? s.cabin_x - 2 : (GAP_L + GAP_R) / 2;
+  int by = s.cabin ? std::min<int>(s.land->hill[2][bx] + 30, H - 8) : s.land->hill[2][bx] + 14;
   s.fire = {(int16_t) bx, (int16_t) by};
   box(s, bx - 9, by - 2, 19, 3, 2, s.rgb[C_DARK]);
   s.tag = L_BONFIRE;

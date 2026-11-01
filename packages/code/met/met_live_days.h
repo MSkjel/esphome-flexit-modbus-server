@@ -10,7 +10,7 @@ namespace flexit::panel::met::live {
 
 // The sleigh across the sky now and then, a few times an evening, its colours as dim as the night's
 inline void sleigh(int y) {
-  sometimes(minutes(60), minutes(3, 25), [y] {
+  sometimes(minutes(30), minutes(3, 25), [y] {
     uint32_t ms = across("sleigh", -36, y, 330, y - 18, 45000);
     wave("sleigh", 0, "y", -3, 3, 4000, 4000, 0, 0, 20, false, "both");
     return ms;
@@ -111,10 +111,11 @@ inline void new_year(const Scene &s) {
 // ---- Easter
 
 // Chicks peck and potter about in front of the eggs, and now and then a hare three chicks long hops along the near
-// hill a leg at a time, stopping to sit up and look around
+// hill a leg at a time, stopping to sit up and look around just left of the cabin, between the clock and it
 inline void easter(const Scene &s) {
   for (int i = 0; i < 3; i++) {  // around eggs 0, 2 and 4, below every egg there
-    int e = std::min(i * 2, s.neggs - 1), l = std::max(0, s.egg[e].x - 14), r = std::min(W, s.egg[e].x + 14), top = 0;
+    int e = std::min(i * 2, s.neggs - 1), l = std::max<int>(DATE_R, s.egg[e].x - 14),
+        r = std::min<int>(GAP_R, s.egg[e].x + 14), top = 0;
     for (int k = 0; k < s.neggs; k++)
       if (s.egg[k].x + 5 > l && s.egg[k].x - 5 < r)
         top = std::max(top, s.egg[k].y + 6);
@@ -124,8 +125,9 @@ inline void easter(const Scene &s) {
     wander("chick", i, 2, 5, 0, 180, 1000, 3000, 1500, 4000);
     face("chick", i);
   }
-  sometimes(minutes(8), minutes(1, 6), [hill = NearHill(s)] {
-    int stop = (int) rnd(40, 110), y = hill.at(stop + 10) - 8;
+  int sit = s.cabin ? GAP_L + 2 : s.home_x + 44;  // left of the cabin, or past the park's pole in town
+  sometimes(minutes(8), minutes(1, 6), [hill = NearHill(s), sit] {
+    int stop = sit + (int) rnd(0, 12), y = hill.at(stop + 10) - 8;
     place("hare", 0, -22, hill.at(-12) - 8);
     later(amble("hare", 0, hill, -22, stop, 14, 10, 8, 0, 32), [=] {  // hops 32 px long
       swap("hare", 0, "haresit", stop, y);
@@ -144,7 +146,7 @@ inline void easter(const Scene &s) {
 // wind
 inline void may17(const Scene &s) {
   int y = std::min(hill_low(s, 0, W) + 6, H - 14), wdir = s.at.wdir;  // below all of the near hill's top
-  sometimes(minutes(120), minutes(5, 40), [y] { return across("parade", -36, y - 4, 330, y, 60000); });
+  sometimes(minutes(60), minutes(5, 40), [y] { return across("parade", -36, y - 4, 330, y, 60000); });
   sometimes(minutes(15), minutes(3, 15), [hill = NearHill(s), wdir] {
     int x = wdir < 0 ? (int) rnd(90, 300) : (int) rnd(20, 230), ms = 60000;
     place("balloon", 0, x, hill.at(x) + 8, {false, 0, 600});
@@ -170,13 +172,18 @@ inline void sankthans(const Scene &s) {
   };
   spark(0);
   later(1700, [spark] { spark(1); });
-  chimney("puffdusk", 4, x, y - 36, 50, 12, s.at.wdir);
+  // its smoke from over the cabin's roof, since the fire is in the meadow in front of it
+  if (s.cabin)
+    chimney("puffdusk", 4, x, s.cabin_y - 30, 30, 12, s.at.wdir);
+  else
+    chimney("puffdusk", 4, x, y - 36, 50, 12, s.at.wdir);
 }
 
 // ---- Halloween
 
 // The pumpkin's candle flickers, a witch on her broomstick flies across the moon now and then, or across the sky
-// without it, and an owl glides in, perches on a spruce top, turns its head and hoots, and flies off
+// without it, and an owl glides in, perches on the cabin's ridge, a flat roof in town or a spruce top, turns its
+// head and hoots, and flies off
 inline void halloween(const Scene &s) {
   place("pumpkin", 0, s.pumpkin.x - 5, s.pumpkin.y - 3);
   sometimes(minutes(10), minutes(4, 30), [] {  // where the moon is by then
@@ -186,9 +193,23 @@ inline void halloween(const Scene &s) {
       flip("witch", 0, true, false);
     return remove_later(ride("witch", r), "witch", 0);
   });
-  std::vector<int16_t> tops;  // the near spruces' x and top
+  // Where it perches, x and the row under its feet: the ridge, the town's flat roofs and the near spruces in the gap
+  // between the clock and the temperatures, or any near spruce if there's none of those
+  std::vector<int16_t> tops;
+  if (s.cabin)  // the ridge is the roof's top row, 25 above the floor, see cabin_row()
+    tops.insert(tops.end(), {(int16_t) (s.cabin_x - 1), (int16_t) (s.cabin_y - 26)});
+  for (int i = 0; i < s.nbld; i++) {
+    const Bld &b = s.bld[i];
+    int l = std::max<int>(b.x, GAP_L), r = std::min<int>(b.x + b.w - 1, GAP_R);
+    if (!b.back && b.kind == 0 && r - l >= 12)
+      tops.insert(tops.end(), {(int16_t) ((l + r) / 2), (int16_t) (b.top - 1)});
+  }
   for (int i : near_trees(s, 0))
-    tops.insert(tops.end(), {s.tree[i].x, s.tree[i].top});
+    if (s.tree[i].x - 4 >= GAP_L && s.tree[i].x + 6 <= GAP_R)
+      tops.insert(tops.end(), {s.tree[i].x, s.tree[i].top});
+  if (tops.empty())
+    for (int i : near_trees(s, 0))
+      tops.insert(tops.end(), {s.tree[i].x, s.tree[i].top});
   if (tops.empty())
     return;
   sometimes(minutes(12), minutes(2, 10), [tops] {

@@ -33,6 +33,7 @@ struct Sky {
   float dens;                              // streaks or flakes per px
   int kind, slant;                         // 0 rain, 1 snow, 2 both, and their x per 8 rows
   decltype(Scene::bolt_x) bolt_x, bolt_y;  // the scene's bolt
+  uint8_t top[W];                          // the skyline it strikes behind
   int16_t shoot[6][3];                     // where a shooting star may start, and which way, x 0 for none
 };
 inline Sky SKY;
@@ -131,6 +132,7 @@ inline void prec_start(const Scene &s, int tw, int room) {
 inline void keep_bolt(const Scene &s) {
   memcpy(SKY.bolt_x, s.bolt_x, sizeof s.bolt_x);
   memcpy(SKY.bolt_y, s.bolt_y, sizeof s.bolt_y);
+  skyline(s, SKY.top);
 }
 // What the scene's bolt takes of the pool
 inline int bolt_bytes(const Scene &s) {
@@ -143,7 +145,16 @@ inline int bolt_bytes(const Scene &s) {
 inline uint32_t flash() {
   int x, y;
   unload("bolt");
-  add("bolt", bolt(SKY.bolt_x, SKY.bolt_y, (int) std::size(SKY.bolt_x), &x, &y));
+  Frames b = bolt(SKY.bolt_x, SKY.bolt_y, (int) std::size(SKY.bolt_x), &x, &y);
+  auto whole = b.draw;
+  b.draw = [whole, x, y, w = b.w, h = b.h](int f, const Canvas &c) {  // behind the town and the land, like the scene's
+    whole(f, c);
+    for (int yy = 0; yy < h; yy++)
+      for (int xx = 0; xx < w; xx++)
+        if (y + yy >= SKY.top[std::clamp(x + xx, 0, W - 1)])
+          c.px[yy * c.w + xx] = 0;
+  };
+  add("bolt", std::move(b));
   place("bolt", 0, x, y, {false, 0, 0});
   rounds("bolt", 0, 1);
   later(15000, [] { unload("bolt"); });

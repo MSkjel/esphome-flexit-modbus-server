@@ -73,21 +73,23 @@ inline void cosy(const Scene &s) {
   stove_smoke(s, "puffnight");
 }
 
-// A moose's visit a step at a time: out of the trees from x0 to x1, grazing there, and back
+// A moose's visit a step at a time: in along the meadow from x0 to x1, grazing there, and back. MOOSE_DY puts it
+// in the meadow in front of the cabin, its back a little under the cabin's floor.
+inline constexpr int MOOSE_DY = -6;
 inline void moose_visit(int step, const NearHill &h, int x0, int x1) {
   bool right = x1 < x0;  // it came from the right
   uint32_t ms = 24000;
   if (step == 0) {
-    place("moose", 0, x0, h.at(x0 + 10) - 14, {false, 0, 3000});
+    place("moose", 0, x0, h.at(x0 + 10) - MOOSE_DY, {false, 0, 3000});
     flip("moose", 0, right, false);
-    ms = amble("moose", 0, h, x0, x1, 1.7f, 10, 14);
+    ms = amble("moose", 0, h, x0, x1, 1.7f, 10, MOOSE_DY);
   } else if (step == 1) {
-    swap("moose", 0, "moosegraze", x1, h.at(x1 + 10) - 14);
+    swap("moose", 0, "moosegraze", x1, h.at(x1 + 10) - MOOSE_DY);
     flip("moosegraze", 0, right, false);
   } else if (step == 2) {
-    swap("moosegraze", 0, "moose", x1, h.at(x1 + 10) - 14);
+    swap("moosegraze", 0, "moose", x1, h.at(x1 + 10) - MOOSE_DY);
     flip("moose", 0, !right, false);
-    ms = amble("moose", 0, h, x1, right ? x0 + 2 : x0 - 2, 1.6f, 10, 14);
+    ms = amble("moose", 0, h, x1, right ? x0 + 2 : x0 - 2, 1.6f, 10, MOOSE_DY);
   } else {
     remove("moose", 0, 3000);
     return;
@@ -95,40 +97,36 @@ inline void moose_visit(int step, const NearHill &h, int x0, int x1) {
   later(ms, [=] { moose_visit(step + 1, h, x0, x1); });
 }
 
-// Now and then at dusk a moose steps out of the trees into the clearing by home, on one side of the cabin or the
-// other, grazes a while and goes back
+// Now and then at dusk a moose comes along the meadow from one side or the other, grazes a while in front of the
+// cabin, in the gap between the clock and the temperatures, and goes back
 inline void moose(const Scene &s) {
   preload("moosegraze");
-  // from the nearest front tree on either side, and up to 40 px out, clear of the cabin and the pole
-  int lg = s.cabin_x - 60, rg = s.cabin_x + 30, lx = -W, rx = W;
-  for (int i : near_trees(s, -1)) {
-    int x = s.tree[i].x - 12;
-    if (x <= lg - 16)
-      lx = std::max(lx, x);
-    if (x >= rg + 16 && x <= W - 24)
-      rx = std::min(rx, x);
-  }
+  int graze = std::clamp<int>(s.cabin_x - 51, DATE_R, GAP_R - 62);  // the 62 px it takes, centred on the cabin
   NearHill h(s);
-  sometimes(minutes(12), (uint32_t) rnd(20000, 240000), [=] {
-    bool from_right = rx < W && (lx == -W || chance(0.5f));
-    int x0 = from_right ? rx : lx == -W ? lg - 34 : lx;
-    moose_visit(0, h, x0, from_right ? std::max(rg, x0 - 40) : std::min(lg, x0 + 40));
+  sometimes(minutes(12), (uint32_t) rnd(20000, 240000), [=] {  // in from behind the clock or the temperatures
+    bool from_right = chance(0.5f);
+    moose_visit(0, h, from_right ? GAP_R + 10 : DATE_R - 80, graze);
     return 90000u;  // its walks and the grazing, about
   });
 }
 
-// Three reindeer grazing their way about, each in its own patch of the near land left of the cabin, and now and
-// then a golden eagle circling a while in the half of the sky away from the sun
+// Three reindeer grazing their way about, each in its own patch of the meadow along the bottom, in front of
+// everything and under the temperatures, and now and then a golden eagle circling a while in the half of the sky
+// away from the sun
 inline void reindeer(const Scene &s) {
-  int w = (s.cabin_x - 20 - 4 - 16) / 3;
+  int w = (W - 4 - DATE_R - 16) / 3;
   for (int i = 0; i < 3; i++) {
-    int a = 4 + i * (w + 8), y = hill_low(s, a, a + w) - 7;  // its feet on the land all across
+    int a = DATE_R + i * (w + 8), y = hill_low(s, a, a + w) - 7;  // its feet on the land
+    if (a + w > GAP_R)                                            // under the temperatures
+      y = std::max(y, TEMPS_BOT + 3);
+    else  // in the gap, in the meadow below the cabin's floor
+      y = std::max<int>(y, s.cabin_y + 4);
     place("reindeer", i, a + (w - 15) / 2 + (int) rnd(-8, 8), y, {true, i * 2});
     area("reindeer", i, a, y - 3, a + w, y + 15, "bounce", "bounce");
     face("reindeer", i);
     wander("reindeer", i, 1, 2.5f, 0, 180, 2000, 6000, 3000, 9000);
   }
-  sometimes(minutes(20), minutes(1, 8), [] {
+  sometimes(minutes(10), minutes(1, 8), [] {
     bool left = R.sun_x > W / 2;
     place("eagle", 0, left ? -40 : W + 20, 30, {true});
     wave("eagle", 0, "x", -40, 40, 12000, 12000, 0, 0, 20, false, "both");
@@ -139,8 +137,9 @@ inline void reindeer(const Scene &s) {
   });
 }
 
-// Now and then a skier along the near hill, quicker downhill, more often at weekends. And snow slips off the end
-// of a front spruce's tier, one that shows against what's behind it.
+// Now and then a skier along the near hill, quicker downhill, more often at weekends. And snow slips off the
+// cabin's eaves or the end of a front spruce's snowy tier, those in the gap between the clock and the temperatures
+// when there are any there.
 inline void skier(const Scene &s) {
   NearHill h(s);
   bool weekend = s.at.weekday == 0 || s.at.weekday == 6;
@@ -155,27 +154,33 @@ inline void skier(const Scene &s) {
   struct End {
     int16_t x, y;
     bool left;
-  } ends[16];
-  int n = 0, seen = 0;  // 16 of them at random
-  uint8_t out[W], snow = s.ix[C_HILL + 2];
-  for (int i : near_trees(s, 0)) {
-    for (int d = 13; s.tree[i].top + d <= s.tree[i].base; d++) {  // the snowy tiers but the top one
-      if (!snow_tier(d))
-        continue;
-      int y = s.tree[i].top + d, hw = spruce_hw(d);
-      row(s, y, out);
-      for (int side = -1; side <= 1; side += 2) {
-        int e = s.tree[i].x + side * hw;  // its last px
-        bool shows = e - 4 >= 0 && e + 4 < W && out[e + side] != snow;
-        for (int k = 0; k < 4; k++)
-          shows = shows && out[e - side * k] == snow;
-        End end = {(int16_t) (side > 0 ? e - 3 : e - 5), (int16_t) y, side < 0};
-        if (shows && n < 16)
-          ends[n++] = end;
-        else if (shows && rnd(0, (float) ++seen + 16) < 16)
-          ends[(int) rnd(0, 16)] = end;
-      }
+  } ends[16], gap[4];
+  int n = 0, seen = 0, g = 0;                  // 16 of them at random, and those in the gap apart
+  auto end_at = [&](int e, int y, int side) {  // the snow's last px e on row y, side -1 left of the rest, 1 right
+    if (e - 4 < 0 || e + 4 >= W)
+      return;
+    End end = {(int16_t) (side > 0 ? e - 3 : e - 5), (int16_t) y, side < 0};
+    if (end.x >= GAP_L && end.x + 10 <= GAP_R) {
+      if (g < 4)
+        gap[g++] = end;
+    } else if (n < 16) {
+      ends[n++] = end;
+    } else if (rnd(0, (float) ++seen + 16) < 16) {
+      ends[(int) rnd(0, 16)] = end;
     }
+  };
+  if (s.cabin) {  // the eaves, the roof's lowest row
+    end_at(s.cabin_x - 16, s.cabin_y - 16, -1);
+    end_at(s.cabin_x + 16, s.cabin_y - 16, 1);
+  }
+  for (int i : near_trees(s, 0))
+    for (int d = 13; s.tree[i].top + d <= s.tree[i].base; d++)  // the snowy tiers but the top one
+      if (snow_tier(d))
+        for (int side = -1; side <= 1; side += 2)
+          end_at(s.tree[i].x + side * spruce_hw(d), s.tree[i].top + d, side);
+  if (g) {
+    std::copy(gap, gap + g, ends);
+    n = g;
   }
   if (n)
     sometimes(minutes(2), (uint32_t) rnd(10000, 60000), [=] {
@@ -187,10 +192,10 @@ inline void skier(const Scene &s) {
     });
 }
 
-// Two small tortoiseshells and a brimstone over the meadow in front of home, under the near hill's top. They
-// flutter for as long as their frames do and sit for as long as they sit.
+// Two small tortoiseshells and a brimstone over the meadow in front of home, under the near hill's top and between
+// the date and the temperatures. They flutter for as long as their frames do and sit for as long as they sit.
 inline void butterflies(const Scene &s) {
-  int l = std::max(4, s.cabin_x - 120), r = std::min(W - 4, s.cabin_x + 60);
+  int l = DATE_R + 2, r = GAP_R - 2;
   int top = std::max(s.cabin_y + 1, hill_low(s, l, r) + 3), bot = std::min(H - 2, top + 28);
   for (int k = 0; k < 3; k++) {
     const char *n = k < 2 ? "butterfly" : "brimstone";
@@ -245,7 +250,7 @@ inline void leaves(const Scene &s) {
       lie(FALL, i, x1, y1);
       return (uint32_t) FALL;
     });
-  sometimes(minutes(30), minutes(1, 10), [] {
+  sometimes(minutes(15), minutes(1, 10), [] {
     place("geese", 0, -20, 30);
     glide("geese", 0, "opacity", 70, 0);
     wave("geese", 0, "y", -2, 2, 6000, 6000, 0, 0, 20, false, "both");
