@@ -188,9 +188,7 @@ inline void halloween(const Scene &s) {
   place("pumpkin", 0, s.pumpkin.x - 5, s.pumpkin.y - 3);
   sometimes(minutes(10), minutes(4, 30), [] {  // where the moon is by then
     Ride r = witch_ride(SEEN.moon_x, SEEN.moon_y, SEEN.top);
-    place("witch", 0, r.x[0], r.y[0]);
-    if (r.x[3] < r.x[0])
-      flip("witch", 0, true, false);
+    place_flipped("witch", 0, r.x[0], r.y[0], r.x[3] < r.x[0]);
     return remove_later(ride("witch", r), "witch", 0);
   });
   // Where it perches, x and the row under its feet: the ridge, the town's flat roofs and the near spruces in the gap

@@ -471,8 +471,9 @@ Now::Now(const Weather &weather, const Options &options, double la, double lo, u
   // Up at 8 from March to October and at 9 in winter, down at sunset or by 21. From Nordland and north
   // it's 10 to 15 in winter, § 6. The sun has set once it's below the horizon on the west side.
   bool winter_months = month <= 2 || month >= 11, set = sun.el < -0.5f && sun.az > 180;
-  flag_up = flag_day && (lat >= 65 && winter_months ? hour >= 10 && hour < 15
-                                                    : hour >= (winter_months ? 9 : 8) && hour < 21 && !set);
+  north = lat >= 65;
+  flag_up = flag_day &&
+            (north && winter_months ? hour >= 10 && hour < 15 : hour >= (winter_months ? 9 : 8) && hour < 21 && !set);
 }
 
 // The sky's bands, the fog's colour and the glow around a low sun
@@ -822,6 +823,14 @@ static void city(Scene &s, const Now &n, Rng &h) {
   s.rgb[C_BLD] = mix(mix(0x1A1E2C, 0x5E6678, n.light), s.rgb[C_SKY + 4], 0.2f);
   s.rgb[C_BLD_BACK] = mix(s.rgb[C_BLD], s.rgb[C_SKY + 4], 0.45f);
   s.rgb[C_BLD_EDGE] = mix(s.rgb[C_BLD], 0x000000, 0.35f);
+  // the road's asphalt, kerbs and Oslo's red bike lane, or packed snow over the markings
+  s.rgb[C_ROAD] = mix(mix(0x15171E, 0x484C56, n.light), s.rgb[C_SKY + 4], 0.1f);
+  s.rgb[C_KERB] = mix(mix(0x2A2E38, 0x9A9EA8, n.light), s.rgb[C_SKY + 4], 0.1f);
+  s.rgb[C_LANE] = mix(mix(0x2A1418, 0x9E4038, n.light), s.rgb[C_SKY + 4], 0.1f);
+  if (n.white) {
+    s.rgb[C_KERB] = s.rgb[C_HILL + 1];
+    s.rgb[C_ROAD] = s.rgb[C_LANE] = mix(s.rgb[C_HILL + 1], s.rgb[C_ROAD], 0.35f);
+  }
   s.win_seed = (uint32_t) (n.local / 1800) * 2654435761u;
   if (tower >= 0) {
     Bld &b = s.bld[tower];
@@ -901,8 +910,10 @@ static void trees(Scene &s, const Now &n, Rng &h, int count, int nfront) {
       x = s.home_x + (s.cabin ? -32 : 62);
     Tree &t = s.tree[s.ntrees++];
     t.x = (int16_t) x;
-    t.base = (int16_t) (hill[l][x] + 3);
+    t.base = (int16_t) (s.nbld && xmas_spruce ? ROAD_FAR - 1 : hill[l][x] + 3);
     int height = front ? h.in(18, 40) : h.in(8, 16);
+    if (s.nbld)  // the city's park under its road, the Christmas tree by it
+      height = std::min(height, t.base - ROAD_NEAR - 2);
     t.top = (int16_t) (t.base - (xmas_spruce ? 40 : height));
     t.layer = (uint8_t) l;
     t.kind = (uint8_t) (birch && !xmas_spruce ? (n.season <= 1 ? 2 : 1) : 0);  // every fifth a birch, bare in winter
@@ -952,16 +963,16 @@ static void ground(Scene &s, const Now &n) {
   if (s.sea)
     sea(s, n);
   s.cabin_y = (int16_t) (land.hill[2][s.cabin_x] + 6);
-  // flagpole by the cabin, or in the city's park on flag days, where the flag shows beside the clock either way it
+  // flagpole by the cabin, or by the city's road on flag days, where the flag shows beside the clock either way it
   // blows
   int park = h.in(GAP_L + 20, GAP_L + 36);
-  // The park's pole stands all day. The cabin's is far enough off for the flag to clear the chimney's smoke.
+  // The city's pole stands all day. The cabin's is far enough off for the flag to clear the chimney's smoke.
   s.pole_x = (int16_t) (s.cabin ? s.cabin_x + 28 : n.flag_day ? park : -1);
-  s.pole_base = (int16_t) (s.cabin ? s.cabin_y - 2 : land.hill[2][park] + 4);
+  s.pole_base = (int16_t) (s.cabin ? s.cabin_y - 2 : ROAD_FAR - 1);
   s.pole_top = (int16_t) (s.pole_base - 48);
   s.home_x = (int16_t) (s.cabin ? s.cabin_x : park - 24);
-  if (n.o.ground == G_CITY && n.dark) {  // a street lamp on its post in the park
-    int lx = park - 14, ly = land.hill[2][park] - 4;
+  if (n.o.ground == G_CITY && n.dark) {  // a street lamp on its post by the road
+    int lx = park - 14, ly = ROAD_FAR - 10;
     box(s, lx + 2, ly, 1, 10, 2, s.rgb[C_BLD_EDGE]);
     Sprite *lamp = sprite(s, lx, ly - 3, 5, 3, 2, WARM_LIGHT);
     if (lamp) {
@@ -1105,9 +1116,9 @@ static void bonfire(Scene &s, const Now &n, Rng &rng) {
   s.tag = 0;
 }
 
-// A pumpkin by the door, or by the pole in the park, its face cut out and dark inside, lit after dark
+// A pumpkin by the door, or in the park, its face cut out and dark inside, lit after dark
 static void pumpkin(Scene &s) {
-  int px = s.cabin ? s.cabin_x - 22 : s.home_x + 36, py = (s.cabin ? s.cabin_y : s.pole_base) - 5;
+  int px = s.cabin ? s.cabin_x - 22 : s.home_x + 36, py = (s.cabin ? s.cabin_y : s.land->hill[2][px] + 4) - 5;
   s.pumpkin = {(int16_t) px, (int16_t) py};
   blob(s, px, py, 7, 6, 1, rgb4(255, 130, 40));
   box(s, px - 1, py - 8, 3, 3, 1, s.rgb[C_DARK]);  // its stalk
