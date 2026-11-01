@@ -16,6 +16,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # The ESP-ModbusRTUServer branch the component is tested and built against: dev with dev, since a change there goes
+  # to its dev first, main for everything else, pull requests included
+  MODBUS_REF: ${{ github.ref_name == 'dev' && 'dev' || 'main' }}
+
 jobs:
   format:
     runs-on: ubuntu-latest
@@ -46,6 +51,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: MSkjel/ESP-ModbusRTUServer
+          ref: ${{ env.MODBUS_REF }}
           path: modbus-library
 
       - name: The host tests, see tests/Makefile
@@ -118,7 +124,7 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
-          esphome compile tests/${{ matrix.config }}.yaml 2>&1 | tee build.log
+          esphome -s modbus_library_ref ${{ env.MODBUS_REF }} compile tests/${{ matrix.config }}.yaml 2>&1 | tee build.log
 
       - name: Check for warnings in our code
         run: tests/check_warnings.sh build.log
