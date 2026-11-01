@@ -4,6 +4,22 @@
 esphome:
   includes:
     - code/controls.h
+  on_boot:
+    - then:
+        - lambda: |-
+            // The switches follow the CX60: the heater's status comes every cycle, nothing before the first one
+            id(server).add_on_register_callback([](uint16_t reg, uint16_t value) {
+              if (reg == flexit_modbus_server::REG_STATUS_HEATER)
+                id(heater).publish_state(value != 0);
+            });
+            // Supply air control is a setting, the saved one and then each change. The CX60 takes anything but 0 as
+            // supply air.
+            id(supply_air_control).publish_state(
+                id(server)->read_holding_register(flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_AIR_CONTROL) != 0);
+            id(server).add_on_setting_callback([](uint16_t reg, uint16_t value) {
+              if (reg == flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_AIR_CONTROL)
+                id(supply_air_control).publish_state(value != 0);
+            });
 
 packages:
   temperature_supply_min: !include
@@ -33,12 +49,7 @@ switch:
   - platform: template
     id: heater
     name: "Heater"
-    restore_mode: DISABLED
-    # from the status, nothing before the first one or while it's old
-    lambda: |-
-      if (!id(server)->fresh())
-        return {};
-      return id(server)->read_holding_register(flexit_modbus_server::REG_STATUS_HEATER) != 0;
+    restore_mode: DISABLED  # the state comes from on_boot
     # The CX60 ORs the heater flags of the panels present, so on sets our own and off clears all three
     turn_on_action:
       - lambda: id(server)->send_cmd(flexit_modbus_server::REG_CMD_HEATER_PANEL1 + id(server)->server_address() - 1, 1);
@@ -50,9 +61,7 @@ switch:
   - platform: template
     id: supply_air_control
     name: "Supply Air Control"
-    restore_mode: DISABLED
-    # The CX60 takes anything but 0 as supply air
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_AIR_CONTROL) != 0;"
+    restore_mode: DISABLED  # the state comes from on_boot
     turn_on_action:
       - lambda: id(server)->send_cmd(flexit_modbus_server::REG_CMD_TEMPERATURE_SUPPLY_AIR_CONTROL, 1);
     # Extract air regulation needs the extract sensor on, the stock panel sets both

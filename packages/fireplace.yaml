@@ -23,23 +23,34 @@ packages:
     vars: {id: fireplace_extract_speed_control, name: Fireplace Extract Fan Speed, min: 1, max: 100, initial: 20,
            unit: "%"}
 
+# Both follow fireplace.h from the interval below, the switch also as soon as it's used
 switch:
   - platform: template
     name: "Fireplace Mode"
     id: fireplace_mode_switch
     restore_mode: DISABLED
-    lambda: return flexit::fireplace::state.active;
     turn_on_action:
-      - lambda: flexit::fireplace::turn_on();
+      - lambda: |-
+          flexit::fireplace::turn_on();
+          id(fireplace_mode_switch).publish_state(flexit::fireplace::state.active);
     turn_off_action:
-      - lambda: flexit::fireplace::turn_off();
+      - lambda: |-
+          flexit::fireplace::turn_off();
+          id(fireplace_mode_switch).publish_state(flexit::fireplace::state.active);
 
 binary_sensor:
   - platform: template
     name: "Fireplace Mode Conflict Detected"
     id: fireplace_conflict
     internal: true
-    lambda: return flexit::fireplace::conflict();
     on_press:
       - lambda: ESP_LOGI(flexit::fireplace::TAG, "Changed by hand, turning fireplace mode off");
       - switch.turn_off: fireplace_mode_switch
+
+interval:
+  # The timer ends it on its own, and conflict() looks at the arbiter's requests
+  - interval: 1s
+    then:
+      - lambda: |-
+          id(fireplace_mode_switch).publish_state(flexit::fireplace::state.active);
+          id(fireplace_conflict).publish_state(flexit::fireplace::conflict());

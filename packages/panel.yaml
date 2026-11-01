@@ -55,8 +55,7 @@ binary_sensor:
     id: panel_connected
     name: "Panel Connected"
     device_class: connectivity
-    entity_category: diagnostic
-    lambda: return flexit::panel::link::connected;
+    entity_category: diagnostic  # panel.h publishes it
 
 sensor:
   - platform: template

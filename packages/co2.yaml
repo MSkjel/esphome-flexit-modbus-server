@@ -13,7 +13,9 @@ esphome:
     - code/co2.h
   on_boot:
     - then:
-        - lambda: id(server).add_on_setting_callback(flexit::co2::setting);
+        - lambda: |-
+            id(server).add_on_setting_callback(flexit::co2::setting);
+            id(co2_control_active).publish_state(false);  // off until the first tick
 
 packages:
   # The level to keep the CO2 at. Under this the CO2 control does nothing.
@@ -71,14 +73,16 @@ sensor:
       return flexit::co2::state.fans_up ? std::max(flexit::co2::state.added, 0) : 0;
 
 binary_sensor:
+  # Only tick() changes it, the interval publishes it after each one
   - platform: template
     name: "CO2 Control Active"
     id: co2_control_active
     device_class: running
     icon: "mdi:molecule-co2"
-    lambda: return flexit::co2::state.boost.active || flexit::co2::state.fans_up;
 
 interval:
   - interval: 30s
     then:
-      - lambda: flexit::co2::tick(id(${flexit_co2_sensor}));
+      - lambda: |-
+          flexit::co2::tick(id(${flexit_co2_sensor}));
+          id(co2_control_active).publish_state(flexit::co2::state.boost.active || flexit::co2::state.fans_up);

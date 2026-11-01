@@ -62,8 +62,7 @@ switch:
     optimistic: false
     # Don't pick a boost back up after a reboot, we no longer know which mode to go back to
     restore_mode: ALWAYS_OFF
-    lambda: return flexit::humidity_boost::state.boost.active;
-
+    # start() and stop() in humidity_boost.h publish the state, tick() goes through the switch
     turn_on_action:
       - lambda: flexit::humidity_boost::start();
     turn_off_action:
