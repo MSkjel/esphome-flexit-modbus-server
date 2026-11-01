@@ -22,9 +22,10 @@ static constexpr size_t MAX_WRITE_REGS = 123;     // most registers in an FC16
 static constexpr size_t MAX_UPDATE_DATA = 249;    // most data in a 0x64 frame
 static constexpr size_t NUM_INPUT_REGISTERS = 4;  // the CX60 reads 4 with FC4 to find its panels
 
-static constexpr uint32_t ISR_US = 150;          // UART interrupt latency, worst case
-static constexpr size_t RX_THRESHOLD_MAX = 128;  // the ESP8266's FIFO, and what we take when the UART doesn't say
-static constexpr uint32_t T35_US = 1900;         // Modbus t3.5 above 19200 baud is 1.75 ms, plus a bit
+static constexpr uint32_t ISR_US = 150;           // UART interrupt latency, worst case
+static constexpr size_t RX_THRESHOLD_MAX = 128;   // the ESP8266's FIFO, and what we take when the UART doesn't say
+static constexpr uint32_t T35_US = 1900;          // Modbus t3.5 above 19200 baud is 1.75 ms, plus a bit
+static constexpr uint32_t STATUS_LATE_US = 5000;  // a status broadcast this much after the last cycle said isn't coming
 
 #ifdef USE_FLEXIT_TCP_BRIDGE
 static constexpr uint8_t FRAME_DIR_TX = 'T';  // block header, ours
@@ -181,8 +182,11 @@ size_t FlexitModbusServer::split_frames_(uint8_t *data, size_t length) {
     // the status broadcast, for status_age_us() and the status callback
     bool status = pbus_is_status(data + offset, len);
     if (status) {
+      uint32_t now = micros();
+      // the cycle, for until_status_end_us(): two in a row at most a few cycles apart, else start over
+      status_period_us_ = status_heard_ && now - status_seen_us_ < 3 * PBUS_CYCLE_US ? now - status_seen_us_ : 0;
       status_from_us_ = prev_loop_us_;
-      status_seen_us_ = micros();
+      status_seen_us_ = now;
       status_ms_ = millis();
       status_from_part_ = prev_status_part_;
     }
@@ -209,7 +213,7 @@ size_t FlexitModbusServer::split_frames_(uint8_t *data, size_t length) {
     // online. An exception reply would make it treat us as not present.
     // During a panel update the panel's bootloader answers at our address, so only parse and mirror.
     if (!updating_)
-      mb_.processFrame(data + offset, len);
+      mb_.processFrame(data + offset, len, true);  // the CRC checked above
     offset += len;
   }
 
@@ -292,7 +296,8 @@ void FlexitModbusServer::loop() {
   status_part_ = 0;
   status_new_ = answered_ = false;
   mb_.update();
-  if (status_new_ && status_last_ && !answered_)
+  bool status_end = status_new_ && status_last_;  // this read ended with a status broadcast
+  if (status_end && !answered_)
     status_callback_.call();
   read_callback_.call();
 
@@ -301,6 +306,26 @@ void FlexitModbusServer::loop() {
     handle_tcp_bridge_();
   }
 #endif  // USE_FLEXIT_TCP_BRIDGE
+
+  // The flash write stalls the loop for tens of ms, so it goes last, right after a status broadcast: the link's
+  // window after it has been used, and the next one is a cycle away
+  if (sync_pending_)
+    sync_settings_(status_end);
+}
+
+uint32_t FlexitModbusServer::until_status_end_us() {
+  uint32_t now = micros();
+  if (status_part_ > 0) {  // the last read ended inside one, the rest of it is still to come
+    uint32_t left = (PBUS_STATUS_LEN - status_part_) * PBUS_BYTE_US;
+    uint32_t since = now - loop_us_;
+    return left > since ? left - since : 0;
+  }
+  if (!status_period_us_)
+    return UINT32_MAX;
+  uint32_t since = now - status_seen_us_;
+  if (since > status_period_us_ + STATUS_LATE_US)  // not where the last two said, nothing to keep clear of
+    return UINT32_MAX;
+  return since < status_period_us_ ? status_period_us_ - since : 0;
 }
 
 uint32_t FlexitModbusServer::frame_age_us() {
@@ -324,16 +349,6 @@ size_t FlexitModbusServer::rx_threshold_() {
 
 // The UART hands bytes over at its RX threshold, or 2 byte times after the line goes quiet if nothing follows
 uint32_t FlexitModbusServer::rx_delay_us_() { return std::max<uint32_t>(rx_threshold_() - 1, 2) * PBUS_BYTE_US; }
-
-int FlexitModbusServer::slot_(uint16_t reg) const {
-  int i = 0;
-  for (const auto &range : SETTINGS_RANGES) {
-    if (reg >= range.start && reg < range.start + range.count)
-      return i + reg - range.start;
-    i += range.count;
-  }
-  return -1;
-}
 
 void FlexitModbusServer::restore_settings_() {
   if (!persist_settings_)
@@ -362,19 +377,34 @@ void FlexitModbusServer::restore_settings_() {
   ESP_LOGI(TAG, "Restored %u saved settings", (unsigned) NUM_SAVED_REGISTERS);
 }
 
+// save() only keeps it in RAM, the flash write is sync_settings_()'s
 void FlexitModbusServer::save_settings_() {
   if (!settings_dirty_)
     return;
   if (persist_settings_) {
     settings_pref_.save(&saved_);
-    global_preferences->sync();
+    if (!sync_pending_)
+      sync_pending_ms_ = millis();
+    sync_pending_ = true;
   }
   settings_dirty_ = false;
+}
+
+// A reboot writes it anyway. A power cut in between loses the change: the old value comes back from flash and goes
+// to the CX60 if it was held, like one the ESP never heard. That's a cycle of the CX60, or SYNC_FALLBACK_MS when it
+// doesn't send its status, against a flash write landing on the status broadcast every time a setting changes.
+void FlexitModbusServer::sync_settings_(bool now) {
+  if (!now && millis() - sync_pending_ms_ < SYNC_FALLBACK_MS)
+    return;
+  global_preferences->sync();
+  sync_pending_ = false;
 }
 
 void FlexitModbusServer::on_safe_shutdown() {
   // Runs before ESPHome writes everything to flash on a reboot
   save_settings_();
+  if (sync_pending_)
+    sync_settings_(true);
   save_runtime_(true);
 }
 
@@ -666,7 +696,7 @@ void FlexitModbusServer::accept_tcp_clients_() {
   for (;;) {  // all of them, ready() only goes true again once accept() has taken every one
     struct sockaddr_storage addr;
     socklen_t len = sizeof addr;
-    auto sock = tcp_server_->accept((struct sockaddr *) &addr, &len);
+    auto sock = tcp_server_->accept_loop_monitored((struct sockaddr *) &addr, &len);  // so ready() tells
     if (!sock)
       return;
     TcpClient c{std::move(sock), {}, false, false, {}};
@@ -687,9 +717,10 @@ void FlexitModbusServer::accept_tcp_clients_() {
 
 void FlexitModbusServer::cleanup_tcp_clients_() {
   for (auto it = tcp_clients_.begin(); it != tcp_clients_.end();) {
-    // Clients only listen. Whatever they send is dropped, and reading is how a closed connection shows.
+    // Clients only listen. Whatever they send is dropped, and reading is how a closed connection shows. Only when
+    // the socket has something, a closed one included, not a system call per client per loop.
     uint8_t junk[64];
-    for (;;) {
+    for (; it->sock->ready();) {
       ssize_t n = it->sock->read(junk, sizeof junk);
       if (n > 0)
         continue;
