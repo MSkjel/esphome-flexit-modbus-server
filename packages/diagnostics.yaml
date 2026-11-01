@@ -1,6 +1,29 @@
 # Read only stuff: the bus, DIP switches, SW version, week program, filter resets.
 # Needs core.yaml
 
+esphome:
+  on_boot:
+    - then:
+        - lambda: |-
+            // Home/away comes in the CX60's status, every cycle
+            id(server).add_on_register_callback([](uint16_t reg, uint16_t value) {
+              if (reg == flexit_modbus_server::REG_OVERRIDING_SYSTEM_ACTIVE)
+                id(home_away_input_active).publish_state(value != 0);
+            });
+            // Week program active is a setting, the saved one and then each change
+            id(week_program_active).publish_state(
+                id(server)->read_holding_register(flexit_modbus_server::REG_WEEK_PROGRAM_ACTIVE) != 0);
+            id(server).add_on_setting_callback([](uint16_t reg, uint16_t value) {
+              if (reg == flexit_modbus_server::REG_WEEK_PROGRAM_ACTIVE)
+                id(week_program_active).publish_state(value != 0);
+            });
+
+interval:
+  # CX60 Connected goes off when the status is 10 s old
+  - interval: 1s
+    then:
+      - lambda: id(cx60_connected).publish_state(id(server)->fresh());
+
 sensor:
   - platform: template
     name: "Number of Filter Resets"
@@ -13,6 +36,7 @@ sensor:
         return NAN;
       return id(server)->read_holding_register(flexit_modbus_server::REG_NUM_FILTER_RESETS);
 
+# Set from on_boot and the interval
 binary_sensor:
   # On while the CX60's status comes. Off: the RS485 wiring, the transceiver or the CX60 is down, and the status
   # values are unknown.
@@ -21,22 +45,16 @@ binary_sensor:
     id: cx60_connected
     device_class: connectivity
     entity_category: diagnostic
-    lambda: return id(server)->fresh();
 
   - platform: template
     name: "Week Program Active"
     id: week_program_active
     entity_category: diagnostic
-    lambda: "return id(server)->read_holding_register(flexit_modbus_server::REG_WEEK_PROGRAM_ACTIVE) != 0;"
 
   - platform: template
     name: "Home Away Input Active"
     id: home_away_input_active
     entity_category: diagnostic
-    lambda: |-
-      if (!id(server)->fresh())
-        return {};
-      return id(server)->read_holding_register(flexit_modbus_server::REG_OVERRIDING_SYSTEM_ACTIVE) != 0;
 
 text_sensor:
   - platform: template

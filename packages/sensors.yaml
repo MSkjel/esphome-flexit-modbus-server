@@ -24,39 +24,29 @@
   state_class: total_increasing
   unit_of_measurement: "h"
 
-packages:
-  alarm_supply_sensor_faulty: !include
-    file: parts/alarm.yaml
-    vars: {id: alarm_supply_sensor_faulty, name: Alarm Supply Sensor Faulty, register: REG_ALARM_SENSOR_SUPPLY_FAULTY}
-  alarm_extract_sensor_faulty: !include
-    file: parts/alarm.yaml
-    vars: {id: alarm_extract_sensor_faulty, name: Alarm Extract Sensor Faulty,
-           register: REG_ALARM_SENSOR_EXTRACT_FAULTY}
-  alarm_outdoor_sensor_faulty: !include
-    file: parts/alarm.yaml
-    vars: {id: alarm_outdoor_sensor_faulty, name: Alarm Outdoor Sensor Faulty,
-           register: REG_ALARM_SENSOR_OUTDOOR_FAULTY}
-  alarm_return_water_sensor_faulty: !include
-    file: parts/alarm.yaml
-    vars: {id: alarm_return_water_sensor_faulty, name: Alarm Return Water Sensor Faulty,
-           register: REG_ALARM_SENSOR_RETURN_WATER_FAULTY}
-  alarm_overheat_triggered: !include
-    file: parts/alarm.yaml
-    vars: {id: alarm_overheat_triggered, name: Alarm Overheat Triggered, register: REG_ALARM_SENSOR_OVERHEAT_TRIGGERED}
-  alarm_external_smoke_sensor_triggered: !include
-    file: parts/alarm.yaml
-    vars: {id: alarm_external_smoke_sensor_triggered, name: Alarm External Smoke Sensor Triggered,
-           register: REG_ALARM_SENSOR_SMOKE_EXTERNAL_TRIGGERED}
-  alarm_water_coil_faulty: !include
-    file: parts/alarm.yaml
-    vars: {id: alarm_water_coil_faulty, name: Alarm Water Coil Faulty, register: REG_ALARM_SENSOR_WATER_COIL_FAULTY}
-  alarm_heat_exchanger_faulty: !include
-    file: parts/alarm.yaml
-    vars: {id: alarm_heat_exchanger_faulty, name: Alarm Heat Exchanger Faulty,
-           register: REG_ALARM_SENSOR_HEAT_EXCHANGER_FAULTY}
-  alarm_filter_change: !include
-    file: parts/alarm.yaml
-    vars: {id: alarm_filter_change, name: Alarm Filter Change, register: REG_ALARM_FILTER_CHANGE}
+esphome:
+  on_boot:
+    - then:
+        - lambda: |-
+            // The alarms and the heater come in the CX60's status, every cycle
+            id(server).add_on_register_callback([](uint16_t reg, uint16_t value) {
+              using namespace flexit_modbus_server;
+              binary_sensor::BinarySensor *s;
+              switch (reg) {
+                case REG_ALARM_SENSOR_SUPPLY_FAULTY: s = id(alarm_supply_sensor_faulty); break;
+                case REG_ALARM_SENSOR_EXTRACT_FAULTY: s = id(alarm_extract_sensor_faulty); break;
+                case REG_ALARM_SENSOR_OUTDOOR_FAULTY: s = id(alarm_outdoor_sensor_faulty); break;
+                case REG_ALARM_SENSOR_RETURN_WATER_FAULTY: s = id(alarm_return_water_sensor_faulty); break;
+                case REG_ALARM_SENSOR_OVERHEAT_TRIGGERED: s = id(alarm_overheat_triggered); break;
+                case REG_ALARM_SENSOR_SMOKE_EXTERNAL_TRIGGERED: s = id(alarm_external_smoke_sensor_triggered); break;
+                case REG_ALARM_SENSOR_WATER_COIL_FAULTY: s = id(alarm_water_coil_faulty); break;
+                case REG_ALARM_SENSOR_HEAT_EXCHANGER_FAULTY: s = id(alarm_heat_exchanger_faulty); break;
+                case REG_ALARM_FILTER_CHANGE: s = id(alarm_filter_change); break;
+                case REG_STATUS_HEATER: s = id(heater_enabled); break;
+                default: return;
+              }
+              s->publish_state(value != 0);
+            });
 
 sensor:
   # Sent when it changes
@@ -202,11 +192,36 @@ sensor:
     name: "Runtime Filter"
     lambda: return id(server)->read_holding_register_hours(flexit_modbus_server::REG_RUNTIME_FILTER_HIGH);
 
+# The CX60's alarms, on while their register is 1, and whether it lets the heater run. Set from on_boot.
 binary_sensor:
+  - platform: template
+    id: alarm_supply_sensor_faulty
+    name: "Alarm Supply Sensor Faulty"
+  - platform: template
+    id: alarm_extract_sensor_faulty
+    name: "Alarm Extract Sensor Faulty"
+  - platform: template
+    id: alarm_outdoor_sensor_faulty
+    name: "Alarm Outdoor Sensor Faulty"
+  - platform: template
+    id: alarm_return_water_sensor_faulty
+    name: "Alarm Return Water Sensor Faulty"
+  - platform: template
+    id: alarm_overheat_triggered
+    name: "Alarm Overheat Triggered"
+  - platform: template
+    id: alarm_external_smoke_sensor_triggered
+    name: "Alarm External Smoke Sensor Triggered"
+  - platform: template
+    id: alarm_water_coil_faulty
+    name: "Alarm Water Coil Faulty"
+  - platform: template
+    id: alarm_heat_exchanger_faulty
+    name: "Alarm Heat Exchanger Faulty"
+  - platform: template
+    id: alarm_filter_change
+    name: "Alarm Filter Change"
+
   - platform: template
     id: heater_enabled
     name: "Heater Enabled"
-    lambda: |-
-      if (!id(server)->fresh())
-        return {};
-      return id(server)->read_holding_register(flexit_modbus_server::REG_STATUS_HEATER) != 0;

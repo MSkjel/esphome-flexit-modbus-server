@@ -10,16 +10,24 @@ globals:
     restore_value: true
     initial_value: "1"
 
+esphome:
+  on_boot:
+    - then:
+        - lambda: |-
+            // co2_control_on follows the select, and remembers the last type that was on
+            auto follow = [](size_t i) {
+              if (i)
+                id(co2_last_on) = i;
+              id(co2_control_on).publish_state(i != 0);
+            };
+            follow(id(co2_control).active_index().value_or(0));
+            id(co2_control).add_on_state_callback(follow);
+
 switch:
   - platform: template  # on/off for the panel, Home Assistant has the select
     id: co2_control_on
     internal: true
     restore_mode: DISABLED  # only follows the select, never sets it at boot
-    lambda: |-
-      auto i = id(co2_control).active_index().value_or(0);
-      if (i)
-        id(co2_last_on) = i;
-      return i != 0;
     turn_on_action:
       - lambda: id(co2_control).make_call().set_index(id(co2_last_on)).perform();
     turn_off_action:

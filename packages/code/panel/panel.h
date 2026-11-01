@@ -262,9 +262,12 @@ inline void setup(uint8_t panel_address) {
 inline void track_connection() {
   bool flashing = id(server).updating();
   bool connected = link::online() && compatible && !flashing;
+  if (!id(panel_connected).has_state())
+    id(panel_connected).publish_state(false);  // until it answers
   if (connected == link::connected)
     return;
   link::connected = connected;
+  id(panel_connected).publish_state(connected);
   if (connected) {
     ESP_LOGI("panel", "Panel connected");
   } else if (flashing) {

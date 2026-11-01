@@ -30,8 +30,7 @@ text_sensor:
 switch:
   - platform: template
     id: ha_${name}
-    restore_mode: DISABLED
-    lambda: return id(ha_${name}_state).state == "${on_state}";
+    restore_mode: DISABLED  # the state comes from on_boot
     turn_on_action:
       - homeassistant.action:
           action: ${on_action}
@@ -60,3 +59,6 @@ esphome:
                                })
                                .add();
             flexit::panel::follow_state(i, id(ha_${name}_state), "${on_state}");
+            id(ha_${name}_state).add_on_state_callback([](const std::string &s) {  // and so does the switch
+              id(ha_${name}).publish_state(s == "${on_state}");
+            });
