@@ -70,8 +70,8 @@ static std::vector<uint8_t> hear(const std::vector<uint8_t> &bytes) {
 }
 
 // It polls our coils, 0x14C of them but these are the ones that matter here, reads each register we flagged and
-// passes on what it took with FC65, then sends its status
-static void cx60_cycle() {
+// passes on what it took with FC65
+static void cx60_poll() {
   static const auto poll = frame({1, 0x01, 0x00, 0x00, 0x00, SETTINGS});
   auto coils = hear(poll);
   for (int r = 0; r < SETTINGS; r++) {
@@ -83,6 +83,11 @@ static void cx60_cycle() {
       CX60.reg[r] = read[3] << 8 | read[4];
     hear(fc65(r, CX60.reg[r]));
   }
+}
+
+// Then sends its status
+static void cx60_cycle() {
+  cx60_poll();
   // every cycle on the bus, here only when the mode in it is news to the ESP, to keep the test quick
   if (!server->synced() || server->read_holding_register(REG_MODE) != CX60.reg[REG_CMD_MODE])
     hear(status({{REG_MODE, CX60.reg[REG_CMD_MODE]}}));
@@ -146,8 +151,6 @@ static void second() {
     flexit::co2::tick(&co2);
   if (flexit::fireplace::conflict())
     flexit::fireplace::turn_off();  // fireplace.yaml's conflict sensor
-  if (t % 60000 == 0)
-    flash.sync();  // flash_write_interval
 }
 
 // ---------------------------------------------------------------- the user
@@ -308,6 +311,23 @@ int main(int argc, char **argv) {
          run(10);
          boot();
          run(60);
+       }},
+      {"fireplace mode, power cut before the next status broadcast",
+       [] {
+         flexit::fireplace::turn_on();
+         cx60_poll();
+         down(false);
+         run(10);
+         boot();
+       }},
+      {"fireplace mode, power cut before the next status broadcast, the unit restarted too",
+       [] {
+         flexit::fireplace::turn_on();
+         cx60_poll();
+         down(false);
+         run(10);
+         boot();
+         unit_restart();
        }},
       {"fireplace mode, update",
        [] {

@@ -48,7 +48,8 @@ someone changes a setting by hand meanwhile.
 ```
 
 An automation in Home Assistant that changes the unit's settings (fan speeds and so on) makes real changes
-instead. Each one is written to flash right away, and the automation has to put the old value back itself.
+instead. Each one is written to flash within a cycle of the unit, and the automation has to put the old value back
+itself.
 Changing them often means writing the flash often, which matters most on an ESP8266.
 
 ## Fireplace mode

@@ -276,7 +276,7 @@ template<typename F> void FlexitModbusServer::on_cx60_write_(uint16_t start, uin
   bool ours[MAX_WRITE_REGS];
   for (uint16_t i = 0; i < count; i++) {
     before[i] = mb_.getHoldingRegister(start + i);
-    ours[i] = mb_.getCoil(start + i);
+    ours[i] = mb_.getCoil(start + i) || coil_waits_for_(slot_(start + i));
   }
   write();
   for (uint16_t i = 0; i < count; i++)
@@ -289,7 +289,6 @@ template<typename F> void FlexitModbusServer::on_cx60_write_(uint16_t start, uin
 }
 
 void FlexitModbusServer::loop() {
-  save_settings_();  // before the CX60 can read a coil we just set
   prev_loop_us_ = loop_us_;
   prev_status_part_ = status_part_;
   loop_us_ = micros();
@@ -309,8 +308,7 @@ void FlexitModbusServer::loop() {
 
   // The flash write stalls the loop for tens of ms, so it goes last, right after a status broadcast: the link's
   // window after it has been used, and the next one is a cycle away
-  if (sync_pending_)
-    sync_settings_(status_end);
+  sync_flash_(status_end);
 }
 
 uint32_t FlexitModbusServer::until_status_end_us() {
@@ -383,28 +381,46 @@ void FlexitModbusServer::save_settings_() {
     return;
   if (persist_settings_) {
     settings_pref_.save(&saved_);
-    if (!sync_pending_)
-      sync_pending_ms_ = millis();
-    sync_pending_ = true;
+    want_sync_();
   }
   settings_dirty_ = false;
 }
 
-// A reboot writes it anyway. A power cut in between loses the change: the old value comes back from flash and goes
-// to the CX60 if it was held, like one the ESP never heard. That's a cycle of the CX60, or SYNC_FALLBACK_MS when it
-// doesn't send its status, against a flash write landing on the status broadcast every time a setting changes.
-void FlexitModbusServer::sync_settings_(bool now) {
-  if (!now && millis() - sync_pending_ms_ < SYNC_FALLBACK_MS)
+void FlexitModbusServer::want_sync_() {
+  if (!sync_pending_)
+    sync_pending_ms_ = millis();
+  sync_pending_ = true;
+}
+
+// The one place that writes flash, for ESPHome's own saves too: core.yaml has its flash_write_interval at never.
+// A reboot writes it anyway. A power cut in between loses a change: the old value comes back from flash and goes to
+// the CX60 if it was held, like one the ESP never heard. That's a cycle of the CX60, or SYNC_FALLBACK_MS if no read
+// ends with its status, against a flash write landing anywhere in the cycle.
+void FlexitModbusServer::sync_flash_(bool status_end) {
+  save_settings_();
+  uint32_t now = millis();
+  if (now - synced_ms_ >= SYNC_INTERVAL_MS)
+    want_sync_();
+  bool quiet = until_status_end_us() == UINT32_MAX;  // no status broadcast to keep clear of
+  if (!sync_pending_ || !(status_end || quiet || now - sync_pending_ms_ >= SYNC_FALLBACK_MS))
     return;
   global_preferences->sync();
+  synced_ms_ = now;
   sync_pending_ = false;
+  if (!hold_unsynced_)
+    return;
+  hold_unsynced_ = false;
+  int i = 0;
+  for (const auto &range : SETTINGS_RANGES)
+    for (int reg = range.start; reg < range.start + range.count; reg++, i++)
+      if (coil_waits_for_(i))
+        mb_.setCoil(reg, 1);
+  memset(coil_waits_, 0, sizeof coil_waits_);
 }
 
 void FlexitModbusServer::on_safe_shutdown() {
   // Runs before ESPHome writes everything to flash on a reboot
   save_settings_();
-  if (sync_pending_)
-    sync_settings_(true);
   save_runtime_(true);
 }
 
@@ -413,10 +429,11 @@ void FlexitModbusServer::set_held_(int i, bool held) {
     return;
   saved_.held[i / 32] ^= 1u << (i % 32);
   settings_dirty_ = true;  // rare, and needed after a power cut
+  hold_unsynced_ |= held && persist_settings_;
 }
 
-// A setting changed for good, from Home Assistant or from a panel via the CX60. Written to flash right away, a
-// boost that ends puts this value back.
+// A setting changed for good, from Home Assistant or from a panel via the CX60. Saved, and a boost that ends puts
+// this value back.
 void FlexitModbusServer::set_real_(int i, uint16_t reg, uint16_t value) {
   if (saved_.values[i] != value) {
     saved_.values[i] = value;
@@ -564,6 +581,7 @@ void FlexitModbusServer::save_runtime_(bool now) {
 
   saved_runtime_ = current;
   runtime_pref_.save(&saved_runtime_);
+  want_sync_();
   last_runtime_save_ = millis();
   ESP_LOGD(TAG, "Runtime counters saved");
 }
@@ -583,13 +601,16 @@ float FlexitModbusServer::read_holding_register_hours(uint16_t high_reg) {
 void FlexitModbusServer::send_cmd(uint16_t reg, uint16_t value, bool temporary) {
   uint16_t before = mb_.getHoldingRegister(reg);
   mb_.setHoldingRegister(reg, value);
-  mb_.setCoil(reg, 1);
   int i = slot_(reg);
-  if (i < 0)
-    return;
-  if (temporary)
+  if (i >= 0 && temporary) {
     set_held_(i, true);
-  else if (value != before || held_(i))
+    if (hold_unsynced_) {  // the CX60 gets it once flash knows to put the real one back
+      coil_waits_[i / 32] |= 1u << (i % 32);
+      return;
+    }
+  }
+  mb_.setCoil(reg, 1);
+  if (i >= 0 && !temporary && (value != before || held_(i)))
     set_real_(i, reg, value);  // held until the CX60 has it
 }
 

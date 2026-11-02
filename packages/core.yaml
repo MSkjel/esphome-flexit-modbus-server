@@ -30,6 +30,10 @@ uart:
   # example.yaml), else what's past the UART's 128-byte FIFO is lost.
   rx_buffer_size: 1024
 
+# The component writes the flash for everyone, right after the CX60's status broadcast, so the stall misses nothing
+preferences:
+  flash_write_interval: never
+
 flexit_modbus_server:
   - id: server
     uart_id: modbus_uart
