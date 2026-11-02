@@ -2,6 +2,7 @@
 // row packed on its own, or as a JPEG at the best quality that fits the panel's 14 KB.
 #pragma once
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -33,6 +34,7 @@ struct Source {
   std::function<bool(int &w, int &h)> size;  // false while it isn't ready, like an online one still downloading
   std::function<uint32_t(int, int)> pixel;   // 0xRRGGBB
   std::function<void()> done;                // optional, its pixels aren't needed now
+  std::function<void()> picked;              // optional, it was picked to be shown
   // Optional: what it has to do before size() can say yes, like met.h drawing its scene, a slice at a time until
   // deadline_us. True once there's nothing more to do now.
   std::function<bool(uint32_t deadline_us)> prepare;
@@ -47,7 +49,11 @@ inline std::map<std::string, Source> sources;
 
 inline void add(const std::string &name, Source s) { sources[name] = std::move(s); }
 // encoding and quality as written in picture.yaml
-inline Encoding encoding_of(const std::string &s) { return s == "palette" ? PALETTE : s == "jpeg" ? JPEG : AUTO; }
+inline Encoding encoding_of(std::string s) {
+  for (auto &c : s)
+    c = (char) tolower((unsigned char) c);
+  return s == "palette" ? PALETTE : s == "jpeg" ? JPEG : AUTO;
+}
 inline int quality_of(const std::string &s) {
   int q = atoi(s.c_str());
   return q < 1 ? 0 : std::min(q, 100);
@@ -81,10 +87,11 @@ template<typename Img> void add_image(const std::string &name, Img &&image, cons
 enum Phase { IDLE, START, COUNT, CUT, JUDGE, MAP, JPEG_TRY, CHOOSE, PLAN, SEND };
 
 struct State {
-  std::string want;     // the picture asked for, "" = none
-  bool redo = true;     // want is new or its picture changed. True at first so the status gets published
-  std::string waiting;  // why the wanted one isn't ready, for the status
-  bool away = false;    // the status says it's waiting for the panel
+  std::string want;      // the picture asked for, "" = none
+  bool redo = true;      // want is new or its picture changed. True at first so the status gets published
+  std::string waiting;   // why the wanted one isn't ready, for the status
+  bool away = false;     // the status says it's waiting for the panel
+  std::string why_away;  // which one to update when the panel has another link version, from panel.h
   // shown is what the panel has once it's sent. made is the 16-colour version or the one being sent, jpeg the JPEG.
   Pic shown, made, jpeg;
   std::string name;  // the picture being made or sent
@@ -120,10 +127,14 @@ inline void picked(const std::string &name) {
     S.shown = Pic();    // so a show() before the next loop sends all of it
     return;
   }
-  if (!sources.count(name)) {
+  auto it = sources.find(name);
+  if (it == sources.end()) {
     ESP_LOGW("panel", "No picture called '%s'", name.c_str());
+    status(name + ": no picture with that name");
     return;
   }
+  if (it->second.picked)
+    it->second.picked();
   S.want = name;
   S.redo = true;
 }
@@ -637,7 +648,7 @@ inline void loop(uint32_t deadline_us) {
       S.redo = true;
     }
     if (S.phase == START && !S.away) {
-      status(S.name + ": waiting for the panel");
+      status(S.name + ": waiting for the panel" + (S.why_away.empty() ? "" : ". " + S.why_away));
       S.away = true;
     }
     return;

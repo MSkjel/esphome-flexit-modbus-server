@@ -170,6 +170,10 @@ inline void got_hello(uint32_t v) {
              (unsigned) PLINK_VERSION, version > PLINK_VERSION ? "ESP" : "panel");
   if (on_link_note)
     on_link_note(other);
+  if (picture::S.why_away != other) {
+    picture::S.why_away = other;
+    picture::S.away = false;  // says it again
+  }
   if (!compatible) {
     ESP_LOGE("panel", "%s", other);
     return;

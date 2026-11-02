@@ -162,8 +162,10 @@ inline bool new_drawing() {
 // Builds the scene for now and starts counting its colours. False without the time or the RAM.
 inline bool begin() {
   ESPTime t = id(flexit_panel_time).now();
-  if (!t.is_valid())
+  if (!t.is_valid()) {
+    picture::S.waiting = "waiting for the time from Home Assistant";
     return false;
+  }
   if (drawing && !drawing->scene.ov != !with_forecast)
     free_drawing();  // the forecast went on or off
   if (!drawing && !new_drawing()) {

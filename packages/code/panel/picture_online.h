@@ -71,6 +71,14 @@ inline uint32_t interval_ms(const char *s) {
   return 0;
 }
 
+// When size() asks the server again
+inline std::string again(const Online &o) {
+  int32_t left = (int32_t) (o.at - millis());
+  uint32_t s = left > 0 ? left / 1000 : 0;
+  return ", trying again in " + (s < 120 ? std::to_string(s) + " s" : std::to_string(s / 60) + " min") +
+         ", or when it's picked again";
+}
+
 // Whether the ESP has the RAM to download, decode and make an online picture. online_image keeps a JPEG whole
 // in a buffer it only grows, PNG and BMP stream through it. A new decoder: JPEG 17 KB, PNG 44 KB in one piece.
 inline bool fits(const std::string &name, Online &o) {
@@ -87,8 +95,7 @@ inline bool fits(const std::string &name, Online &o) {
   size_t dec = kind == o.kept.decoder || kind == 'B' ? 0 : jpeg ? 17 * 1024 : 44 * 1024;  // a new decoder
   size_t grow = jpeg && n > o.kept.buffer ? n : 0, need = grow + dec + o.pixels + MAKE_RAM;
   if (code != 200) {
-    why = code > 0 ? "the server says " + std::to_string(code) + ", trying again later"
-                   : "couldn't reach the server, trying again later";
+    why = (code > 0 ? "the server says " + std::to_string(code) : "couldn't reach the server") + again(o);
   } else if (jpeg && !n) {
     why = "the server doesn't say how big it is, which a JPEG needs";
   } else if (!has_ram(need, std::max({grow, dec, (size_t) o.pixels}))) {
@@ -212,9 +219,18 @@ void add_online_image(const std::string &name, Img &&image, Http &&http, const c
       o->wait = 0;
       return true;
     }
+    if (!network::is_connected()) {
+      if (name == S.want)
+        S.waiting = "waiting for the network";
+      return false;
+    }
     if (!o->wait || (int32_t) (millis() - o->at) >= 0)
       download(name, *o);
     return false;
+  };
+  s.picked = [o]() {
+    if (o->asking == Online::IDLE)
+      o->wait = 0;  // downloaded again right away
   };
   s.pixel = pixels_of(img);
   s.done = [img]() {
@@ -265,7 +281,8 @@ inline void refresh() {
 inline void failed(const std::string &name) {
   if (name != S.want || (S.phase == IDLE && !S.redo && !S.shown.data.empty()))
     return;
-  S.waiting = "couldn't download it, trying again later";
+  auto o = online.find(name);
+  S.waiting = "couldn't download it" + (o != online.end() ? again(*o->second) : "");
   if (S.phase == IDLE)
     S.redo = true;
 }
