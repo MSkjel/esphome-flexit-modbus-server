@@ -1,6 +1,7 @@
 // Screensaver animations from animation.yaml. All frames share 16 colours, one transparent if any pixel is, and
 // each frame after the first is the deflated rectangle that changed. The panel keeps up to ANIM_SLOTS of them in
-// 6 KB and shows each in up to ANIM_PLACES places, the copies of one in step unless a copy gets a frame of its own.
+// ANIM_POOL and shows each in up to ANIM_PLACES places, the copies of one in step unless a copy gets a frame of
+// its own.
 #pragma once
 #include <strings.h>
 #include <algorithm>

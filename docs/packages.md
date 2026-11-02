@@ -3,6 +3,7 @@
 What each package does, and its entities and settings. The list is in the [README](../README.md#packages), the
 panel's packages in [panel.md](panel.md).
 
+- [Controls](#controls)
 - [Boosts](#boosts)
 - [Fireplace mode](#fireplace-mode)
 - [Humidity boost](#humidity-boost)
@@ -10,6 +11,18 @@ panel's packages in [panel.md](panel.md).
 - [Summer cooling](#summer-cooling)
 - [Computed sensors](#computed-sensors)
 - [Advanced settings](#advanced-settings)
+
+## Controls
+
+`controls.yaml` does what the CI600's main menus do.
+
+- **Set Mode** and **Temperature** are the mode and the setpoint.
+- **Supply Air Control** on holds the supply air at the setpoint. Off holds the room there, read by the extract
+  air sensor, which it turns on like the stock panel does. Temperature Supply Min and Max keep the supply air
+  between them meanwhile.
+- **Start Max Timer** runs MAX for Max Timer Minutes, **Stop Max Timer** ends it early.
+- **Reset Filter Interval** after changing the filters starts Filter Change Interval's days again.
+- **Clear Alarms** clears the CX60's alarms.
 
 ## Boosts
 

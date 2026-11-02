@@ -18,9 +18,10 @@ way this page shows.
 ## Setup
 
 `packages/panel.yaml` is the link. Add the `panel/` packages you want after it. The panel runs at address 3, so
-the ESP goes to address 1. If your panel is at another address, set `panel_address` to match, like
-`- path: packages/panel.yaml` with `vars: {panel_address: "2"}`. The ESP only talks to that panel. A second panel
-with this firmware works fine without the ESP, just switch ESP off under System > Equipment on that one.
+the ESP goes to address 1. A panel still on the stock firmware is at 1 itself, so flash it first with the ESP at 2,
+see [Flashing the panel](#flashing-the-panel). If your panel is at another address, set `panel_address` to match,
+like `- path: packages/panel.yaml` with `vars: {panel_address: "2"}`. The ESP only talks to that panel. A second
+panel with this firmware works fine without the ESP, just switch ESP off under System > Equipment on that one.
 
 ```yaml
 substitutions:
@@ -331,12 +332,12 @@ letters, digits and `_`.
 | `picture.yaml` | `name`, `file` (PNG or JPEG next to your config). `encoding`: `auto`, `palette` (16 colours) or `jpeg`; a palette picture that doesn't fit the panel's 14 KB goes as a JPEG anyway. `quality`: the JPEG quality, or `auto` for the best that fits |
 | `online_picture.yaml` | `name`, `url`, `update_interval` (like `10min`, `1.5h` or `1d`, `never` = only when shown), `format` (PNG, JPEG, BMP or AUTO), `resize` (160x120 default, blown up to the screen; 320x240 needs PSRAM), plus `encoding` and `quality`. A failed download is retried after 30 s, then twice as long each time. Before each download the ESP asks the server about the file and skips one it doesn't have the RAM for, with the reason in `Panel Picture Status`. A JPEG has to fit in RAM whole, so the server has to send its size; PNG and BMP are read a bit at a time. For a Home Assistant camera use `ha_picture.yaml` |
 | `ha_picture.yaml` | `name`, `entity_id` (a `camera.` or `image.` entity, with `kind: image` for the latter), `ha_url` (`http://homeassistant.local:8123`), `width` (320, HA scales the camera picture down to it when the camera can), plus `update_interval`, `resize`, `format`, `encoding` and `quality` as above. HA only hands out camera pictures with a token that changes now and then; the ESP follows the entity's `access_token` attribute, so nothing to set up. If the camera won't scale, the full picture is often too big for an ESP without PSRAM and is skipped; a Frigate camera's own `latest.jpg?h=120` through `online_picture.yaml` is the way round that |
-| `animation.yaml` | `name`, `file` (a GIF), `resize` (64x64 default), `x`, `y` (top left on the 320x240 screen), `scale` (1, or 2 to draw each pixel 2x), `frame_ms` (40 to 2550, the GIF's own timing isn't used), `drift_x`, `drift_y` (pixels per second it drifts, wrapping round the screen seamlessly), `fade_ms` (300, how long copies fade in and out). The panel plays all its animations from 6 KB, up to 4 at a time in up to 8 places, so keep them small: about 64x64 with a few frames, or more frames if little changes between them. Too big at scale 1 and it's made at half size and drawn 2x. `Panel Animation Status` says what's shown and what didn't fit |
+| `animation.yaml` | `name`, `file` (a GIF), `resize` (64x64 default), `x`, `y` (top left on the 320x240 screen), `scale` (1, or 2 to draw each pixel 2x), `frame_ms` (40 to 2550, the GIF's own timing isn't used), `drift_x`, `drift_y` (pixels per second it drifts, wrapping round the screen seamlessly), `fade_ms` (300, how long copies fade in and out). The panel plays all its animations from 8 KB, up to 6 at a time in up to 8 places, so keep them small: about 64x64 with a few frames, or more frames if little changes between them. Too big at scale 1 and it's made at half size and drawn 2x. `Panel Animation Status` says what's shown and what didn't fit |
 | `met.yaml` | `latitude`, `longitude`, `scene` (hills, coast, mountains, city), `aurora` (auto, off, always), `update_interval` (5 min, the forecast is only fetched again when MET says it expired), `redraw_interval`, `name` (weather). `Panel Weather Scene`, `Panel Weather Aurora` and `Panel Weather Forecast` change it from Home Assistant, `Panel Animation Weather` brings it to life |
 
 `met.yaml` draws the sky for the time of day and the next hour's weather from [MET Norway](https://api.met.no)
 (CC BY 4.0). The weather right now is also an item, so it can be a dashboard tile, and the cabin's chimney smokes
-when the heater is on. A failed request with `Code: 304` in the log is fine, the forecast just hasn't changed.
+when the heater is on. `The forecast hasn't changed (HTTP 304)` in the log is fine, MET has nothing newer yet.
 
 `Panel Animation Weather`, on unless you turn it off, adds slow animations that fit the picture, one show at a
 time: gulls over the cabin, rain and snow falling from under the clouds, the aurora glowing, a moose at dusk, the
@@ -479,8 +480,9 @@ so above quality 95 the busiest tiles lose their faint detail.
 ## Flashing the panel
 
 `panel/update.yaml` flashes the panel's firmware from Home Assistant: press `Flash Panel Firmware` and watch
-`Panel Firmware Update`. The steps, and what to do when it doesn't work, are in the firmware's
-[flashing docs](https://github.com/MSkjel/flexit-ci600-firmware/blob/main/docs/flashing.md#from-home-assistant).
+`Panel Firmware Update`. A file the ESP refuses, like the version the panel already has, goes on anyway with
+`Panel Firmware Force` on. It's off again after a restart. The steps, and what to do when it doesn't work, are in
+the firmware's [flashing docs](https://github.com/MSkjel/flexit-ci600-firmware/blob/main/docs/flashing.md#from-home-assistant).
 
 `Panel Firmware` is the same thing as an update in Home Assistant. Every 6 h (`check_interval`) the ESP reads the
 version from the start of the file at `Panel Firmware URL`, and when that's newer than the panel it shows up under
