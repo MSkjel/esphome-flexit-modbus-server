@@ -2,7 +2,7 @@
 # Needs core.yaml
 substitutions:
   # Rated power of the electric heater in watts, for the heater power and energy sensors.
-  # It's on the type plate of the unit. Set to 0 if you have a water coil.
+  # It's on the type plate of the unit. With a water coil, drop the heater sensors, see docs/packages.md.
   flexit_heater_power: "900"
 
 esphome:
@@ -34,7 +34,7 @@ sensor:
     update_interval: 60s
     lambda: |-
       if (!id(server)->fresh())
-        return {};
+        return NAN;
       if (id(server)->read_holding_register(flexit_modbus_server::REG_PERCENTAGE_HEAT_EXCHANGER) == 0 ||
           id(server)->read_holding_register(flexit_modbus_server::REG_PERCENTAGE_HEATING) != 0 ||
           id(server)->read_holding_register(flexit_modbus_server::REG_PERCENTAGE_COOLING) != 0) {

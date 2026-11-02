@@ -29,6 +29,7 @@ sensor:
     name: "Number of Filter Resets"
     id: number_of_filter_resets
     entity_category: diagnostic
+    state_class: total_increasing
     accuracy_decimals: 0
     update_interval: 60s
     lambda: |-

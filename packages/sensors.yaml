@@ -197,30 +197,39 @@ binary_sensor:
   - platform: template
     id: alarm_supply_sensor_faulty
     name: "Alarm Supply Sensor Faulty"
+    device_class: problem
   - platform: template
     id: alarm_extract_sensor_faulty
     name: "Alarm Extract Sensor Faulty"
+    device_class: problem
   - platform: template
     id: alarm_outdoor_sensor_faulty
     name: "Alarm Outdoor Sensor Faulty"
+    device_class: problem
   - platform: template
     id: alarm_return_water_sensor_faulty
     name: "Alarm Return Water Sensor Faulty"
+    device_class: problem
   - platform: template
     id: alarm_overheat_triggered
     name: "Alarm Overheat Triggered"
+    device_class: problem
   - platform: template
     id: alarm_external_smoke_sensor_triggered
     name: "Alarm External Smoke Sensor Triggered"
+    device_class: problem
   - platform: template
     id: alarm_water_coil_faulty
     name: "Alarm Water Coil Faulty"
+    device_class: problem
   - platform: template
     id: alarm_heat_exchanger_faulty
     name: "Alarm Heat Exchanger Faulty"
+    device_class: problem
   - platform: template
     id: alarm_filter_change
     name: "Alarm Filter Change"
+    device_class: problem
 
   - platform: template
     id: heater_enabled

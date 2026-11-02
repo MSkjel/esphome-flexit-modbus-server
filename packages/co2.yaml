@@ -36,7 +36,8 @@ packages:
   # PI only. Fan % added for every 100 ppm over the target.
   co2_pi_gain: !include
     file: parts/config_number.yaml
-    vars: {id: co2_pi_gain, name: CO2 PI Gain, unit: "%", min: 1, max: 30, step: 0.5, initial: 5, disabled: "true"}
+    vars: {id: co2_pi_gain, name: CO2 PI Gain, unit: "%/100 ppm", min: 1, max: 30, step: 0.5, initial: 5,
+           disabled: "true"}
   # PI only. How long it takes the integral part to add as much as the gain does.
   # Longer is calmer. Too short and the fans go up and down.
   co2_pi_integral_time: !include

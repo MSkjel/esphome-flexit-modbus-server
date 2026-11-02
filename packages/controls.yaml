@@ -25,19 +25,19 @@ packages:
   temperature_supply_min: !include
     file: parts/setting_number.yaml
     vars: {id: temperature_supply_min, name: Temperature Supply Min, register: REG_CMD_TEMPERATURE_SUPPLY_MIN,
-           min: 5, max: 25, step: 0.5, scale: 10, zero_unknown: "true", category: ""}
+           min: 5, max: 25, step: 0.5, unit: "°C", scale: 10, zero_unknown: "true", category: ""}
   temperature_supply_max: !include
     file: parts/setting_number.yaml
     vars: {id: temperature_supply_max, name: Temperature Supply Max, register: REG_CMD_TEMPERATURE_SUPPLY_MAX,
-           min: 15, max: 45, step: 0.5, scale: 10, zero_unknown: "true", category: ""}
+           min: 15, max: 45, step: 0.5, unit: "°C", scale: 10, zero_unknown: "true", category: ""}
   max_timer_minutes: !include
     file: parts/setting_number.yaml
     vars: {id: max_timer_minutes, name: Max Timer Minutes, register: REG_CMD_MINUTES_MAX_TIMER, min: 0, max: 360,
-           category: "", mode: AUTO}
+           unit: min, category: "", mode: AUTO}
   filter_change_interval: !include
     file: parts/setting_number.yaml
     vars: {id: filter_change_interval, name: Filter Change Interval, register: REG_CMD_DAYS_FILTER_CHANGE_INTERVAL,
-           min: 30, max: 360, step: 30, zero_unknown: "true", category: "", disabled: "false"}
+           min: 30, max: 360, step: 30, unit: d, zero_unknown: "true", category: "", disabled: "false"}
 
 interval:
   # Runs the highest mode asked for, see code/controls.h. Packages ask with flexit::controls::request().
@@ -101,6 +101,8 @@ number:
   - platform: template
     id: temperature
     name: "Temperature"
+    device_class: temperature
+    unit_of_measurement: "°C"
     max_value: 30
     min_value: 10
     step: 0.5
