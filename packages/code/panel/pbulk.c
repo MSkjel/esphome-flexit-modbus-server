@@ -158,6 +158,21 @@ static void next_out(pbulk_panel_t *p) {
   p->next_full = false;
   __sync_synchronize();  // out is complete before the interrupt may send it
   p->out_full = true;
+  p->moves++;
+}
+
+// Again if the interrupt moved next into out meanwhile. The main loop's the only one that writes them otherwise.
+void pbulk_panel_held(const pbulk_panel_t *p, uint8_t *next, int *next_n, uint8_t *out, int *out_n) {
+  uint8_t moves;
+  do {
+    moves = p->moves;
+    __sync_synchronize();
+    *next_n = p->next_full ? p->next_n : 0;
+    memcpy(next, p->next, (size_t) *next_n);
+    *out_n = p->out_full ? p->out_n : 0;
+    memcpy(out, p->out, (size_t) *out_n);
+    __sync_synchronize();
+  } while (moves != p->moves);
 }
 
 // What the ESP has of ours, from frame f: the first of our messages in out that it doesn't have, counted from
@@ -255,7 +270,9 @@ int pbulk_panel_frame(pbulk_panel_t *p, uint8_t addr, const uint8_t *f, int n, u
   }
   int out_from = acked(p, f);
   uint8_t st = say;
-  if (st != PB_OK)
+  if (st == PB_NO_GAPS)
+    p->no_gaps++;
+  else if (st != PB_OK)
     p->refused++;
   else if (f[PBULK_N])
     st = take(p, f);
@@ -470,6 +487,7 @@ int pbulk_esp_window(pbulk_esp_t *t, uint32_t left_us, uint8_t *out) {
     return 0;
   // What fits in left_us minus the margin and turnaround. That's our frame and the panel's answer, at least both
   // empty. Spare room goes first to what the panel has waiting, since it answers with as much as fits, then ours.
+  // One too short for all of theirs is shared while we have some, else ours could wait for good behind a stream.
   if (left_us > 100000)  // longer than a cycle is a clock that jumped, and keeps the int32 maths safe
     left_us = 100000;
   int32_t left = (int32_t) left_us - PBUS_TURN_US - t->margin_us;
@@ -479,6 +497,8 @@ int pbulk_esp_window(pbulk_esp_t *t, uint32_t left_us, uint8_t *out) {
     return 0;
   }
   int theirs = t->want < PBULK_ANSWER_MAX ? t->want : PBULK_ANSWER_MAX;
+  if (t->qn && theirs > over / 2)
+    theirs = over / 2;
   int fit = over - (theirs < over ? theirs : over);
   int head = msg_next(t->q, t->qn, 0);  // else a message that can't be split could wait behind theirs forever
   if (head > fit && head <= over && plink_get16(t->q) != PBULK_DATA_KEY)

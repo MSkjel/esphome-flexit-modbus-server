@@ -78,11 +78,12 @@ typedef struct {
   uint8_t next_n;                  // so the answer that says it has them can carry the next ones
   uint16_t next_num;
   volatile bool next_full;
+  volatile uint8_t moves;    // of next into out, for pbulk_panel_held()
   volatile uint8_t waiting;  // bytes of messages the main loop has waiting behind out and next
   uint16_t psess;            // our session
   volatile uint16_t pnum;    // number for our next message
   uint8_t ahead;             // frames in a row starting after enext, see resyncs
-  uint32_t frames, busy, late, refused, bad;
+  uint32_t frames, busy, late, refused, no_gaps, bad;
   uint32_t resyncs;  // times the ESP skipped past the ones we wanted, those are lost
 } pbulk_panel_t;
 
@@ -98,6 +99,8 @@ int pbulk_panel_take(pbulk_panel_t *p, uint8_t *out);  // next batch of ESP mess
 // 4 bytes, an answer takes as much of it as fits.
 bool pbulk_panel_put(pbulk_panel_t *p, const uint8_t *payload, int n);
 static inline bool pbulk_panel_free(const pbulk_panel_t *p) { return !p->next_full; }  // pbulk_panel_put() takes one
+// Copies of next and out, the ESP may not have them, each PBULK_ANSWER_MAX bytes. *n 0 for an empty one.
+void pbulk_panel_held(const pbulk_panel_t *p, uint8_t *next, int *next_n, uint8_t *out, int *out_n);
 
 // ---- ESP side
 #define PBULK_ESP_BUF 2048
