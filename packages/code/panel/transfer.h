@@ -26,6 +26,7 @@ struct Transfer {
   int tries = 0;
   const uint8_t *data = nullptr;  // what goes, len bytes, set by open()
   uint32_t len = 0;
+  uint32_t crc = 0, crc_at = 0;  // data's CRC so far, over crc_at bytes, added to as the pieces go
 
   // The header goes next. data has to stay put until it's done.
   void open(const uint8_t *d, uint32_t n) {
@@ -35,6 +36,7 @@ struct Transfer {
     pos = 0;
     data = d;
     len = n;
+    crc = crc_at = 0;
     on_link = this;
   }
   void reset() {
@@ -65,11 +67,20 @@ struct Transfer {
     return millis() - end_ms > ACK_MS;
   }
 
+  // The CRC taken up to byte `to` of data, a piece at a time rather than all 14 KB when END goes
+  void crc_to(uint32_t to) {
+    if (to > crc_at && to <= len) {
+      crc = plink_crc32(crc, data + crc_at, to - crc_at);
+      crc_at = to;
+    }
+  }
+
   // For pump(): data as it is, from pos on
   unsigned raw(uint8_t *b, unsigned max) {
     unsigned k = std::min<uint32_t>(max, len - pos);
     memcpy(b, data + pos, k);
     pos += k;
+    crc_to(pos);
     return k;
   }
 
@@ -93,7 +104,8 @@ struct Transfer {
       if (n)
         link::send(K_PIC_DATA, b, (int) (n + 3) & ~3);
       if (n < sizeof b) {
-        link::send(K_PIC_END, plink_crc32(0, data, len));
+        crc_to(len);
+        link::send(K_PIC_END, crc);
         ended = true;
       }
     }

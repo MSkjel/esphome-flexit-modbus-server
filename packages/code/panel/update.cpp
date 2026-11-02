@@ -362,7 +362,7 @@ static void stop(Phase end, const std::string &why) {
   progress(end == DONE ? 100 : 0);
 }
 
-void finish(bool ok, const std::string &why) {
+void finish(bool ok, const std::string &why, bool again) {
   if (ok) {
     hooks->settings_flashed();
     if (F.file_version >= 0)
@@ -370,7 +370,9 @@ void finish(bool ok, const std::string &why) {
     stop(DONE, why.empty() ? "Done, the panel is restarting" : why);
     return;
   }
-  F.why = (why.empty() ? "Flash failed" : why) + ". Nothing's broken, just try again";
+  F.why = (why.empty() ? "Flash failed" : why) +
+          (again ? ". Nothing's broken, just try again"
+                 : ". Nothing's broken, check that Panel Firmware URL points at a CI600 .fxup");
   if (!F.bl_seen) {
     stop(FAIL, F.why);
     return;
@@ -654,7 +656,7 @@ static void react(Reply got, bool timed_out, uint32_t now) {
   if (got == R_STATUS && F.bl_state == ST_FAILED && F.phase != WAIT_BL && F.phase != PROBE_WAIT) {
     ESP_LOGW(TAG, "Bootloader failed: detail %u at %u/%u bytes", F.bl_detail, (unsigned) F.accepted,
              (unsigned) staged_len);
-    finish(false, detail_text(F.bl_detail));
+    finish(false, detail_text(F.bl_detail), F.bl_detail != 1 && F.bl_detail != 8);  // else it's the file
     return;
   }
   switch (F.phase) {

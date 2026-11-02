@@ -17,6 +17,18 @@ uint64_t drawn(const Scene &s);
 // stay the same. Sprites left out for the animations, see s.live, take none.
 void palette(Scene &s, const uint32_t *prev);
 
+// palette() a few rows at a time, so the loop gets back to the bus: start(), count() until it's true, then end().
+// The scene mustn't change in between.
+struct Palette {
+  static constexpr int MAX = COLOURS + SPRITES;
+  uint32_t c[MAX], used[MAX];
+  bool key[MAX];
+  int n = 0, y = H;  // colours, the next row to count
+  void start(Scene &s);
+  bool count(const Scene &s, int rows);  // true once every row is counted
+  void end(Scene &s, const uint32_t *prev);
+};
+
 // Whether window k of row r on the city's building i is lit
 bool win_lit(const Scene &s, int i, int r, int k);
 

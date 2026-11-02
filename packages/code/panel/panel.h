@@ -170,6 +170,10 @@ inline void got_hello(uint32_t v) {
              (unsigned) PLINK_VERSION, version > PLINK_VERSION ? "ESP" : "panel");
   if (on_link_note)
     on_link_note(other);
+  if (picture::S.why_away != other) {
+    picture::S.why_away = other;
+    picture::S.away = false;  // says it again
+  }
   if (!compatible) {
     ESP_LOGE("panel", "%s", other);
     return;
@@ -262,9 +266,12 @@ inline void setup(uint8_t panel_address) {
 inline void track_connection() {
   bool flashing = id(server).updating();
   bool connected = link::online() && compatible && !flashing;
+  if (!id(panel_connected).has_state())
+    id(panel_connected).publish_state(false);  // until it answers
   if (connected == link::connected)
     return;
   link::connected = connected;
+  id(panel_connected).publish_state(connected);
   if (connected) {
     ESP_LOGI("panel", "Panel connected");
   } else if (flashing) {
@@ -315,10 +322,11 @@ inline void send_saver_lines() {
   }
 }
 
-// Every 20 ms. The pictures and animations share one slice, so the bus callbacks don't wait long.
+// Every 20 ms. The pictures and animations share one slice, so the bus callbacks don't wait long, and it ends before
+// the CX60's status broadcast does, so the link's window after it isn't held up.
 inline void loop() {
   static int last_hour = -1;  // local hour when the time was last sent
-  uint32_t deadline_us = micros() + SLICE_US;
+  uint32_t deadline_us = slice_deadline_us();
   track_connection();
   dispatch();
   bool connected = link::connected;

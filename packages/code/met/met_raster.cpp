@@ -1,5 +1,6 @@
 // Drawing the weather scene a row at a time, and its 16 colours, see met_raster.h
 #include "met_raster.h"
+#include <algorithm>
 #include <cstring>
 
 namespace flexit::panel::met {
@@ -284,6 +285,16 @@ static void cabin_row(const Scene &s, int y, uint8_t *out) {
     span(out, cx + 3, cx + 7, dark);
 }
 
+// The city's road, see ROAD_FAR, the dashes gone under snow
+static void road_row(const Scene &s, int y, uint8_t *out) {
+  if (!s.nbld || y < ROAD_FAR || y > ROAD_NEAR)
+    return;
+  uint8_t kerb = s.ix[C_KERB];
+  span(out, 0, W - 1, y == ROAD_FAR || y == ROAD_KERB || y == ROAD_NEAR ? kerb : s.ix[y > ROAD_KERB ? C_LANE : C_ROAD]);
+  for (int x = 0; y == ROAD_MID && !s.snow_trees && x < W; x += 8)
+    span(out, x, x + 3, kerb);
+}
+
 // Rain and snow from under the clouds
 static void prec_row(const Scene &s, int y, uint8_t *out) {
   if (s.live & L_PREC)
@@ -325,6 +336,7 @@ void row(const Scene &s, int y, uint8_t *out) {
   hill_row(s, y, out, 1);
   bolt_row(s, y, out);  // behind the town and the land it strikes
   city_row(s, y, out);
+  road_row(s, y, out);
   lighthouse_row(s, y, out);
   trees_row(s, y, out, 1);
   fog_row(s, y, out, 1);
@@ -405,6 +417,12 @@ uint64_t drawn(const Scene &s) {
     use(C_BLD_EDGE, !s.bld[i].back);
     use(C_WINDOW, !s.bld[i].back && s.window_lit);
   }
+  bool road = false;  // unless thick fog hides it
+  for (int x = 0; x < W && s.nbld; x++)
+    road |= s.fog_top[1][x] > ROAD_FAR;
+  use(C_ROAD, road);
+  use(C_KERB, road);
+  use(C_LANE, road && !s.snow_trees);
   use(C_LH, s.lighthouse);
   use(C_LH_BAND, s.lighthouse);
   use(C_DARK, s.lighthouse || s.cabin || s.pole_x >= 0);
@@ -420,17 +438,23 @@ uint64_t drawn(const Scene &s) {
   return u;
 }
 
-void palette(Scene &s, const uint32_t *prev) {
-  static constexpr int MAX = COLOURS + SPRITES;
-  uint32_t c[MAX], used[MAX] = {};
-  bool key[MAX];
-  int n = 0;
+// Each colour slot and sprite to its nearest of pal's k colours
+static void place(Scene &s, const uint32_t *pal, int k) {
+  for (int i = 0; i < COLOURS; i++)
+    s.ix[i] = (uint8_t) nearest(s.rgb[i], pal, k);
+  for (int i = 0; i < s.nsprites; i++)
+    s.sprite[i].ix = (uint8_t) nearest(s.sprite[i].c, pal, k);
+}
+
+void Palette::start(Scene &s) {
+  n = 0;
   auto add = [&](uint32_t rgb, bool k) {
     int i = 0;
     while (i < n && c[i] != rgb)
       i++;
     if (i == n) {
       c[n] = rgb;
+      used[n] = 0;
       key[n++] = k;
     }
     key[i] |= k;
@@ -442,21 +466,26 @@ void palette(Scene &s, const uint32_t *prev) {
   for (int i = 0; i < s.nsprites; i++)
     if (!(s.sprite[i].tag & s.live))
       add(s.sprite[i].c, true);
-  auto place = [&](const uint32_t *pal, int k) {
-    for (int i = 0; i < COLOURS; i++)
-      s.ix[i] = (uint8_t) nearest(s.rgb[i], pal, k);
-    for (int i = 0; i < s.nsprites; i++)
-      s.sprite[i].ix = (uint8_t) nearest(s.sprite[i].c, pal, k);
-  };
-  s.folded = 0;
+  y = H;
   if (n > 16) {  // count the pixels of each, to leave out what's hidden and fold what's least missed
-    place(c, n);
-    uint8_t r[W];
-    for (int y = 0; y < H; y++) {
-      row(s, y, r);
-      for (int x = 0; x < W; x++)
-        used[r[x]]++;
-    }
+    place(s, c, n);
+    y = 0;
+  }
+}
+
+bool Palette::count(const Scene &s, int rows) {
+  uint8_t r[W];
+  for (int end = std::min(H, y + rows); y < end; y++) {
+    row(s, y, r);
+    for (int x = 0; x < W; x++)
+      used[r[x]]++;
+  }
+  return y >= H;
+}
+
+void Palette::end(Scene &s, const uint32_t *prev) {
+  s.folded = 0;
+  if (n > 16) {
     for (int i = 0; i < n;)
       if (!used[i]) {
         n--;
@@ -496,7 +525,14 @@ void palette(Scene &s, const uint32_t *prev) {
   for (int k = 0; k < 16; k++)
     if (!have[k])
       s.pal[k] = prev ? prev[k] : 0;
-  place(s.pal, 16);
+  place(s, s.pal, 16);
+}
+
+void palette(Scene &s, const uint32_t *prev) {
+  Palette p;
+  p.start(s);
+  p.count(s, H);
+  p.end(s, prev);
 }
 
 }  // namespace flexit::panel::met

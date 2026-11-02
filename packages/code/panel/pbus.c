@@ -59,19 +59,20 @@ int pbus_status_part(const uint8_t *buf, int n) {
 
 // Length of the CX60 frame at the start of f[n], 0 if none. The CX60 sends broadcasts with FC 6, 16 and 0x65 to
 // address 0, and requests to panels with FC 1, 3, 4 to address 1-3 from register 0x000-0x1FF. A reply has its
-// byte count where the register's high byte would be.
-static int cx60_len(const uint8_t *f, int n) {
+// byte count where the register's high byte would be. crc_ok is the CRC check of all of f[n], so only a frame
+// with something after it gets its own.
+static int cx60_len(const uint8_t *f, int n, bool crc_ok) {
   if (n < 8)
     return 0;
   int len = f[1] == 0x10 ? f[6] + 9 : 8;
-  if (len > n || !pbus_crc_ok(f, len))
+  if (len > n || !(len == n ? crc_ok : pbus_crc_ok(f, len)))
     return 0;
   bool broadcast = f[0] == 0 && (f[1] == 0x06 || f[1] == 0x10 || f[1] == 0x65);
   bool request = f[0] >= 1 && f[0] <= 3 && (f[1] == 1 || f[1] == 3 || f[1] == 4) && f[2] <= 1;
   return broadcast || request ? len : 0;
 }
 
-bool pbus_is_cx60(const uint8_t *f, int n) { return cx60_len(f, n) > 0; }
+bool pbus_is_cx60(const uint8_t *f, int n, bool crc_ok) { return cx60_len(f, n, crc_ok) > 0; }
 
 uint32_t pbus_since_status(uint32_t dt_us, int k, int rx_threshold, uint32_t isr_us) {
   // Byte times rounded so the result can't come out too small, up where they add and down where they take away.
@@ -129,8 +130,9 @@ static bool recent(const pbus_panel_t *w, uint32_t now_ms) {
   return w->after_status && now_ms - w->status_ms < STATUS_RECENT_MS;
 }
 
-void pbus_panel_burst(pbus_panel_t *w, const uint8_t *b, int n, uint32_t start_us, uint32_t idle_us, uint32_t now_ms) {
-  if (recent(w, now_ms) && pbus_is_cx60(b, n)) {  // the CX60's next frame, not a late reply from a server
+void pbus_panel_burst(pbus_panel_t *w, const uint8_t *b, int n, bool crc_ok, uint32_t start_us, uint32_t idle_us,
+                      uint32_t now_ms) {
+  if (recent(w, now_ms) && pbus_is_cx60(b, n, crc_ok)) {  // the CX60's next frame, not a late reply from a server
     uint32_t us = start_us - w->status_end_us;
     // only if the 1 ms tick agrees, in case the microsecond clock was off, like after a debugger halted the chip
     if (us + TICK_SLACK_US >= (now_ms - w->status_ms) * 1000) {
@@ -146,13 +148,14 @@ void pbus_panel_burst(pbus_panel_t *w, const uint8_t *b, int n, uint32_t start_u
     }
   }
   // did the burst end with a status broadcast?
-  w->after_status = n >= PBUS_STATUS_LEN && pbus_is_status(b + n - PBUS_STATUS_LEN, PBUS_STATUS_LEN) &&
-                    pbus_crc_ok(b + n - PBUS_STATUS_LEN, PBUS_STATUS_LEN);
+  int at = n - PBUS_STATUS_LEN;  // where one would start
+  w->after_status =
+      at >= 0 && pbus_is_status(b + at, PBUS_STATUS_LEN) && (at == 0 ? crc_ok : pbus_crc_ok(b + at, PBUS_STATUS_LEN));
   if (w->after_status) {
     w->status_end_us = idle_us - PBUS_BYTE_US;
     w->status_ms = now_ms;
   }
-  pbus_gaps_frame(&w->gaps, b, n, start_us, start_us);
+  pbus_gaps_frame(&w->gaps, b, n, crc_ok, start_us, start_us);
 }
 
 uint32_t pbus_panel_window(pbus_panel_t *w, uint32_t idle_us, uint32_t now_ms, uint8_t *say) {
@@ -222,7 +225,7 @@ static void on_reply(pbus_gaps_t *g, const uint8_t *f, int n, uint8_t a) {
   g->gaps++;
 }
 
-void pbus_gaps_frame(pbus_gaps_t *g, const uint8_t *f, int n, uint32_t start_lo_us, uint32_t start_hi_us) {
+void pbus_gaps_frame(pbus_gaps_t *g, const uint8_t *f, int n, bool crc_ok, uint32_t start_lo_us, uint32_t start_hi_us) {
   // One frame at a time on the bus, so it started after the last one ended. Tighter than a late read can tell.
   if (g->end_known && (int32_t) (g->end_lo_us - start_lo_us) > 0 && (int32_t) (g->end_lo_us - start_hi_us) <= 0)
     start_lo_us = g->end_lo_us;
@@ -230,9 +233,9 @@ void pbus_gaps_frame(pbus_gaps_t *g, const uint8_t *f, int n, uint32_t start_lo_
   g->end_known = true;
   if (n >= 1 && f[0] == PBUS_LINK_ADDR)
     return;                                // a link frame
-  bool ok = pbus_crc_ok(f, n);             // one whole frame with its CRC at the end
+  bool ok = n >= 4 && crc_ok;              // one whole frame with its CRC at the end
   bool probe = ok && n == 8 && f[1] == 4;  // the CX60 looking for panels, also at address 0xFE
-  bool cx60 = probe || cx60_len(f, n) == n;
+  bool cx60 = probe || cx60_len(f, n, ok) == n;
   g->open = false;
   if (cx60) {
     if (g->armed)  // did it come back sooner than its steps say?

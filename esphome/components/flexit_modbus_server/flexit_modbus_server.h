@@ -15,6 +15,7 @@
 #include <memory>
 #endif
 
+#include <array>
 #include <iterator>
 #include <string>
 #include <vector>
@@ -171,6 +172,14 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
   float read_holding_register_temperature(uint16_t reg) {
     return static_cast<int16_t>(mb_.getHoldingRegister(reg)) / 10.0f;
   }
+  /// One of the unit's temperature sensors in C, NAN if none is fitted: it reads past what a sensor can, or its
+  /// setting says it's off
+  float read_sensor_temperature(uint16_t reg);
+  /// We have the CX60's value of a setting, from flash or because it wrote it since
+  bool setting_known(uint16_t reg) const {
+    int i = slot_(reg);
+    return i >= 0 && known_[i / 32] & (1u << (i % 32));
+  }
   /// A runtime counter in hours, from its high word and the low word after it. NAN until it's known.
   float read_holding_register_hours(uint16_t high_reg);
 
@@ -220,6 +229,10 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
   /// Min time since the last status broadcast ended, counted from when we read it. UINT32_MAX if something came
   /// after it.
   uint32_t status_min_age_us() { return status_last_ ? micros() - status_seen_us_ : UINT32_MAX; }
+  /// Time until the CX60's status broadcast is expected to end: the one coming in now, from how much of it the last
+  /// read had, else the next one from the time between the last two. UINT32_MAX when it can't tell, like before the
+  /// second one or once the next is late. Work that would hold up the link's window after it stops before then.
+  uint32_t until_status_end_us();
   /// True once we've seen a status broadcast since boot, so mode and temperatures are live. Settings are still the
   /// saved ones until the CX60 sends them.
   bool synced() const { return status_heard_; }
@@ -298,7 +311,8 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
 
   /// For status_age_us(), when the last loops read the UART and how much of a status frame they had
   uint32_t loop_us_{0}, prev_loop_us_{0}, status_from_us_{0}, status_seen_us_{0};
-  uint32_t status_ms_{0};  // millis() then, for data_age_ms()
+  uint32_t status_ms_{0};         // millis() then, for data_age_ms()
+  uint32_t status_period_us_{0};  // between the last two status broadcasts, 0 = not seen two yet
   int status_part_{0}, prev_status_part_{0}, status_from_part_{0};
   bool status_new_{false}, status_last_{false}, answered_{false}, status_heard_{false};
   bool updating_{false};  // panel update running, see set_updating()
@@ -340,9 +354,10 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
   // ----------------------------------------------------------------
   // The CX60 only sends all settings when it boots, so we keep the real ones in
   // flash and load them on our own boot. A boost's temporary value never goes
-  // in. Real changes are written to flash right away, and so is which ones the
-  // CX60 may have a temporary value for (held, until it has the real one again),
-  // so after a power cut we send it the real ones.
+  // in. Real changes go to flash after the next status broadcast, see
+  // sync_flash_(). Which ones the CX60 may have a temporary value for (held,
+  // until it has the real one again) goes there before the CX60 gets it, so
+  // after a power cut we send it the real ones.
   struct SettingsRange {
     uint16_t start;
     uint16_t count;
@@ -372,6 +387,16 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
       hash = (hash * 16777619u) ^ (range.start << 16 | range.count);
     return hash;
   }();
+  // Each register's index in SavedSettings, -1 if it's not a setting
+  static constexpr std::array<int16_t, MAX_NUM_HOLDING_REGISTERS> SLOT_OF = [] {
+    std::array<int16_t, MAX_NUM_HOLDING_REGISTERS> slot{};
+    slot.fill(-1);
+    int16_t i = 0;
+    for (const auto &range : SETTINGS_RANGES)
+      for (uint16_t reg = range.start; reg < range.start + range.count; reg++)
+        slot[reg] = i++;
+    return slot;
+  }();
 
   struct SavedSettings {
     uint16_t values[NUM_SAVED_REGISTERS];
@@ -380,17 +405,28 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
 
   ESPPreferenceObject settings_pref_;
   SavedSettings saved_{};
-  bool settings_dirty_{false};  // save it and sync the flash
+  uint32_t known_[(NUM_SAVED_REGISTERS + 31) / 32]{};  // see setting_known()
+  bool settings_dirty_{false};                         // save it
+  bool sync_pending_{false};                           // saved, the flash write is still to come, see sync_flash_()
+  uint32_t sync_pending_ms_{0}, synced_ms_{0};         // since when, and the last flash write
+  bool hold_unsynced_{false};                          // a held bit flash doesn't have yet
+  uint32_t coil_waits_[(NUM_SAVED_REGISTERS + 31) / 32]{};  // temporary values the CX60 gets once flash has it
+  static constexpr uint32_t SYNC_FALLBACK_MS = 3000;        // written without a status broadcast after this long
+  static constexpr uint32_t SYNC_INTERVAL_MS = 60000;       // ESPHome's own saves, flash_write_interval's default
 
   /// Index in SavedSettings, -1 if it's not a setting
-  int slot_(uint16_t reg) const;
+  int slot_(uint16_t reg) const { return reg < SLOT_OF.size() ? SLOT_OF[reg] : -1; }
   bool held_(int i) const { return saved_.held[i / 32] & (1u << (i % 32)); }
+  bool coil_waits_for_(int i) const { return i >= 0 && coil_waits_[i / 32] & (1u << (i % 32)); }
   void set_held_(int i, bool held);
   void set_real_(int i, uint16_t reg, uint16_t value);
   bool keep_ours_(uint16_t reg, uint16_t before);
   void setting_written_(uint16_t reg, uint16_t before);
   void restore_settings_();
   void save_settings_();
+  void want_sync_();
+  /// Every flash write, ESPHome's own too, best right after a status broadcast
+  void sync_flash_(bool status_end);
 
   // ----------------------------------------------------------------
   // Runtime counter persistence

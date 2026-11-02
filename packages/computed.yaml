@@ -2,8 +2,23 @@
 # Needs core.yaml
 substitutions:
   # Rated power of the electric heater in watts, for the heater power and energy sensors.
-  # It's on the type plate of the unit. Set to 0 if you have a water coil.
+  # It's on the type plate of the unit. With a water coil, drop the heater sensors, see docs/packages.md.
   flexit_heater_power: "900"
+
+esphome:
+  on_boot:
+    - then:
+        - lambda: |-
+            // The alarms come together in the CX60's status, so they're all in by the time one is
+            id(server).add_on_register_callback([](uint16_t reg, uint16_t) {
+              using namespace flexit_modbus_server;
+              if (reg < REG_ALARM_SENSOR_SUPPLY_FAULTY || reg > REG_ALARM_FILTER_CHANGE)
+                return;
+              bool any = false;
+              for (int r = REG_ALARM_SENSOR_SUPPLY_FAULTY; r <= REG_ALARM_FILTER_CHANGE; r++)
+                any |= id(server)->read_holding_register(r) != 0;
+              id(alarm_any).publish_state(any);
+            });
 
 sensor:
   # How much of the heat in the extract air ends up in the supply air.
@@ -19,16 +34,18 @@ sensor:
     update_interval: 60s
     lambda: |-
       if (!id(server)->fresh())
-        return {};
+        return NAN;
       if (id(server)->read_holding_register(flexit_modbus_server::REG_PERCENTAGE_HEAT_EXCHANGER) == 0 ||
           id(server)->read_holding_register(flexit_modbus_server::REG_PERCENTAGE_HEATING) != 0 ||
           id(server)->read_holding_register(flexit_modbus_server::REG_PERCENTAGE_COOLING) != 0) {
         return {};
       }
 
-      float supply = id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_SUPPLY_AIR);
-      float extract = id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_EXTRACT_AIR);
-      float outdoor = id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_OUTDOOR_AIR);
+      float supply = id(server)->read_sensor_temperature(flexit_modbus_server::REG_TEMPERATURE_SUPPLY_AIR);
+      float extract = id(server)->read_sensor_temperature(flexit_modbus_server::REG_TEMPERATURE_EXTRACT_AIR);
+      float outdoor = id(server)->read_sensor_temperature(flexit_modbus_server::REG_TEMPERATURE_OUTDOOR_AIR);
+      if (std::isnan(supply) || std::isnan(extract) || std::isnan(outdoor))
+        return NAN;
 
       // Too little difference and the sensor error is bigger than what we measure
       if (extract - outdoor < 5.0f) {
@@ -82,18 +99,8 @@ sensor:
       return std::max(interval - used, 0.0f);
 
 binary_sensor:
-  # One sensor for notifications, on when any of the alarms is
+  # One sensor for notifications, on when any of the alarms is. Set from on_boot.
   - platform: template
     id: alarm_any
     name: "Alarm"
     device_class: problem
-    lambda: |-
-      if (!id(server)->fresh())
-        return {};
-      for (int reg = flexit_modbus_server::REG_ALARM_SENSOR_SUPPLY_FAULTY;
-           reg <= flexit_modbus_server::REG_ALARM_FILTER_CHANGE; reg++) {
-        if (id(server)->read_holding_register(reg) != 0) {
-          return true;
-        }
-      }
-      return false;

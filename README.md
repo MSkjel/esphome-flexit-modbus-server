@@ -27,7 +27,7 @@ This project implements a Modbus server for Flexit ventilation systems using ESP
 
 | MCU             | RS485 Breakout Board | Notes                                                                 |
 |-----------------|---------------------|-----------------------------------------------------------------------|
-| XIAO ESP32-C3, or any other XIAO | XIAO RS485 Expansion Board | [Details](hardware/xiao-esp32-c3-rs485-breakout-board-for-seeed-studio-xiao-tp8485e.md) |
+| XIAO ESP32-C3, or another ESP32 XIAO | XIAO RS485 Expansion Board | [Details](hardware/xiao-esp32-c3-rs485-breakout-board-for-seeed-studio-xiao-tp8485e.md) |
 
 ---
 
@@ -58,6 +58,10 @@ This project implements a Modbus server for Flexit ventilation systems using ESP
      # - packages/advanced.yaml
    ```
 
+4. **Restart the ventilation unit** (power off and on) with the ESP running. The CX60 only looks for panels when
+   it starts, so until then it doesn't poll the ESP and the settings stay unknown. If CX60 Connected stays off,
+   swap A and B, check the TX/RX pins, and that nothing else is at the ESP's address.
+
 ---
 
 ## Packages
@@ -83,8 +87,8 @@ pieces the packages share, you don't add those yourself.
 | [`health.yaml`](packages/health.yaml) | The ESP's free RAM, largest free block and loop time | Diagnostic |
 | [`panel.yaml`](packages/panel.yaml) | A CI600 running the [replacement firmware](#ci600-panel-replacement-firmware): its settings in Home Assistant, notifications, pictures, your values on its screen | ESP32 only, ESP at address 1. Extras in [`packages/panel/`](packages/panel) |
 
-What each one does, with its entities and settings, is in [docs/packages.md](docs/packages.md). All settings are
-read back from the CX60, so changes made on a CI600 panel show up in Home Assistant as well (see
+What each one does beyond its entities' names, and their settings, is in [docs/packages.md](docs/packages.md).
+All settings are read back from the CX60, so changes made on a CI600 panel show up in Home Assistant as well (see
 [Saved settings and counters](#saved-settings-and-counters)).
 
 ### Customizing

@@ -36,6 +36,7 @@ struct Running {
   bool flag;       // the flag is up with it
   int8_t flown;    // the way the wind blew it when it went up
   int16_t sun_x;   // the sun's now, -1 down
+  float light;     // the scene's now, see in_light()
   std::vector<Timer> timers;
   std::map<std::string, Frames> sprites;  // the show's, by name
   std::vector<std::string> names;         // the panel animations it made
@@ -43,8 +44,10 @@ struct Running {
   std::vector<uint32_t> px;  // the frame frame_pixel() drew last, empty without the RAM for it
   const Frames *drawn;
   int drawn_f;
-  int8_t flag_light;  // the light the flag was dimmed to, in tenths
-  std::string rare;   // the sprite of the rare encounter on, see met_live_rare.h
+  int8_t flag_light;                   // the light the flag was dimmed to, in tenths
+  std::string rare;                    // the sprite of the rare encounter on, see met_live_rare.h
+  std::function<uint32_t(int)> visit;  // the show's visitors, see visitors()
+  int visits;
 };
 inline Running R;
 
@@ -145,6 +148,15 @@ inline Frames dimmed(Frames sp, float light) {
   return sp;
 }
 
+// The show's sprite n in the light there is now, but never darker than under the stars, so it still shows. It's
+// made again, so only while it's off the panel.
+inline void in_light(const char *n) {
+  unload(n);
+  Frames sp;
+  if (make_sprite(n, sp))
+    add(n, dimmed(std::move(sp), std::max(R.light, 0.35f)));
+}
+
 // How a copy is placed
 struct How {
   bool own = false;  // a frame of its own
@@ -173,6 +185,13 @@ inline void remove(const std::string &n, int i, int fade = 300) { anim::remove(k
 inline void swap(const std::string &from, int i, const std::string &to, int x, int y, bool own = false, int start = 0) {
   remove(from, i, 1);
   place(to, i, x, y, {own, start, 0});
+}
+// swap() to to facing left if left, see place_flipped()
+inline void swap_flipped(const std::string &from, int i, const std::string &to, int x, int y, bool left,
+                         bool own = false, int start = 0) {
+  swap(from, i, to, flip_x(to, x, left), y, own, start);
+  if (left)
+    flip(to, i, true, false);
 }
 // name's animation and its copies go, faded out
 inline void clear(const std::string &n) { anim::clear(key(n)); }
@@ -228,6 +247,21 @@ inline uint32_t remove_later(uint32_t at, const char *n, int i, int fade = 300) 
   later(at, [=] { remove(n, i, fade); });
   return at;
 }
+// n's copies fade out over fade ms from at ms on and it lets go of its slot, and with it other's, the visit's other
+// sprite. The ms till then, for an event's.
+inline uint32_t gone_later(uint32_t at, const char *n, int fade = 300, const char *other = nullptr) {
+  later(at, [=] {
+    if (const anim::Anim *a = anim::find(key(n)))
+      for (size_t i = 0; i < a->copies.size(); i++)
+        remove(n, (int) i, fade);
+  });
+  later(at + fade + 100, [=] {
+    clear(n);
+    if (other)
+      clear(other);
+  });
+  return at + fade + 100;
+}
 // Copy 0 of n, drawn facing right, from x0, y0 off one edge across to x1, y1 off the other in ms, facing the way it
 // goes, then it's gone. The ms.
 inline uint32_t across(const char *n, int x0, int y0, int x1, int y1, uint32_t ms) {
@@ -236,6 +270,51 @@ inline uint32_t across(const char *n, int x0, int y0, int x1, int y1, uint32_t m
     flip(n, 0, true, false);
   move(n, 0, x1, y1, (int) ms);
   return remove_later(ms, n, 0);
+}
+
+// The show's visitors, one at a time so the panel has room for them: about every mean ms one of n at random. fn(k)
+// brings the k-th and returns the ms it takes, 0 if it doesn't fit the picture.
+inline void visitors(uint32_t mean, uint32_t first, int n, std::function<uint32_t(int)> fn) {
+  R.visit = std::move(fn);
+  R.visits = n;
+  sometimes(mean, first, [n] {
+    uint32_t ms = 0;
+    for (int k = (int) rnd(0, (float) n), tries = 0; !ms && tries < n; k = (k + 1) % n, tries++)
+      ms = R.visit(k);
+    return ms;
+  });
+}
+
+// Copy 0 of walk from x0 along row y at speed px/s to stop, where it's stay for a round of stay's frames, dy rows
+// higher, then on to x1, facing the way it goes, and gone. The ms it takes.
+inline uint32_t stop_by(const char *walk, const char *stay, int x0, int stop, int x1, int y, int dy, float speed) {
+  bool left = x1 < x0;
+  int in = (int) ((float) abs(stop - x0) * 1000 / speed), out = (int) ((float) abs(x1 - stop) * 1000 / speed);
+  int still = ms_of(stay) - STEP;
+  preload(stay);
+  place_flipped(walk, 0, x0, y, left);
+  move(walk, 0, flip_x(walk, stop, left), y, in);
+  later(in, [=] {
+    swap_flipped(walk, 0, stay, stop, y - dy, left, true);
+    rounds(stay, 0, 1);
+  });
+  later(in + still, [=] {
+    swap_flipped(stay, 0, walk, stop, y, left);
+    move(walk, 0, flip_x(walk, x1, left), y, out);
+  });
+  return gone_later(in + still + out, walk, 300, stay);
+}
+
+// Copy 0 of n soars in from off the side away from the sun, circles rx by ry px round row y there a while and goes
+// off higher up. The ms it takes.
+inline uint32_t soar(const char *n, int y, int rx, int ry) {
+  bool left = R.sun_x > W / 2;  // where it comes in from
+  place(n, 0, left ? -40 : W + 20, y - 16, {true});
+  wave(n, 0, "x", -rx, rx, 12000, 12000, 0, 0, 20, false, "both");
+  wave(n, 0, "y", -ry, ry, 8000, 8000, 0, 0, 20, false, "both");
+  move(n, 0, left ? 60 : 225, y, 12000, "out");
+  move_later(40000, n, 0, left ? -60 : W + 40, y - 28, 14000, "in");
+  return remove_later(56000, n, 0);
 }
 
 // The top row of what stands in front of the sky in each column: the land, the mountains' far ridge with far, the
@@ -282,6 +361,37 @@ inline bool moon_clear(const Scene &s) {
     if (std::min({top[x], s.fog_top[0][x], s.fog_top[1][x]}) <= below)
       return false;
   return true;
+}
+
+// Whether pixel c on row y is the night or day sky, or a star in it
+inline bool sky_px(const Scene &s, uint8_t c, int y) {
+  return c == s.ix[C_SKY + band_of(y)] || c == s.ix[C_DIM] || c == s.ix[C_STAR];
+}
+
+// The row at the left edge for a w x h sprite to cross the sky to the right edge from, its top dy lower there, with
+// nothing but sky and stars on its way: no land, trees, roofs, moon, clouds or forecast. From lo to hi, -1 if none
+// of a few tries is clear.
+inline int sky_line(const Scene &s, int w, int h, int lo, int hi, int dy) {
+  int y0[6];
+  bool clear[6];
+  for (int i = 0; i < 6; i++) {
+    y0[i] = (int) rnd((float) lo, (float) hi);
+    clear[i] = true;
+  }
+  uint8_t px[W];
+  for (int y = std::max(0, std::min(lo, lo + dy) - 1); y <= std::min(H - 1, std::max(hi, hi + dy) + h); y++) {
+    row(s, y, px);
+    for (int x = 0; x < W; x++) {
+      for (int i = 0; i < 6 && !sky_px(s, px[x], y); i++) {
+        int top = y0[i] + dy * std::max(0, x - w) / W;  // the sprite over this column, a row either side
+        clear[i] = clear[i] && (y < top - 1 || y > top + h);
+      }
+    }
+  }
+  for (int i = 0; i < 6; i++)
+    if (clear[i])
+      return y0[i];
+  return -1;
 }
 
 // A witch on her broomstick from off one side across to the other at 40 px/s, through the moon at moon_x, moon_y,
@@ -480,6 +590,8 @@ inline void stop() {
   R.show = -1;
   R.flag = false;
   R.rare.clear();
+  R.visit = nullptr;
+  R.visits = 0;
 }
 
 // Every 50 ms or so: what's due. shown: the weather is the panel's picture.

@@ -556,16 +556,17 @@ static int rle(enc_t *e, int nlen, int ndist) {
   return ncl;
 }
 
-uint32_t pdeflate(const uint8_t *in, unsigned width, unsigned stride, uint32_t len, uint8_t *out, uint32_t cap) {
+_Static_assert(sizeof(enc_t) <= PDEFLATE_ENC, "PDEFLATE_ENC holds the tables");
+
+uint32_t pdeflate_in(const pdeflate_work_t *wk, const uint8_t *in, unsigned width, unsigned stride, uint32_t len,
+                     uint8_t *out, uint32_t cap) {
   if (len > 65535 || (len && !width))
     return 0;
-  enc_t *e = calloc(1, sizeof *e);
-  uint8_t *src = malloc(len + 1);
-  uint32_t *tok = malloc(4 * (size_t) len + 4);
-  uint16_t *prev = malloc(2 * (size_t) len + 2);
-  uint32_t result = 0;
-  if (!e || !src || !tok || !prev)
-    goto done;
+  enc_t *e = wk->enc;
+  uint32_t *tok = wk->tok;
+  uint16_t *prev = wk->rest;
+  uint8_t *src = (uint8_t *) (prev + len + 1);
+  memset(e, 0, sizeof *e);
   e->prev = prev;
   for (uint32_t i = 0; i < len; i++)
     src[i] = in[at(i, width, stride)];
@@ -630,13 +631,18 @@ uint32_t pdeflate(const uint8_t *in, unsigned width, unsigned stride, uint32_t l
     put_tokens(&w, tok, nt, e->llen, e->lcode, e->dlen, e->dcode);
   }
   put(&w, 0, (8 - w.nbits) & 7);
-  result = w.len <= cap ? w.len : 0;
-done:
-  free(prev);
-  free(e);
-  free(src);
-  free(tok);
-  return result;
+  return w.len <= cap ? w.len : 0;
+}
+
+uint32_t pdeflate(const uint8_t *in, unsigned width, unsigned stride, uint32_t len, uint8_t *out, uint32_t cap) {
+  if (len > 65535)
+    return 0;
+  pdeflate_work_t wk = {malloc(PDEFLATE_ENC), malloc(PDEFLATE_TOK(len)), malloc(PDEFLATE_REST(len))};
+  uint32_t n = wk.enc && wk.tok && wk.rest ? pdeflate_in(&wk, in, width, stride, len, out, cap) : 0;
+  free(wk.rest);
+  free(wk.tok);
+  free(wk.enc);
+  return n;
 }
 
 // ---------------------------------------------------------------- pieces

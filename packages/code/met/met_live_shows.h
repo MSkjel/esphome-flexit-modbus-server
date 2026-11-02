@@ -139,6 +139,7 @@ inline void apply(const Scene &s) {
   if (i >= 0 && SHOWS[i].made_of)
     where = where * 31u + SHOWS[i].made_of(s);
   R.sun_x = (int16_t) (s.sun ? s.sun_x : -1);
+  R.light = s.at.light;
   if (i != R.show || where != R.where) {
     stop();
     R.where = where;

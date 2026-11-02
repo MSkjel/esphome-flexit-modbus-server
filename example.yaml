@@ -7,6 +7,9 @@ esphome:
 
 esp32:                           # ESP-IDF, ESPHome's default. ESP8266 boards use esp8266: instead
   board: seeed_xiao_esp32c3
+  framework:
+    sdkconfig_options:
+      CONFIG_UART_ISR_IN_IRAM: "y"  # the bus's bytes still come in while a setting is saved to flash
 
 logger:
   level: WARN

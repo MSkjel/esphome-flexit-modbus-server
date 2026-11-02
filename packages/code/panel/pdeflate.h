@@ -10,11 +10,21 @@ extern "C" {
 
 // Max output for n bytes, which is n stored plus 5 bytes per 64 KiB block
 #define PDEFLATE_BOUND(n) ((n) + 5 * ((n) / 65535 + 1))
-// Heap pdeflate takes for n bytes. Its biggest blocks are PDEFLATE_HEAP(0) and 4 x n.
-#define PDEFLATE_HEAP(n) (7 * (n) + 17 * 1024)
+// pdeflate_in()'s work for up to n bytes of input, in three blocks so none is bigger than the tables or 4 x n: the
+// tables, a token per input byte, then the hash chains and the input gathered from its rectangle
+#define PDEFLATE_ENC 16128
+#define PDEFLATE_TOK(n) (4 * ((n) + 1))
+#define PDEFLATE_REST(n) (3 * ((n) + 1))
+typedef struct {
+  void *enc;       // PDEFLATE_ENC bytes
+  uint32_t *tok;   // PDEFLATE_TOK(n) bytes
+  uint16_t *rest;  // PDEFLATE_REST(n) bytes
+} pdeflate_work_t;
 
-// Deflates the rectangle at in into out, len <= 65535. Returns the length, 0 if it doesn't fit cap or malloc
-// fails. Takes PDEFLATE_HEAP(len).
+// Deflates the rectangle at in into out, len <= 65535, in wk's blocks. Returns the length, 0 if it doesn't fit cap.
+uint32_t pdeflate_in(const pdeflate_work_t *wk, const uint8_t *in, unsigned width, unsigned stride, uint32_t len,
+                     uint8_t *out, uint32_t cap);
+// The same with the blocks malloc'd, 0 too if that fails
 uint32_t pdeflate(const uint8_t *in, unsigned width, unsigned stride, uint32_t len, uint8_t *out, uint32_t cap);
 // Inflates in[0..n) into the rectangle at out, or only checks the data if out is NULL. Matches may reach hist bytes
 // before out, which needs width == stride. Returns the bytes of in used, 0 if malformed or it doesn't make exactly

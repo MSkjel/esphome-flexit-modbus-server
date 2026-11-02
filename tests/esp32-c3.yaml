@@ -6,6 +6,8 @@ esp32:
   board: seeed_xiao_esp32c3
   framework:
     type: esp-idf
+    sdkconfig_options:
+      CONFIG_UART_ISR_IN_IRAM: "y"
 
 # ERROR, so every other log compiles out and catches one left as the only statement of an if. The other tests
 # build with them all.

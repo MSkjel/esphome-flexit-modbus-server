@@ -15,7 +15,7 @@ namespace flexit::panel::link {
 inline constexpr unsigned BACKLOG = 512;
 inline constexpr uint32_t SILENT_MS = 30000;     // the panel normally answers every cycle, this long without it's gone
 inline constexpr uint32_t ASK_AGAIN_MS = 60000;  // after a refusal started
-inline constexpr uint32_t STATS_MS = 60000;      // between the link's stats in the log
+inline constexpr uint32_t STATS_MS = 300000;     // between the link's stats in the log, a long line
 
 inline pbulk_esp_t tx;                                 // outgoing message queue and link state
 inline pbus_gaps_t gaps;                               // tracks the gaps after the CX60's polls
@@ -116,7 +116,8 @@ inline void frame(const uint8_t *f, size_t n) {
   uint32_t now = micros(), age = id(server).frame_age_us();
   bool off = gaps.off;
   // It started between these: with a byte rounded up to whole us for the earliest, down to 86 us for the latest
-  pbus_gaps_frame(&gaps, f, (int) n, now - age - (uint32_t) n * PBUS_BYTE_US, now - (uint32_t) n * 86);
+  pbus_gaps_frame(&gaps, f, (int) n, pbus_crc_ok(f, (int) n), now - age - (uint32_t) n * PBUS_BYTE_US,
+                  now - (uint32_t) n * 86);
   if (gaps.off != off) {
     if (gaps.off) {
       ESP_LOGW("panel", "The CX60 sent sooner than expected after a poll: no gaps after polls for a while");
@@ -146,7 +147,9 @@ inline size_t frame_length(const uint8_t *f, size_t available) {
 
 inline void setup(uint8_t panel_address) {
   pbulk_esp_init(&tx, (uint16_t) random_uint32(), panel_address);
-  id(modbus_uart).set_rx_full_threshold(1);  // hand over every byte at once, so we know when the window began
+  // Bytes handed over 4 at a time, or 2 byte times after the line goes quiet: that's when the window began, within
+  // the 0.35 ms the component allows for (rx_delay_us_), at a quarter of the interrupts and loops of one at a time
+  id(modbus_uart).set_rx_full_threshold(4);
   id(server).set_frame_length(PBULK_ADDR, frame_length);
   id(server).add_on_status_callback(window);
   id(server).add_on_frame_callback(frame);

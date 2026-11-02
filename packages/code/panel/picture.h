@@ -2,6 +2,7 @@
 // row packed on its own, or as a JPEG at the best quality that fits the panel's 14 KB.
 #pragma once
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -33,6 +34,10 @@ struct Source {
   std::function<bool(int &w, int &h)> size;  // false while it isn't ready, like an online one still downloading
   std::function<uint32_t(int, int)> pixel;   // 0xRRGGBB
   std::function<void()> done;                // optional, its pixels aren't needed now
+  std::function<void()> picked;              // optional, it was picked to be shown
+  // Optional: what it has to do before size() can say yes, like met.h drawing its scene, a slice at a time until
+  // deadline_us. True once there's nothing more to do now.
+  std::function<bool(uint32_t deadline_us)> prepare;
   // Optional, for a source with its own 16 colours at the screen's size, like met.h's: pal, and row(y, idx) with
   // row y as indexes into it. Then nothing is counted or mapped.
   const uint32_t *pal = nullptr;
@@ -44,7 +49,11 @@ inline std::map<std::string, Source> sources;
 
 inline void add(const std::string &name, Source s) { sources[name] = std::move(s); }
 // encoding and quality as written in picture.yaml
-inline Encoding encoding_of(const std::string &s) { return s == "palette" ? PALETTE : s == "jpeg" ? JPEG : AUTO; }
+inline Encoding encoding_of(std::string s) {
+  for (auto &c : s)
+    c = (char) tolower((unsigned char) c);
+  return s == "palette" ? PALETTE : s == "jpeg" ? JPEG : AUTO;
+}
 inline int quality_of(const std::string &s) {
   int q = atoi(s.c_str());
   return q < 1 ? 0 : std::min(q, 100);
@@ -73,14 +82,16 @@ template<typename Img> void add_image(const std::string &name, Img &&image, cons
   add(name, s);
 }
 
-// start(), count() and map() for 16 colours and jpeg() for the JPEG as needed, choose(), plan(), then send()
-enum Phase { IDLE, START, COUNT, MAP, JPEG_TRY, CHOOSE, PLAN, SEND };
+// start(), then count(), cut(), judge() and map() for 16 colours and jpeg() for the JPEG as needed, choose(),
+// plan(), then send()
+enum Phase { IDLE, START, COUNT, CUT, JUDGE, MAP, JPEG_TRY, CHOOSE, PLAN, SEND };
 
 struct State {
-  std::string want;     // the picture asked for, "" = none
-  bool redo = true;     // want is new or its picture changed. True at first so the status gets published
-  std::string waiting;  // why the wanted one isn't ready, for the status
-  bool away = false;    // the status says it's waiting for the panel
+  std::string want;      // the picture asked for, "" = none
+  bool redo = true;      // want is new or its picture changed. True at first so the status gets published
+  std::string waiting;   // why the wanted one isn't ready, for the status
+  bool away = false;     // the status says it's waiting for the panel
+  std::string why_away;  // which one to update when the panel has another link version, from panel.h
   // shown is what the panel has once it's sent. made is the 16-colour version or the one being sent, jpeg the JPEG.
   Pic shown, made, jpeg;
   std::string name;  // the picture being made or sent
@@ -96,8 +107,11 @@ struct State {
   bool to_clear = false;                               // K_PIC_CLEAR still to send
   uint32_t retry_at = 0, piece_at = 0, piece_len = 0;  // the piece's bytes in made.data
   std::vector<uint32_t> hist;                          // pixel count per colour, at 4 bits per channel
+  Cut cut;                                             // the 16 colours from it
+  uint32_t split_us = UINT32_MAX;                      // what the last split took, as fits() has it
+  Judge judge;                                         // whether the panel's palette can stay
   std::vector<Job> jobs;
-  std::vector<uint8_t> lut;  // colour at 4 bits per channel -> palette index, while mapping
+  std::vector<uint8_t> lut;  // colour at 4 bits per channel -> palette index while mapping, 0xFF until looked up
   Zip zip;
 };
 inline State S;
@@ -113,10 +127,14 @@ inline void picked(const std::string &name) {
     S.shown = Pic();    // so a show() before the next loop sends all of it
     return;
   }
-  if (!sources.count(name)) {
+  auto it = sources.find(name);
+  if (it == sources.end()) {
     ESP_LOGW("panel", "No picture called '%s'", name.c_str());
+    status(name + ": no picture with that name");
     return;
   }
+  if (it->second.picked)
+    it->second.picked();
   S.want = name;
   S.redo = true;
 }
@@ -171,6 +189,7 @@ inline void reset() {
   S.made = Pic();
   S.jpeg = Pic();
   drop(S.hist);
+  S.cut.drop();
   drop(S.lut);
   S.search.drop();
   drop(S.zip.table);
@@ -226,10 +245,13 @@ inline bool jpeg_start();
 // The source gives its own 16 colours, see Source
 inline bool own() { return S.src->row && S.src->encoding != JPEG && S.fw == S.sw && S.fh == S.sh; }
 
-// False while it isn't ready, like an online picture still downloading
-inline bool start() {
+// False while it isn't ready, like an online picture still downloading or met.h's scene being drawn until
+// deadline_us
+inline bool start(uint32_t deadline_us) {
   if ((int32_t) (millis() - S.retry_at) < 0)
     return false;
+  if (S.src->prepare && !S.src->prepare(deadline_us))
+    return false;  // goes on next loop
   if (!S.src->size(S.sw, S.sh) || S.sw <= 0 || S.sh <= 0) {
     status(S.name + ": " + S.waiting);
     S.retry_at = millis() + 1000;
@@ -265,38 +287,72 @@ inline bool start() {
     return true;
   }
   S.hist.assign(BINS, 0);
-  S.lut.resize(BINS);
   S.y = 0;
   S.phase = COUNT;
   return true;
 }
 
-// The histogram a slice at a time, then the 16 colours. The panel's palette stays if it's nearly as good, so only
-// the changed rows go.
+// The histogram a slice at a time
 inline void count(uint32_t deadline_us) {
   for (; S.y < S.made.h && before(deadline_us); S.y++)
     for (int x = 0; x < S.made.w; x++)
       S.hist[bin(px(x, S.y))]++;
   if (S.y < S.made.h)
     return;
-  std::vector<uint16_t> bins;
-  uint32_t pal[16] = {};
-  median_cut(S.hist, 16, pal, bins);
-  S.colours = (int) std::min<size_t>(bins.size(), 17);
-  S.kept = S.shown.name == S.name && S.shown.format == PIC_PALETTE && S.shown.w == S.made.w && S.shown.h == S.made.h &&
-           nearly_as_good(S.shown.pal, pal, S.hist, bins);
-  memcpy(S.made.pal, S.kept ? S.shown.pal : pal, sizeof S.made.pal);
-  fill_lut(S.lut, S.hist, S.made.pal, 16);
+  S.cut.start(S.hist, 16);
+  S.split_us = UINT32_MAX;
+  S.phase = CUT;
+}
+
+// On to map() with the palette in made.pal
+inline void mapping() {
+  S.cut.drop();
   drop(S.hist);
-  if (!has_ram(POOL + PIC_MAX_W, POOL + PIC_MAX_W)) {  // the rows, which start() didn't count
+  if (!has_ram(POOL + PIC_MAX_W + BINS, POOL + PIC_MAX_W)) {  // the rows, which start() didn't count
     no_ram();
     return;
   }
+  S.lut.assign(BINS, 0xFF);  // filled as map() meets the colours
   S.sums = Sums();
   S.made.data.reserve(POOL + PIC_MAX_W);  // all it needs, past POOL it's a JPEG anyway
   S.made.rows.push_back(0);
   S.y = 0;
   S.phase = MAP;
+}
+
+// The 16 colours, a split at a time. Then the panel's palette is judged if it has this picture, so it can stay
+// and only the changed rows go.
+inline void cut(uint32_t deadline_us) {
+  for (bool first = true; !S.cut.done() && fits(deadline_us, S.split_us, first); first = false) {
+    uint32_t t0 = micros();
+    S.cut.split(S.hist);  // a sort of the box's colours, the first one all of them
+    S.split_us = micros() - t0;
+  }
+  if (!S.cut.done())
+    return;
+  S.cut.palette(S.hist, S.made.pal);
+  S.colours = (int) std::min<size_t>(S.cut.bins.size(), 17);
+  S.kept = false;
+  if (S.shown.name == S.name && S.shown.format == PIC_PALETTE && S.shown.w == S.made.w && S.shown.h == S.made.h) {
+    S.judge = Judge();
+    S.phase = JUDGE;
+  } else {
+    mapping();
+  }
+}
+
+inline constexpr size_t JUDGE_BINS = 256;  // bins a step of the judgement takes
+
+inline void judge(uint32_t deadline_us) {
+  bool done = false;
+  while (!done && before(deadline_us))
+    done = S.judge.step(S.shown.pal, S.made.pal, S.hist, S.cut.bins, JUDGE_BINS);
+  if (!done)
+    return;
+  S.kept = S.judge.nearly_as_good();
+  if (S.kept)
+    memcpy(S.made.pal, S.shown.pal, sizeof S.made.pal);
+  mapping();
 }
 
 // The 16-colour version, packed row by row while adding up what its colours and error need
@@ -311,7 +367,9 @@ inline void map(uint32_t deadline_us) {
       S.src->row(S.y, idx);
     for (int x = 0; x < w && !mine; x++) {
       uint32_t c = px(x, S.y), r = c >> 16, g = c >> 8 & 255, b = c & 255;
-      uint8_t i = S.lut[bin(c)];
+      uint8_t &i = S.lut[bin(c)];
+      if (i == 0xFF)
+        i = (uint8_t) nearest(bin_rgb(bin(c)), S.made.pal, 16);
       idx[x] = i;
       uint32_t *s = S.sums.sum[i];
       s[0] += r;
@@ -558,10 +616,12 @@ inline void begin_piece() {
 inline void send(uint32_t deadline_us) {
   if (S.phase != SEND || S.jobs.empty())
     return;
-  Transfer::Pumped p =
-      S.made.format == PIC_JPEG
-          ? S.t.pump(deadline_us, begin_piece)
-          : S.t.pump(deadline_us, begin_piece, [](uint8_t *b, unsigned max) { return S.zip.next(b, max); });
+  Transfer::Pumped p = S.made.format == PIC_JPEG ? S.t.pump(deadline_us, begin_piece)
+                                                 : S.t.pump(deadline_us, begin_piece, [](uint8_t *b, unsigned max) {
+                                                     unsigned n = S.zip.next(b, max);
+                                                     S.t.crc_to(S.zip.z.done);  // the rows the pieces hold so far
+                                                     return n;
+                                                   });
   if (p == Transfer::GOING)
     return;
   S.shown = Pic();  // the panel lost the piece or its answer
@@ -588,13 +648,13 @@ inline void loop(uint32_t deadline_us) {
       S.redo = true;
     }
     if (S.phase == START && !S.away) {
-      status(S.name + ": waiting for the panel");
+      status(S.name + ": waiting for the panel" + (S.why_away.empty() ? "" : ". " + S.why_away));
       S.away = true;
     }
     return;
   }
   S.away = false;
-  if (S.phase == START && !start())
+  if (S.phase == START && !start(deadline_us))
     return;
   if (S.phase >= COUNT && S.phase <= JPEG_TRY) {  // an online picture being downloaded again changes under us
     int w, h;
@@ -606,6 +666,12 @@ inline void loop(uint32_t deadline_us) {
   switch (S.phase) {
     case COUNT:
       count(deadline_us);
+      break;
+    case CUT:
+      cut(deadline_us);
+      break;
+    case JUDGE:
+      judge(deadline_us);
       break;
     case MAP:
       map(deadline_us);

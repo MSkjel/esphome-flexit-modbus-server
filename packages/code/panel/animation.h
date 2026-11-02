@@ -1,6 +1,7 @@
 // Screensaver animations from animation.yaml. All frames share 16 colours, one transparent if any pixel is, and
 // each frame after the first is the deflated rectangle that changed. The panel keeps up to ANIM_SLOTS of them in
-// 6 KB and shows each in up to ANIM_PLACES places, the copies of one in step unless a copy gets a frame of its own.
+// ANIM_POOL and shows each in up to ANIM_PLACES places, the copies of one in step unless a copy gets a frame of
+// its own.
 #pragma once
 #include <strings.h>
 #include <algorithm>
@@ -105,7 +106,11 @@ struct Work {
   int frames = 0;                           // to make, a repeating GIF's first round only
   size_t last = 0;                          // the last record in data, 0 = only the first frame's
   std::vector<uint8_t> frame, prev, first;  // 2 pixels per byte
-  std::vector<uint8_t> lut;                 // colour at 4 bits per channel -> palette index
+  std::vector<uint8_t> lut;                 // colour at 4 bits per channel -> palette index, 0xFF until looked up
+  std::vector<uint32_t> enc, tok;           // pdeflate's work for a frame, see pdeflate_work_t
+  std::vector<uint16_t> rest;
+  int colours = 0;                  // in the palette
+  uint32_t record_us = UINT32_MAX;  // what a record takes, as fits() has it
 };
 inline Work W;
 
@@ -195,6 +200,9 @@ inline void drop_work() {
   drop(W.frame);
   drop(W.prev);
   drop(W.first);
+  drop(W.enc);
+  drop(W.tok);
+  drop(W.rest);
 }
 
 // Stops making or sending the one in hand. What was made of one being made goes.
@@ -233,11 +241,11 @@ inline size_t data_max() {
 }
 
 // Whether the ESP has the RAM to make it: the colour counts, then the colour table, three frames, the records and
-// what pdeflate takes for a frame. Without exceptions a failed allocation restarts the ESP.
+// pdeflate's work for a frame, in three blocks. Without exceptions a failed allocation restarts the ESP.
 inline bool has_ram() {
-  size_t f = W.a->frame_bytes();
-  return panel::has_ram(std::max<size_t>(COUNT_RAM, BINS + 3 * f + data_max() + PDEFLATE_HEAP(f)),
-                        std::max<size_t>({BINS * 4, data_max(), PDEFLATE_HEAP(0), 4 * f + 4}));
+  size_t f = W.a->frame_bytes(), work = PDEFLATE_ENC + PDEFLATE_TOK(f) + PDEFLATE_REST(f);
+  return panel::has_ram(std::max<size_t>(COUNT_RAM, BINS + 3 * f + data_max() + work),
+                        std::max<size_t>({BINS * 4, data_max(), PDEFLATE_ENC, PDEFLATE_TOK(f)}));
 }
 
 // ---- the link's messages
@@ -375,7 +383,6 @@ inline bool start() {
     a.half = true;
   }
   W.hist.assign(BINS, 0);
-  W.lut.resize(BINS);
   W.hash.clear();
   W.sum = FNV_START;
   W.any_transp = false;
@@ -385,8 +392,7 @@ inline bool start() {
   return true;
 }
 
-// Counts the colours of a row or a few, and at the end of a frame its hash. After the last frame, builds the
-// palette.
+// Counts the colours of a row or a few, and at the end of a frame its hash
 inline void count() {
   Anim &a = *W.a;
   uint32_t h = W.sum;
@@ -405,8 +411,12 @@ inline void count() {
   W.y = 0;
   W.hash.push_back(W.sum);
   W.sum = FNV_START;
-  if (++W.f < a.src->frames)
-    return;
+  W.f++;
+}
+
+// After the last frame is counted: the palette, at once, and the RAM to make the frames
+inline void palette() {
+  Anim &a = *W.a;
   int n = a.src->frames;
   W.frames = n;
   const std::vector<uint16_t> &d = a.src->delays;
@@ -417,16 +427,21 @@ inline void count() {
   drop(W.hash);
   std::vector<uint16_t> bins;
   memset(a.pal, 0, sizeof a.pal);
-  int colours = median_cut(W.hist, W.any_transp ? 15 : 16, a.pal, bins);
+  W.colours = median_cut(W.hist, W.any_transp ? 15 : 16, a.pal, bins);
   a.transp = W.any_transp ? 15 : ANIM_OPAQUE;
-  fill_lut(W.lut, W.hist, a.pal, colours);
   drop(W.hist);
+  drop(bins);                // the lut takes their place, so has_ram()'s peak holds
+  W.lut.assign(BINS, 0xFF);  // filled as make() meets the colours
   a.data.clear();
   a.data.reserve(data_max());  // so it never moves
   W.frame.resize(a.frame_bytes());
   W.prev.resize(a.frame_bytes());
+  W.enc.resize(PDEFLATE_ENC / 4);
+  W.tok.resize(PDEFLATE_TOK(a.frame_bytes()) / 4);
+  W.rest.resize((PDEFLATE_REST(a.frame_bytes()) + 1) / 2);
   W.f = 0;
   W.last = 0;
+  W.record_us = UINT32_MAX;
   W.phase = MAKE;
 }
 
@@ -454,7 +469,9 @@ inline bool record(const std::vector<uint8_t> *from, const std::vector<uint8_t> 
     if (at + most > a.data.capacity())
       return true;  // it would move, a peak has_ram() didn't count
     a.data.resize(at + most);
-    unsigned n = plink_anim_record(from ? from->data() : nullptr, to.data(), a.w, a.h, delay, a.data.data() + at);
+    pdeflate_work_t work = {W.enc.data(), W.tok.data(), W.rest.data()};
+    unsigned n =
+        plink_anim_record_in(&work, from ? from->data() : nullptr, to.data(), a.w, a.h, delay, a.data.data() + at);
     a.data.resize(at + n);
     if (!n)
       return false;
@@ -500,21 +517,33 @@ inline void made(bool ok, size_t left) {
   status("Sending " + a.name);
 }
 
+// The palette index of colour c, found the first time it comes up
+inline uint8_t index_of(uint32_t c) {
+  uint8_t &i = W.lut[bin(c)];
+  if (i == 0xFF)
+    i = (uint8_t) nearest(bin_rgb(bin(c)), W.a->pal, W.colours);
+  return i;
+}
+
 // Maps a row of the frame or a few to the palette. Once the frame is in, adds its record, and after the last frame
-// the one back to the first.
-inline void make() {
+// the one back to the first. A record goes in one go, so it waits for the next slice unless this one is fresh or
+// has the time the last record took. False when it waits.
+inline bool make(uint32_t deadline_us, bool fresh) {
   Anim &a = *W.a;
   if (W.y < a.h) {
     for (int n = 0; n < ROWS_PX && W.y < a.h; n += a.w, W.y++) {
       uint8_t *row = W.frame.data() + (size_t) W.y * (a.w / 2);
       for (int x = 0; x < a.w; x++) {
         uint32_t c = px(W.f, x, W.y);
-        uint8_t i = opaque(c) ? W.lut[bin(c)] : a.transp;
+        uint8_t i = opaque(c) ? index_of(c) : a.transp;
         row[x / 2] = (uint8_t) (x & 1 ? row[x / 2] | i : i << 4);
       }
     }
-    return;
+    return true;
   }
+  if (!fits(deadline_us, W.record_us, fresh))
+    return false;
+  uint32_t t0 = micros();
   W.y = 0;
   size_t left = room();
   bool ok = record(W.f ? &W.prev : nullptr, W.frame, frame_ms(*a.src, W.f));
@@ -526,6 +555,9 @@ inline void make() {
     ok = record(&W.prev, W.first, frame_ms(*a.src, 0), true);
   if (!ok || last || a.frame_bytes() + a.data.size() > left)
     made(ok, left);
+  uint32_t us = micros() - t0;  // a frame that changed little goes quicker, the next may not
+  W.record_us = W.record_us == UINT32_MAX ? us : std::max(us, W.record_us / 4 * 3);
+  return true;
 }
 
 // The header once the link is free, then the records as it has room until deadline_us, then END
@@ -1049,10 +1081,12 @@ inline void loop(uint32_t deadline_us) {
     if (W.phase == IDLE)
       return;
   }
-  while (W.phase == COUNT && before(deadline_us))
+  while (W.phase == COUNT && W.f < W.a->src->frames && before(deadline_us))
     count();
-  while (W.phase == MAKE && before(deadline_us))
-    make();
+  if (W.phase == COUNT && W.f == W.a->src->frames && fits(deadline_us, UINT32_MAX, true))
+    palette();
+  for (bool fresh = true; W.phase == MAKE && before(deadline_us) && make(deadline_us, fresh); fresh = false) {
+  }
   if (W.phase == SEND)
     send(deadline_us);
 }

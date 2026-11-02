@@ -1,8 +1,10 @@
-// Animations by the sea and in town: the sailboat, the lighthouse and the coastal express, windows that go on
-// and off, the antenna's light and a tram
+// Animations by the sea and in town: the sailboat, a sjark, a sea eagle and a porpoise, the lighthouse and the
+// coastal express, windows that go on and off, the antenna's light, a plane, the tram, the bus, the plough, a
+// cyclist and pigeons
 #pragma once
 #include <algorithm>
 #include <bitset>
+#include <cstring>
 #include <memory>
 #include "met_live.h"
 
@@ -94,13 +96,9 @@ inline void sail_on(Course c, int x, bool left) {
     later(ms, [=] { sail_on(c, to, left); });
     return;
   }
-  swap("boat", 0, "tack", flip_x("tack", x, !left), c.y, true);
-  if (!left)
-    flip("tack", 0, true, false);
+  swap_flipped("boat", 0, "tack", x, c.y, !left, true);
   later(ms_of("tack") - STEP, [=] {
-    swap("tack", 0, "boat", flip_x("boat", x, left), c.y);
-    if (left)
-      flip("boat", 0, true, false);
+    swap_flipped("tack", 0, "boat", x, c.y, left);
     sail_on(c, x, !left);
   });
 }
@@ -128,6 +126,40 @@ inline void glitter(const Scene &s) {
   }
 }
 
+// Where something goes along the water: its first and last x as the sprite's left, and its top
+struct Lane {
+  int16_t l, r = -1, y;
+};
+
+// A sjark chugs along its lane from one end, at under 1 px/s, out of the haze and back into it. The ms it takes.
+inline uint32_t sjark_by(Lane n) {
+  in_light("sjark");
+  bool left = chance(0.5f);
+  int len = std::min(n.r - n.l, 50), a = n.l + (int) rnd(0, (float) (n.r - n.l - len));
+  int x0 = left ? a + len : a, x1 = left ? a : a + len, ms = len * 1000 * 5 / 4;  // 0.8 px/s
+  place_flipped("sjark", 0, x0, n.y, left, {false, 0, 4000});
+  move("sjark", 0, flip_x("sjark", x1, left), n.y, ms);
+  return gone_later(ms, "sjark", 4000);
+}
+
+// A sea eagle soars in over the fjord from the side away from the sun, circles there a while and goes. The ms.
+inline uint32_t sea_eagle() {
+  in_light("seaeagle");
+  return gone_later(soar("seaeagle", 82, 22, 7), "seaeagle");
+}
+
+// A porpoise rolls along its lane, up and under twice. The ms it takes.
+inline uint32_t porpoise(Lane n) {
+  in_light("porpoise");
+  bool left = chance(0.5f);
+  int len = 26, a = n.l + (int) rnd(0, (float) (n.r - n.l - len)), x0 = left ? a + len : a, x1 = left ? a : a + len;
+  int ms = 2 * ms_of("porpoise");
+  place_flipped("porpoise", 0, x0, n.y, left, {true, 0, 0});
+  rounds("porpoise", 0, 2);
+  move("porpoise", 0, flip_x("porpoise", x1, left), n.y, ms);
+  return gone_later(ms, "porpoise", 0);
+}
+
 inline void sail(const Scene &s) {
   int x = s.boat.x - 6, y = s.boat.y - 14, l, r;  // the picture's mast and waterline
   bool left = s.at.wdir < 0;
@@ -142,7 +174,33 @@ inline void sail(const Scene &s) {
   place_flipped("boat", 0, x, y, !left);
   if (room)
     sail_on({(int16_t) (l + 1), (int16_t) (r - 13), (int16_t) y, left}, x, left);
+  int a = room ? l + 1 : x, b = room ? r : x + 13;  // where the sailboat goes
   glitter(s);
+  // Now and then a sjark chugging along the fjord near the horizon off the sailboat's course, a sea eagle circling,
+  // or a porpoise rolling along the water between the sailboat and the shore
+  Lane sjark, roll;
+  sjark.y = (int16_t) (s.sea_top - 2);  // its waterline on the 8th row
+  Cols c = water(s, s.sea_top, s.sea_top + 6, true);
+  for (int k = std::max(0, a - 6); k <= std::min(W - 1, b + 6); k++)
+    c.reset(k);
+  int sl, sr;
+  if (stretch(c, -1, sl, sr) && sr - sl >= 60) {
+    sjark.l = (int16_t) (sl + 2);
+    sjark.r = (int16_t) (sr - 2 - 24);
+  }
+  roll.y = (int16_t) (s.boat.y + 2);
+  if (gap_stretch(water(s, roll.y, roll.y + 2, false), sl, sr, 40) ||
+      (stretch(water(s, roll.y, roll.y + 2, false), -1, sl, sr) && sr - sl >= 40)) {
+    roll.l = (int16_t) sl;
+    roll.r = (int16_t) (sr - 5);
+  }
+  visitors(minutes(6), minutes(1, 5), 3, [sjark, roll](int k) -> uint32_t {
+    if (k == 1)
+      return sjark.r > sjark.l ? sjark_by(sjark) : 0;
+    if (k == 2)
+      return roll.r > roll.l ? porpoise(roll) : 0;
+    return sea_eagle();
+  });
   // a pair of eiders bobbing about on the open water off the shore, not the point's: the stretch in the gap between
   // the clock and the temperatures, or the longest
   int shore = H;
@@ -191,20 +249,38 @@ struct Win {
   int16_t x, y;  // x -1: none
   bool lit;
 };
-// The evening's windows in full view, the one each copy changed, and whether the trams run
+// The evening's windows in full view, the one each copy changed, whether the trams run, whether the plough's out,
+// and the row a plane comes in from, -1 for none
 struct Town {
   std::vector<Win> wins;
   Win slot[5];
-  bool trams;
+  bool trams, snow;
+  int plane;
 };
 inline std::weak_ptr<Town> town;  // the timers hold it, so it goes with the show
 
-// The tram's row: its wheels on the street just above the park, the near hill the pole stands on
-inline int tram_y(const Scene &s) { return hill_high(s, 0, W) - 13; }
-// a tram along the park at a walking pace, from either side. The ms it takes.
-inline uint32_t tram_by(const char *name, int y) {
+// Copy 0 of n along the road at row y and speed px/s, to the right or the left, and gone once it's by. The ms.
+inline uint32_t drive(const char *n, bool right, int y, float speed) {
+  const Frames *sp = frames_of(n);
+  int w = sp ? sp->w : 0, ms = (int) ((float) (W + w + 4) * 1000 / speed);
+  place_flipped(n, 0, right ? -w - 2 : W + 2, y, !right);
+  move(n, 0, flip_x(n, right ? W + 2 : -w - 2, !right), y, ms);
+  return gone_later((uint32_t) ms, n);
+}
+// The top row of something h tall driving to the right, in the near lane, or the left, in the far one
+inline int lane(bool right, int h) { return (right ? ROAD_KERB : ROAD_MID) - h; }
+
+// The tram's row: its wheels in the road's far lane
+inline int tram_y(const Scene &) { return ROAD_MID - 12; }
+// a tram along the road at a walking pace, from either side. The ms it takes.
+inline uint32_t tram_by(const char *name, int y) { return drive(name, chance(0.5f), y, 8); }
+
+// The bus, by day or with its windows lit at night, at 10 px/s
+inline uint32_t bus_by(const char *name) {
+  if (strcmp(name, "busnight"))
+    in_light(name);
   bool right = chance(0.5f);
-  return across(name, right ? 330 : -40, y, right ? -40 : 330, y, 46000);
+  return drive(name, right, lane(right, 10), 10);
 }
 
 // The picture's near windows with nothing in front of them, and whether the trams run
@@ -231,6 +307,8 @@ inline void town_redo(const Scene &s) {
       t->wins.push_back(w);
   }
   t->trams = s.at.hour >= 5 || !s.at.hour;
+  t->snow = s.at.white;
+  t->plane = sky_line(s, 9, 5, 12, 90, 6);
 }
 
 inline void town_evening(const Scene &s) {
@@ -260,8 +338,46 @@ inline void town_evening(const Scene &s) {
     w = n;
     return 0;
   });
+  // Now and then along the road a tram, the night bus or the plough after snow, or a plane high up coming in to
+  // land, left to right as its lights are
   int y = tram_y(s);
-  sometimes(minutes(10), minutes(2), [t, y] { return t->trams ? tram_by("tram", y) : 0; });
+  visitors(minutes(5), minutes(2), 4, [t, y](int k) -> uint32_t {
+    if (k == 1)
+      return bus_by("busnight");
+    if (k == 2) {
+      bool right = chance(0.5f);
+      return t->snow ? drive("plough", right, lane(right, 10), 9) : 0;
+    }
+    if (k == 3) {
+      if (t->plane < 0)
+        return 0;
+      uint32_t ms = (W + 11) * 1000 / 4;
+      place("plane", 0, -10, t->plane);
+      move("plane", 0, W + 1, t->plane + 6, (int) ms);
+      return gone_later(ms, "plane");
+    }
+    return t->trams ? tram_by("tram", y) : 0;
+  });
+}
+
+// Pigeons on the widest flat roof of the near row that's clear of the forecast and the flag, now and then wheeling
+// round
+inline void pigeons(const Scene &s) {
+  int best = -1;
+  for (int i = 0; i < s.nbld; i++) {
+    const Bld &b = s.bld[i];
+    int x = b.x + (b.w - 34) / 2;
+    bool flag =
+        s.pole_x >= 0 && s.pole_top < b.top && s.pole_x + PENNANT_RIGHT >= x && s.pole_x - PENNANT_LEFT <= x + 33;
+    if (!b.back && b.kind == 0 && b.w >= 34 && b.top - 14 >= (s.overlay ? OV_H : 0) && !flag &&
+        (best < 0 || b.w > s.bld[best].w))
+      best = i;
+  }
+  if (best < 0)
+    return;
+  const Bld &b = s.bld[best];
+  in_light("pigeons");
+  place("pigeons", 0, b.x + (b.w - 34) / 2, b.top - 14, {false, 0, 2000});
 }
 
 inline void town_day(const Scene &s) {
@@ -271,8 +387,18 @@ inline void town_day(const Scene &s) {
       roof = std::min<int>(roof, s.bld[i].top);
   flock({{60, roof - 30, 6, 10, roof - 50, roof + 5}, {220, roof - 40, 5, 8, roof - 56, roof}},
         {{140, 40, 2, 3, 24, 62}, {280, 52, 2, 3, 28, 66}});
+  // Now and then along the road a tram, the bus or a cyclist in the bike lane, keeping right
   int y = tram_y(s);
-  sometimes(minutes(10), minutes(2), [y] { return tram_by("tramday", y); });
+  visitors(minutes(4), minutes(2), 3, [y](int k) -> uint32_t {
+    if (k == 1)
+      return bus_by("bus");
+    if (k == 2) {
+      in_light("cyclist");
+      return drive("cyclist", true, ROAD_NEAR - 6, 12);
+    }
+    return tram_by("tramday", y);
+  });
+  pigeons(s);
 }
 
 }  // namespace flexit::panel::met::live

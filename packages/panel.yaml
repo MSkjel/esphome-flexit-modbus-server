@@ -10,6 +10,13 @@
 defaults:
   panel_address: "3"
 
+# The UART's interrupt from IRAM, so it keeps taking the bus's bytes while the flash is written, like a setting
+# being saved. Else what's past its 128-byte FIFO is lost, and with it the status broadcast and the link's window.
+esp32:
+  framework:
+    sdkconfig_options:
+      CONFIG_UART_ISR_IN_IRAM: "y"
+
 globals:
   - id: panel_language  # the panel's language, so its items' texts are right straight after a restart
     type: int
@@ -48,8 +55,7 @@ binary_sensor:
     id: panel_connected
     name: "Panel Connected"
     device_class: connectivity
-    entity_category: diagnostic
-    lambda: return flexit::panel::link::connected;
+    entity_category: diagnostic  # panel.h publishes it
 
 sensor:
   - platform: template
@@ -232,7 +238,7 @@ api:
       then: &do_clear_picture
         - lambda: flexit::panel::picture::clear();
     # an animation from packages/panel/animation.yaml, over the picture, where its yaml puts it, like its switch.
-    # The panel holds 4 at a time in 6 KB and shows them in up to 8 places. No name clears them all.
+    # The panel holds 6 at a time in 8 KB and shows them in up to 8 places. No name clears them all.
     - action: panel_show_animation
       variables: *by_name
       then: &do_show_animation
@@ -242,7 +248,7 @@ api:
       then: &do_clear_animation
         - lambda: flexit::panel::anim::clear(name);
     # copy 0 is the one panel_show_animation shows. Another copy at x, y plays in step with it, unless own = true
-    # gives it a frame of its own (w x h / 2 bytes more of the 6 KB) that starts `start` frames in.
+    # gives it a frame of its own (w x h / 2 bytes more of the 8 KB) that starts `start` frames in.
     - action: panel_place_animation
       variables: &place_animation {name: string, copy: int, x: int, y: int, own: bool, start: int}
       then: &do_place_animation

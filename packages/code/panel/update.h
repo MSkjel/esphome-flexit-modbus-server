@@ -204,7 +204,7 @@ void pump();
 void on_frame(const uint8_t *f, size_t n);
 
 // Ends the flash. A failure resets the loader first if it answered.
-void finish(bool ok, const std::string &why = "");
+void finish(bool ok, const std::string &why = "", bool again = true);  // again: trying the same file again may work
 
 void enter_phase(Phase p);
 
