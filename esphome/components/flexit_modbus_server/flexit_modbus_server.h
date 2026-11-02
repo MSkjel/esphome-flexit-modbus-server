@@ -172,6 +172,14 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
   float read_holding_register_temperature(uint16_t reg) {
     return static_cast<int16_t>(mb_.getHoldingRegister(reg)) / 10.0f;
   }
+  /// One of the unit's temperature sensors in C, NAN if none is fitted: it reads past what a sensor can, or its
+  /// setting says it's off
+  float read_sensor_temperature(uint16_t reg);
+  /// We have the CX60's value of a setting, from flash or because it wrote it since
+  bool setting_known(uint16_t reg) const {
+    int i = slot_(reg);
+    return i >= 0 && known_[i / 32] & (1u << (i % 32));
+  }
   /// A runtime counter in hours, from its high word and the low word after it. NAN until it's known.
   float read_holding_register_hours(uint16_t high_reg);
 
@@ -397,10 +405,11 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
 
   ESPPreferenceObject settings_pref_;
   SavedSettings saved_{};
-  bool settings_dirty_{false};                  // save it
-  bool sync_pending_{false};                    // saved, the flash write is still to come, see sync_flash_()
-  uint32_t sync_pending_ms_{0}, synced_ms_{0};  // since when, and the last flash write
-  bool hold_unsynced_{false};                   // a held bit flash doesn't have yet
+  uint32_t known_[(NUM_SAVED_REGISTERS + 31) / 32]{};  // see setting_known()
+  bool settings_dirty_{false};                         // save it
+  bool sync_pending_{false};                           // saved, the flash write is still to come, see sync_flash_()
+  uint32_t sync_pending_ms_{0}, synced_ms_{0};         // since when, and the last flash write
+  bool hold_unsynced_{false};                          // a held bit flash doesn't have yet
   uint32_t coil_waits_[(NUM_SAVED_REGISTERS + 31) / 32]{};  // temporary values the CX60 gets once flash has it
   static constexpr uint32_t SYNC_FALLBACK_MS = 3000;        // written without a status broadcast after this long
   static constexpr uint32_t SYNC_INTERVAL_MS = 60000;       // ESPHome's own saves, flash_write_interval's default

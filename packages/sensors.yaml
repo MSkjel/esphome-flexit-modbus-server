@@ -70,7 +70,7 @@ sensor:
     lambda: |-
       if (!id(server)->fresh())
         return NAN;
-      return id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_SUPPLY_AIR);
+      return id(server)->read_sensor_temperature(flexit_modbus_server::REG_TEMPERATURE_SUPPLY_AIR);
 
   - <<: *air_temperature
     id: extract_air_temperature
@@ -78,7 +78,7 @@ sensor:
     lambda: |-
       if (!id(server)->fresh())
         return NAN;
-      return id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_EXTRACT_AIR);
+      return id(server)->read_sensor_temperature(flexit_modbus_server::REG_TEMPERATURE_EXTRACT_AIR);
 
   - <<: *air_temperature
     id: outdoor_air_temperature
@@ -86,7 +86,7 @@ sensor:
     lambda: |-
       if (!id(server)->fresh())
         return NAN;
-      return id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_OUTDOOR_AIR);
+      return id(server)->read_sensor_temperature(flexit_modbus_server::REG_TEMPERATURE_OUTDOOR_AIR);
 
   - platform: template
     id: return_water_temperature
@@ -98,7 +98,7 @@ sensor:
     lambda: |-
       if (!id(server)->fresh())
         return NAN;
-      return id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_RETURN_WATER);
+      return id(server)->read_sensor_temperature(flexit_modbus_server::REG_TEMPERATURE_RETURN_WATER);
 
   - <<: *percentage
     id: heating_percentage

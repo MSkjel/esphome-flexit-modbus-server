@@ -362,6 +362,7 @@ void FlexitModbusServer::restore_settings_() {
 
   // Only fills our local registers. Where the CX60 may still have a boost's value we send it the real one, the
   // coil makes it win over the settings the CX60 sends when it starts too.
+  memset(known_, 0xFF, sizeof known_);
   int i = 0;
   for (const auto &range : SETTINGS_RANGES) {
     for (int reg = range.start; reg < range.start + range.count; reg++, i++) {
@@ -460,6 +461,7 @@ void FlexitModbusServer::setting_written_(uint16_t reg, uint16_t before) {
   int i = slot_(reg);
   if (i < 0)
     return;
+  known_[i / 32] |= 1u << (i % 32);
   if (now != before)
     set_real_(i, reg, now);
   if (now == saved_.values[i])
@@ -612,6 +614,17 @@ void FlexitModbusServer::send_cmd(uint16_t reg, uint16_t value, bool temporary) 
   mb_.setCoil(reg, 1);
   if (i >= 0 && !temporary && (value != before || held_(i)))
     set_real_(i, reg, value);  // held until the CX60 has it
+}
+
+// The panel firmware's limits. An open input reads about -150 C.
+float FlexitModbusServer::read_sensor_temperature(uint16_t reg) {
+  int16_t v = static_cast<int16_t>(mb_.getHoldingRegister(reg));
+  uint16_t on = reg == REG_TEMPERATURE_EXTRACT_AIR    ? REG_CMD_SENSOR_EXTRACT_ENABLE
+                : reg == REG_TEMPERATURE_RETURN_WATER ? REG_CMD_SENSOR_RETURN_WATER_ENABLE
+                                                      : 0;
+  if (v < -600 || v > 1200 || (on && setting_known(on) && !real_value(on)))
+    return NAN;
+  return v / 10.0f;
 }
 
 uint16_t FlexitModbusServer::real_value(uint16_t reg) const {

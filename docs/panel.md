@@ -250,9 +250,12 @@ interval:
       - script.execute:
           id: panel_saver_text
           lines: !lambda |-
-            return {str_sprintf("%.1f °C", id(extract_air_temperature).state),
-                    str_sprintf("Outdoor %.1f °C", id(outdoor_air_temperature).state),
-                    str_sprintf("Supply %.1f °C", id(supply_air_temperature).state)};
+            // a blank line for a sensor that isn't fitted
+            auto temp = [](const char *label, float t) {
+              return std::isnan(t) ? std::string() : str_sprintf("%s%.1f °C", label, t);
+            };
+            return {temp("", id(extract_air_temperature).state), temp("Outdoor ", id(outdoor_air_temperature).state),
+                    temp("Supply ", id(supply_air_temperature).state)};
           sizes: [28, 16, 16]
 ```
 

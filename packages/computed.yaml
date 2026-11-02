@@ -41,9 +41,11 @@ sensor:
         return {};
       }
 
-      float supply = id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_SUPPLY_AIR);
-      float extract = id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_EXTRACT_AIR);
-      float outdoor = id(server)->read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_OUTDOOR_AIR);
+      float supply = id(server)->read_sensor_temperature(flexit_modbus_server::REG_TEMPERATURE_SUPPLY_AIR);
+      float extract = id(server)->read_sensor_temperature(flexit_modbus_server::REG_TEMPERATURE_EXTRACT_AIR);
+      float outdoor = id(server)->read_sensor_temperature(flexit_modbus_server::REG_TEMPERATURE_OUTDOOR_AIR);
+      if (std::isnan(supply) || std::isnan(extract) || std::isnan(outdoor))
+        return NAN;
 
       // Too little difference and the sensor error is bigger than what we measure
       if (extract - outdoor < 5.0f) {

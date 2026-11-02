@@ -1,6 +1,7 @@
 // Code for packages/summer_cooling.yaml
 #pragma once
 #include <algorithm>
+#include <cmath>
 #include "controls.h"
 
 namespace flexit::summer_cooling {
@@ -16,8 +17,8 @@ inline struct State {
 // every 30 s
 inline void tick() {
   auto &s = id(server);
-  const float inside = s.read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_EXTRACT_AIR);
-  const float outside = s.read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_OUTDOOR_AIR);
+  const float inside = s.read_sensor_temperature(flexit_modbus_server::REG_TEMPERATURE_EXTRACT_AIR);
+  const float outside = s.read_sensor_temperature(flexit_modbus_server::REG_TEMPERATURE_OUTDOOR_AIR);
   const float setpoint = s.read_holding_register_temperature(flexit_modbus_server::REG_TEMPERATURE_SETPOINT);
   const bool heating = s.read_holding_register(flexit_modbus_server::REG_PERCENTAGE_HEATING) != 0;
 
@@ -34,6 +35,9 @@ inline void tick() {
       state.boost.stop();
     } else if (heating) {
       ESP_LOGI(TAG, "Stopping, the heater is on");
+      state.boost.stop();
+    } else if (std::isnan(inside) || std::isnan(outside)) {
+      ESP_LOGI(TAG, "Stopping, no extract or outdoor air temperature");
       state.boost.stop();
     } else if (inside < setpoint) {
       ESP_LOGI(TAG, "Stopping, %.1f°C inside is under the setpoint (%.1f°C)", inside, setpoint);
