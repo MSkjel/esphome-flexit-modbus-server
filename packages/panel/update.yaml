@@ -54,6 +54,10 @@ button:
     entity_category: config
     icon: "mdi:cellphone-arrow-down"
     on_press:
+      - wait_until: &no_ask  # see picture_online.h's asking()
+          condition:
+            lambda: return !flexit::panel::picture::asking();
+          timeout: 1min
       - if:
           condition:
             lambda: return flexit::panel::update::can_start();
@@ -100,6 +104,7 @@ sensor:
 script:
   - id: panel_firmware_check
     then:
+      - wait_until: *no_ask
       - if:
           condition:
             lambda: return !flexit::panel::update::running();

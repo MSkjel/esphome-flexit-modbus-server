@@ -45,6 +45,7 @@ struct Online {
     int code = 0;
     size_t size = 0;
     std::string type;
+    uint32_t wait = 0;  // the wait before this ask, back if the answer is dropped
   } answer;
   enum { IDLE, ASKING, ANSWERED };
   std::atomic<int> asking{IDLE};
@@ -108,9 +109,25 @@ inline bool fits(const std::string &name, Online &o) {
 
 inline constexpr uint32_t ASK_STACK = 8192;  // for TLS's handshake, like met.h's request
 
+// A question to a server in its task, or a download on the loop, never both: http_request sets the task watchdog
+// back to its default when a request ends, which would cut short the longer one the other has
+inline bool asking() {
+  for (auto &it : online)
+    if (it.second->asking == Online::ASKING)
+      return true;
+  return false;
+}
+inline bool downloading() {
+  for (auto &it : online)
+    if (it.second->busy())
+      return true;
+  return false;
+}
+
 inline void ask(Online &o) {
   o.answer.code = o.head(o.answer.url, o.answer.size, o.answer.type);
   o.asking.store(Online::ANSWERED);  // o.answer is the loop's from here on
+  requests--;
 }
 
 inline void ask_task(void *arg) {
@@ -121,15 +138,19 @@ inline void ask_task(void *arg) {
 // Asks the server about the file, and refresh() starts the download once it has answered, if it fits. The wait
 // before size() tries again doubles until one comes.
 inline void download(const std::string &name, Online &o) {
+  if (!o.busy() && downloading())  // another one's, asked once it's done
+    return;
   o.fetched = millis();
   if (o.busy() || o.asking != Online::IDLE)  // the last one still runs, no need to ask the server
     return;
+  o.answer.wait = o.wait;
   o.wait = o.wait ? std::min<uint32_t>(2 * o.wait, 30 * 60000) : 30000;
   o.at = millis() + o.wait;
   if (name == S.want)
     S.waiting = "asking the server about it";
   o.answer.url = o.url;
   o.asking.store(Online::ASKING);
+  requests++;
   if (xTaskCreate(ask_task, "picture", ASK_STACK, &o, 1, nullptr) != pdPASS)
     ask(o);  // no RAM for its stack, so it holds up the loop
 }
@@ -217,11 +238,7 @@ template<typename Img> void online_url(const std::string &name, Img &&image, con
 
 // Whether a download can start now: right after the CX60's status broadcast, with most of a cycle before the next
 // one. The link has sent in the window after it by then, in the same read. Any time when the bus can't tell.
-inline constexpr uint32_t QUIET_AHEAD_US = 80000;
-inline bool quiet_ahead() {
-  uint32_t until = id(server).until_status_end_us();
-  return until == UINT32_MAX || until >= QUIET_AHEAD_US;
-}
+inline bool quiet_ahead() { return quiet_us() >= QUIET_LONG_US; }
 
 // A download starts once the server has answered about it, and the shown online picture downloads again every
 // `every`. panel.h calls it before loop().
@@ -232,8 +249,9 @@ inline void refresh() {
       continue;
     if (it.first != S.want) {
       o.asking.store(Online::IDLE);  // picked away meanwhile, asked again right away once it's shown
+      o.wait = o.answer.wait;
       o.at = millis();
-    } else if (quiet_ahead() && (!answered(it.first, o) || S.phase != IDLE)) {
+    } else if (quiet_ahead() && !asking() && (!answered(it.first, o) || S.phase != IDLE)) {
       status(S.want + ": " + S.waiting);  // a shown one stays while the next downloads
     }
   }

@@ -108,8 +108,8 @@ struct Work {
   std::vector<uint8_t> lut;                 // colour at 4 bits per channel -> palette index, 0xFF until looked up
   std::vector<uint32_t> enc, tok;           // pdeflate's work for a frame, see pdeflate_work_t
   std::vector<uint16_t> rest;
-  int colours = 0;         // in the palette
-  uint32_t record_us = 0;  // how long the last record took
+  int colours = 0;                  // in the palette
+  uint32_t record_us = UINT32_MAX;  // what a record takes, as fits() has it
 };
 inline Work W;
 
@@ -391,8 +391,7 @@ inline bool start() {
   return true;
 }
 
-// Counts the colours of a row or a few, and at the end of a frame its hash. After the last frame, builds the
-// palette.
+// Counts the colours of a row or a few, and at the end of a frame its hash
 inline void count() {
   Anim &a = *W.a;
   uint32_t h = W.sum;
@@ -411,8 +410,12 @@ inline void count() {
   W.y = 0;
   W.hash.push_back(W.sum);
   W.sum = FNV_START;
-  if (++W.f < a.src->frames)
-    return;
+  W.f++;
+}
+
+// After the last frame is counted: the palette, at once, and the RAM to make the frames
+inline void palette() {
+  Anim &a = *W.a;
   int n = a.src->frames;
   W.frames = n;
   const std::vector<uint16_t> &d = a.src->delays;
@@ -426,6 +429,7 @@ inline void count() {
   W.colours = median_cut(W.hist, W.any_transp ? 15 : 16, a.pal, bins);
   a.transp = W.any_transp ? 15 : ANIM_OPAQUE;
   drop(W.hist);
+  drop(bins);                // the lut takes their place, so has_ram()'s peak holds
   W.lut.assign(BINS, 0xFF);  // filled as make() meets the colours
   a.data.clear();
   a.data.reserve(data_max());  // so it never moves
@@ -436,7 +440,7 @@ inline void count() {
   W.rest.resize((PDEFLATE_REST(a.frame_bytes()) + 1) / 2);
   W.f = 0;
   W.last = 0;
-  W.record_us = 0;
+  W.record_us = UINT32_MAX;
   W.phase = MAKE;
 }
 
@@ -536,9 +540,9 @@ inline bool make(uint32_t deadline_us, bool fresh) {
     }
     return true;
   }
-  uint32_t t0 = micros();
-  if (!fresh && (int32_t) (deadline_us - t0) < (int32_t) W.record_us)
+  if (!fits(deadline_us, W.record_us, fresh))
     return false;
+  uint32_t t0 = micros();
   W.y = 0;
   size_t left = room();
   bool ok = record(W.f ? &W.prev : nullptr, W.frame, frame_ms(*a.src, W.f));
@@ -550,7 +554,8 @@ inline bool make(uint32_t deadline_us, bool fresh) {
     ok = record(&W.prev, W.first, frame_ms(*a.src, 0), true);
   if (!ok || last || a.frame_bytes() + a.data.size() > left)
     made(ok, left);
-  W.record_us = micros() - t0;
+  uint32_t us = micros() - t0;  // a frame that changed little goes quicker, the next may not
+  W.record_us = W.record_us == UINT32_MAX ? us : std::max(us, W.record_us / 4 * 3);
   return true;
 }
 
@@ -1075,8 +1080,10 @@ inline void loop(uint32_t deadline_us) {
     if (W.phase == IDLE)
       return;
   }
-  while (W.phase == COUNT && before(deadline_us))
+  while (W.phase == COUNT && W.f < W.a->src->frames && before(deadline_us))
     count();
+  if (W.phase == COUNT && W.f == W.a->src->frames && fits(deadline_us, UINT32_MAX, true))
+    palette();
   for (bool fresh = true; W.phase == MAKE && before(deadline_us) && make(deadline_us, fresh); fresh = false) {
   }
   if (W.phase == SEND)

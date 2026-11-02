@@ -196,18 +196,28 @@ inline void finish() {
   built = true;
 }
 
-inline constexpr int COUNT_ROWS = 8;  // rows prepare() counts between looks at the time
+inline constexpr int COUNT_ROWS = 8;    // rows prepare() counts between looks at the time
+inline uint32_t begin_us = UINT32_MAX;  // what begin() took, as fits() has it
 
 // picture.h's prepare: the scene for now built, then its colours counted a few rows at a time until deadline_us.
 // True once there's nothing more to do now, built or not to be built yet, which draw() then says.
 inline bool prepare(uint32_t deadline_us) {
-  if (built || (!counting && !begin()))
+  if (built)
     return true;
-  while (!drawing->colours.count(drawing->scene, COUNT_ROWS))
-    if (!before(deadline_us))
+  if (!counting) {
+    if (!fits(deadline_us, begin_us, true))
       return false;
-  finish();
-  return true;
+    uint32_t t0 = micros();
+    if (!begin())
+      return true;
+    begin_us = micros() - t0;
+  }
+  while (before(deadline_us))
+    if (drawing->colours.count(drawing->scene, COUNT_ROWS)) {
+      finish();
+      return true;
+    }
+  return false;
 }
 
 // The scene for now, all of it at once if prepare() hasn't. False without the time or the RAM, picture.h asks
@@ -390,6 +400,7 @@ inline void request(void *arg) {
   }
   f.stack_left = uxTaskGetStackHighWaterMark(nullptr);
   fetch_done.store(true);  // f is the loop's from here on
+  requests--;
   vTaskDelete(nullptr);
 }
 
@@ -405,8 +416,10 @@ inline void fetch() {
     f->timeout_ms = timeout_ms;
     fetch_done.store(false);
     fetching = f;
+    requests++;
     if (xTaskCreate(request, "met", STACK, f, 1, nullptr) == pdPASS)
       return;
+    requests--;
     fetching = nullptr;
     f->~Fetch();
     ram.deallocate(f, 1);

@@ -101,6 +101,7 @@ struct State {
   uint32_t retry_at = 0, piece_at = 0, piece_len = 0;  // the piece's bytes in made.data
   std::vector<uint32_t> hist;                          // pixel count per colour, at 4 bits per channel
   Cut cut;                                             // the 16 colours from it
+  uint32_t split_us = UINT32_MAX;                      // what the last split took, as fits() has it
   Judge judge;                                         // whether the panel's palette can stay
   std::vector<Job> jobs;
   std::vector<uint8_t> lut;  // colour at 4 bits per channel -> palette index while mapping, 0xFF until looked up
@@ -288,6 +289,7 @@ inline void count(uint32_t deadline_us) {
   if (S.y < S.made.h)
     return;
   S.cut.start(S.hist, 16);
+  S.split_us = UINT32_MAX;
   S.phase = CUT;
 }
 
@@ -310,8 +312,11 @@ inline void mapping() {
 // The 16 colours, a split at a time. Then the panel's palette is judged if it has this picture, so it can stay
 // and only the changed rows go.
 inline void cut(uint32_t deadline_us) {
-  while (!S.cut.done() && before(deadline_us))
-    S.cut.split(S.hist);
+  for (bool first = true; !S.cut.done() && fits(deadline_us, S.split_us, first); first = false) {
+    uint32_t t0 = micros();
+    S.cut.split(S.hist);  // a sort of the box's colours, the first one all of them
+    S.split_us = micros() - t0;
+  }
   if (!S.cut.done())
     return;
   S.cut.palette(S.hist, S.made.pal);
