@@ -393,8 +393,8 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
     slot.fill(-1);
     int16_t i = 0;
     for (const auto &range : SETTINGS_RANGES)
-      for (uint16_t reg = range.start; reg < range.start + range.count; reg++)
-        slot[reg] = i++;
+      for (uint16_t k = 0; k < range.count; k++)
+        slot[range.start + k] = i++;
     return slot;
   }();
 
