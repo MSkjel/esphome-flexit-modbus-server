@@ -169,7 +169,9 @@ struct Cloud {
   uint8_t n;
 };
 
-// A one-colour bitmap. Layer 0 is drawn in the sky behind the ground, 1 in front of it, 2 on top of everything.
+// A one-colour bitmap. Layer 0 is drawn in the sky behind the ground, ON_WATER on the sea behind the middle land and
+// what stands on it, 1 in front of the ground, 2 on top of everything.
+inline constexpr int ON_WATER = 3;
 struct Sprite {
   int16_t x, y;
   uint8_t w, h;                  // at most 64 by 24

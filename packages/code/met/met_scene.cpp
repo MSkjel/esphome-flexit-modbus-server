@@ -785,15 +785,15 @@ static void coast(Scene &s, const Now &n, Rng &h) {
     box(s, LH_X - 1, s.lh_y - 29, 3, 3, 2, WARM_LIGHT);
   for (int k = 0; k < 2; k++) {  // skerries
     int x = k ? h.in(140, 215) : h.in(20, 90);
-    blob(s, x, h.in(170, 178), h.in(4, 7), h.in(1, 2), 1, s.rgb[C_HILL + 1]);
+    blob(s, x, h.in(170, 178), h.in(4, 7), h.in(1, 2), ON_WATER, s.rgb[C_HILL + 1]);
   }
   int bx = h.in(120, 225), by = h.in(168, 176);  // in any weather, so the trees after it stay put
   s.boat = {(int16_t) bx, (int16_t) by};
   if (n.sun.el > 0 && n.wind < 10 && !n.rain && !n.snow && !n.thunder) {
     s.tag = L_BOAT;
-    box(s, bx - 5, by - 2, 11, 3, 1, s.rgb[C_HILL + 1]);
-    box(s, bx, by - 16, 1, 14, 1, s.rgb[C_HILL + 1]);
-    Sprite *sail = sprite(s, bx + 1, by - 15, 8, 12, 1, s.rgb[C_LH]);  // white as the lighthouse and the waves
+    box(s, bx - 5, by - 2, 11, 3, ON_WATER, s.rgb[C_HILL + 1]);
+    box(s, bx, by - 16, 1, 14, ON_WATER, s.rgb[C_HILL + 1]);
+    Sprite *sail = sprite(s, bx + 1, by - 15, 8, 12, ON_WATER, s.rgb[C_LH]);  // white as the lighthouse and the waves
     for (int r = 0; r < 12; r++)
       for (int c = 0; c < r * 8 / 12; c++)
         sprite_set(sail, c, r);
@@ -871,6 +871,8 @@ static void city(Scene &s, const Now &n, Rng &h) {
 static void sea(Scene &s, const Now &n) {
   const Weather &w = n.w;
   s.rgb[C_SEA] = mix(mix(0x0C1C30, 0x2C5C8C, n.light), s.rgb[C_SKY + 4], 0.35f);
+  if (s.rgb[C_SEA] == s.rgb[C_HILL + 1])  // a cloudy night rounds both the same, a step bluer keeps the shore
+    s.rgb[C_SEA] += 17;
   s.rgb[C_WAVE] = n.o.ground == G_MOUNTAINS ? s.rgb[C_SNOWCAP] : s.rgb[C_LH];
   Rng wv{(uint32_t) (n.t / 3600) * 7919u + 11};  // new waves each hour
   s.nwaves = std::min((int) std::size(s.wave_x), 6 + (int) (w.wind * 5));

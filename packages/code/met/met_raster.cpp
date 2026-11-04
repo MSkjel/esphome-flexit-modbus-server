@@ -333,6 +333,7 @@ void row(const Scene &s, int y, uint8_t *out) {
   hill_row(s, y, out, 0);
   sea_row(s, y, out);
   fog_row(s, y, out, 0);
+  sprites(s, y, out, ON_WATER);
   hill_row(s, y, out, 1);
   bolt_row(s, y, out);  // behind the town and the land it strikes
   city_row(s, y, out);
