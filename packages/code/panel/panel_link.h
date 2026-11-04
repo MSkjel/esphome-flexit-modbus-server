@@ -62,9 +62,12 @@ inline void log_refusals(bool was_refused, bool was_no_gaps, bool answered) {
 
 inline void (*got_shot)(const uint8_t *b, int n);  // screenshot.h's, for the tiles
 
-// pbulk callback, queues each message from the panel as a number. A screenshot's tiles go straight on as they are.
+// pbulk callback, queues each message from the panel as a number. A screenshot's tiles go straight on as they are,
+// and a debug build's lines to the log.
 inline void got(void *, uint16_t key, const uint8_t *b, int n) {
-  if (key != PBULK_DATA_KEY)
+  if (key == K_LOG)
+    ESP_LOGI("panel", "%.*s", n, (const char *) b);
+  else if (key != PBULK_DATA_KEY)
     in.emplace_back(key, plink_number(b, n));
   else if (got_shot)
     got_shot(b, n);

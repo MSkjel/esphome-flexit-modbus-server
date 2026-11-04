@@ -11,6 +11,7 @@
 //   0x120..0x13F  screensaver animations
 //   0x140..0x14F  screenshots
 //   0x150..0x15F  the screensaver's lines
+//   0x160..0x16F  debugging
 //   0x200..0x3FF  ESP items, 0x40 keys for each kind
 //
 // Copied into esphome-flexit-modbus-server by make -C sim esp_sync, edit it here.
@@ -72,6 +73,22 @@ enum { PIC_PATCH_Y = 1, PIC_PATCH_COUNT = 3, PIC_PATCH_SIZE = 5, PIC_PATCH_HEAD 
 #define K_PIC_END 0x103    // plink_crc32 of the size bytes of DATA
 #define K_PIC_ACK 0x104    // panel -> ESP: status (PIC_*) << 24 | id << 16 | bytes received
 #define K_PIC_CLEAR 0x105  // forget the picture
+// PART, a part of the picture in front of the places farther than it, like a flagpole the boats go behind: part
+// (0..PIC_PARTS - 1), x0, y0, x1, y1 (2 each, signed, x1 and y1 just past it) on the screen like a place's x and y,
+// colours (2, a bit for each of the picture's that make the part, PIC_ALL_COLOURS for all it covers, the only way
+// for a JPEG), then depth, see K_ANIM_DEPTH. An empty one drops the part, BEGIN and CLEAR all of them.
+#define K_PIC_PART 0x106
+enum {
+  PIC_PART_X0 = 1,
+  PIC_PART_Y0 = 3,
+  PIC_PART_X1 = 5,
+  PIC_PART_Y1 = 7,
+  PIC_PART_COLOURS = 9,
+  PIC_PART_DEPTH = 11,
+  PIC_PART_LEN
+};
+#define PIC_PARTS 10
+#define PIC_ALL_COLOURS 0xFFFF
 
 #define PIC_POOL 14336  // panel memory for a picture, plus room behind it for a patch while it comes in
 #define PIC_MAX_W 320   // the screen, the biggest picture or animation
@@ -112,7 +129,7 @@ enum { ANIM_RECORD_DELAY, ANIM_RECORD_X, ANIM_RECORD_Y, ANIM_RECORD_W, ANIM_RECO
 #define ANIM_DELAY_MAX 255
 #define ANIM_FRAME_MIN_MS 40
 #define K_ANIM_CLEAR 0x121  // a slot, ANIM_PLACE_BIT | a place, or ANIM_ALL, | ms << 8 to fade out over ms first
-// The rest up to ROUNDS go to anim_msg(). FRAMES is for a slot, the others for a place, ignored without it.
+// The rest up to DEPTH go to anim_msg(). FRAMES is for a slot, the others for a place, ignored without it.
 #define ANIM_MSG_PLACE 0
 #define K_ANIM_FRAMES 0x122  // slot, frame rate (2, percent of the records' times, 0..ANIM_RATE_MAX, 0 = paused)
 enum { ANIM_FRAMES_SLOT, ANIM_FRAMES_RATE, ANIM_FRAMES_LEN = 3 };
@@ -208,7 +225,8 @@ enum {
 #define ANIM_WAVE_RANDOM 4     // each way to anywhere between low and high
 // MAP: place, channel (turn, size, opacity or speed), its value at the AREA's left, right, top and bottom (2 each,
 // signed). The channel follows where its middle is across the area, an offset on turn and percent on the others,
-// the two ways added or multiplied. The places it makes bigger are nearer, and drawn in front.
+// the two ways added or multiplied. The places it makes bigger are nearer, and drawn in front of the others at their
+// depth.
 #define K_ANIM_MAP 0x12B
 enum { ANIM_MAP_CHANNEL = 1, ANIM_MAP_VALUES, ANIM_MAP_LEN = 10 };  // VALUES: left, right, top, bottom
 // ROUNDS: place, rounds (2), fade (2), tag. Plays to the end of rounds rounds, then fades out over fade ms and goes,
@@ -216,6 +234,11 @@ enum { ANIM_MAP_CHANNEL = 1, ANIM_MAP_VALUES, ANIM_MAP_LEN = 10 };  // VALUES: l
 #define K_ANIM_ROUNDS 0x12C
 enum { ANIM_ROUNDS_COUNT = 1, ANIM_ROUNDS_FADE = 3, ANIM_ROUNDS_TAG = 5, ANIM_ROUNDS_LEN };
 #define K_ANIM_GONE 0x12D  // panel -> ESP: place | tag << 8 of one that went after its rounds
+// DEPTH: place, depth, 0 the farthest. PLACE starts it at ANIM_NEAREST. A place is drawn in front of those at less
+// depth, and behind each part of the picture at more, see K_PIC_PART.
+#define K_ANIM_DEPTH 0x12E
+enum { ANIM_DEPTH_DEPTH = 1, ANIM_DEPTH_LEN };
+#define ANIM_NEAREST 255
 #define ANIM_OPAQUE 16
 #define ANIM_SLOTS 6
 #define ANIM_PLACES 8
@@ -245,6 +268,9 @@ enum { SHOT_TILE_NUM, SHOT_TILE_LEN, SHOT_TILE_HEAD = 3 };
 // fit under those before them. The panel forgets them at a HELLO and shows the temperatures while the ESP is away.
 #define K_SAVER_LINE 0x150
 #define SAVER_LINES 4
+
+// ---- Debugging
+#define K_LOG 0x160  // panel -> ESP: a line of text for the ESP's log, from a debug build like make -C hw PROF=1
 
 // ---- ESP items: anything the ESP adds to the panel, numbered as it likes. Each is on the smart home or comfort
 // page. Any item can be a dashboard tile, and sensors can keep a 24-hour trend.

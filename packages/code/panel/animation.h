@@ -58,10 +58,11 @@ struct Copy {
   int16_t x = 0, y = 0;
   bool own = false;  // a frame of its own, out of step with the others
   uint8_t start = 0;
-  int fade = -1;        // ms it fades in and out, -1 for the animation's
-  std::string doing;    // how it moves, for the status
-  uint16_t rounds = 0;  // to the end of, 0 = on and on
-  uint8_t tag = 0;      // of its ANIM_ROUNDS, the panel's ANIM_GONE has it
+  uint8_t depth = ANIM_NEAREST;  // K_ANIM_DEPTH's, sent with its PLACE
+  int fade = -1;                 // ms it fades in and out, -1 for the animation's
+  std::string doing;             // how it moves, for the status
+  uint16_t rounds = 0;           // to the end of, 0 = on and on
+  uint8_t tag = 0;               // of its ANIM_ROUNDS, the panel's ANIM_GONE has it
   // What it was told since it was placed, the last of each kind and channel, sent again after a panel restart
   struct Told {
     uint16_t key;
@@ -334,6 +335,13 @@ inline bool own_room(const Anim &a, const Copy *c) {
 
 inline int fade_of(const Anim &a, const Copy &c) { return c.fade >= 0 ? c.fade : a.src->fade_ms; }
 
+inline void send_depth(const Copy &c) {
+  uint8_t m[ANIM_DEPTH_LEN];
+  m[ANIM_MSG_PLACE] = c.place;
+  m[ANIM_DEPTH_DEPTH] = c.depth;
+  link::send(K_ANIM_DEPTH, m, sizeof m);
+}
+
 // Puts a copy on the panel with what it was told
 inline void send_place(Anim &a, Copy &c) {
   uint8_t m[ANIM_PLACE_LEN];
@@ -348,6 +356,8 @@ inline void send_place(Anim &a, Copy &c) {
   m[ANIM_PLACE_START] = c.start;
   plink_put16(m + ANIM_PLACE_FADE, (uint16_t) fade_of(a, c));
   link::send(K_ANIM_PLACE, m, sizeof m);
+  if (c.depth != ANIM_NEAREST)
+    send_depth(c);
   c.placed = true;
   for (auto &t : c.told)
     send_told(t);
@@ -646,13 +656,13 @@ inline int free_place(const std::string &name) {
   return -1;
 }
 
-// Copy i of a, made if it wasn't there. nullptr if the panel has no place left for it.
-inline Copy *copy_of(Anim &a, int i) {
+// Copy i of a, made if it wasn't there, at place at if that's free. nullptr if the panel has no place left for it.
+inline Copy *copy_of(Anim &a, int i, int at = -1) {
   if ((int) a.copies.size() <= i)
     a.copies.resize(i + 1);
   Copy &c = a.copies[i];
   if (!c.used) {
-    int p = free_place(a.name);
+    int p = at >= 0 ? at : free_place(a.name);
     if (p < 0)
       return nullptr;
     c = Copy();
@@ -773,25 +783,27 @@ inline void switched_on(const std::string &name) {
 
 // panel_place_animation: copy i of name at x, y, which can be off the screen, own = a frame of its own started start
 // frames in. Shows the animation if it isn't yet, a failed one is tried again. fade: ms it fades in and out, -1
-// for the animation's.
-inline void place(const std::string &name, int i, int x, int y, bool own, int start, int fade = -1) {
+// for the animation's. depth: K_ANIM_DEPTH's. at: the place it takes if it's free. False if it isn't placed.
+inline bool place(const std::string &name, int i, int x, int y, bool own, int start, int fade = -1,
+                  uint8_t depth = ANIM_NEAREST, int at = -1) {
   if (i < 0 || i >= ANIM_PLACES) {
     ESP_LOGW("panel", "Animation %s: copy %d isn't one of 0 to %d", name.c_str(), i, ANIM_PLACES - 1);
-    return;
+    return false;
   }
   Anim *a = want(name);
   if (!a)
-    return;
+    return false;
   if (own && a->state == SENT && !own_room(*a, i < (int) a->copies.size() ? &a->copies[i] : nullptr))
-    return;
-  Copy *c = copy_of(*a, i);
+    return false;
+  Copy *c = copy_of(*a, i, at);
   if (!c)
-    return;
+    return false;
   c->x = clamp16(x);
   c->y = clamp16(y);
   c->own = own;
   c->fade = std::min(65535, fade);
   c->start = (uint8_t) std::clamp(start, 0, 255);
+  c->depth = depth;
   c->doing.clear();
   c->told.clear();
   c->rounds = 0;
@@ -799,6 +811,7 @@ inline void place(const std::string &name, int i, int x, int y, bool own, int st
   if (a->state == SENT)
     send_place(*a, *c);
   status(shown());
+  return true;
 }
 
 // Copy i of name's animation and the animation, nulls if it isn't shown. what is the action, panel_<what>_animation,
@@ -823,6 +836,36 @@ inline void remove(const std::string &name, int i, int fade = -1) {
     send_clear(ANIM_PLACE_BIT | c->place, fade >= 0 ? std::min(65535, fade) : fade_of(*a, *c));
   *c = Copy();
   status(shown());
+}
+
+// Copy i of name goes to depth, K_ANIM_DEPTH's
+inline void depth(const std::string &name, int i, uint8_t d) {
+  auto [a, c] = copy_for(name, i);
+  if (!c || c->depth == d)
+    return;
+  c->depth = d;
+  if (a->state == SENT && c->placed)
+    send_depth(*c);
+}
+
+// Copy i of from becomes copy i of to at x, y, at its depth. When both are on the panel to's PLACE goes over from's
+// place, so nothing shows between them, else from goes at once and to shows when it's in.
+inline void swap(const std::string &from, int i, const std::string &to, int x, int y, bool own, int start) {
+  auto [a, c] = copy_for(from, i);
+  Anim *b = want(to);
+  if (!c || !b) {
+    remove(from, i, 0);
+    place(to, i, x, y, own, start, 0);
+    return;
+  }
+  Copy was = *c;
+  bool over = a->state == SENT && was.placed && b->state == SENT && !copy_for(to, i).second;
+  if (over)
+    *c = Copy();
+  else
+    remove(from, i, 0);
+  if (!place(to, i, x, y, own, start, 0, was.depth, over ? was.place : -1) && over)
+    send_clear(ANIM_PLACE_BIT | was.place, 0);
 }
 
 // Which of names s is, in any case, or -1 with a warning from panel_<what>_animation

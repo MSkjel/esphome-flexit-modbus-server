@@ -142,13 +142,13 @@ static void put_value(pjpeg_t *j, pjpeg_out_t *o, int v, int n) { put(j, o, (uns
 static void code(pjpeg_t *j, pjpeg_out_t *o, uint32_t c) { put(j, o, c & 0xFFFF, (int) (c >> 16)); }  // a *_CODES
 
 // One block's coefficients f quantized for output o, in zigzag order, and Huffman coded
-static void quantize(pjpeg_t *j, pjpeg_out_t *o, const int32_t *f, int comp, int weight) {
+static void quantize(pjpeg_t *j, pjpeg_out_t *o, const int16_t *f, int comp, int weight) {
   const uint8_t *q = o->q[comp ? 1 : 0];
-  int z[64];
+  int16_t z[64];  // 11 bits at most
   uint32_t err = 0;
   for (int k = 0; k < 64; k++) {
     int n = ZIGZAG[k], d = q[n] * 16, v = f[n];
-    z[k] = v <= -d / 2 ? -((d / 2 - v) / d) : v >= d / 2 ? (v + d / 2) / d : 0;  // rounded half away from zero
+    z[k] = (int16_t) (v <= -d / 2 ? -((d / 2 - v) / d) : v >= d / 2 ? (v + d / 2) / d : 0);  // half away from 0
     if (k && z[k] >= -j->drop && z[k] <= j->drop)
       z[k] = 0;  // a tile that has to fit, see pjpeg_tile()
     int e = v - z[k] * d;
@@ -182,7 +182,8 @@ static void quantize(pjpeg_t *j, pjpeg_out_t *o, const int32_t *f, int comp, int
 // One 8x8 block of level-shifted samples in 16ths, coded for each output. comp is 0 Y, 1 Cb, 2 Cr. weight is how
 // many pixels a sample stands for.
 static void block(pjpeg_t *j, const int16_t *in, int comp, int weight) {
-  int32_t t[64], f[64];
+  int32_t t[64];
+  int16_t f[64];  // within +-16380
   for (int y = 0; y < 8; y++)
     for (int u = 0; u < 8; u++) {
       int32_t s = 0;
@@ -194,8 +195,8 @@ static void block(pjpeg_t *j, const int16_t *in, int comp, int weight) {
     for (int u = 0; u < 8; u++) {
       int32_t s = 0;
       for (int y = 0; y < 8; y++)
-        s += C[v][y] * t[y * 8 + u];         // under 2^31: 2.83 * 8192 * 46341 at most
-      f[v * 8 + u] = (s + (1 << 15)) >> 16;  // in 16ths
+        s += C[v][y] * t[y * 8 + u];                     // under 2^31: 2.83 * 8192 * 46341 at most
+      f[v * 8 + u] = (int16_t) ((s + (1 << 15)) >> 16);  // in 16ths
     }
   for (pjpeg_out_t *o = j->o; o < j->o + j->n; o++)
     quantize(j, o, f, comp, weight);
