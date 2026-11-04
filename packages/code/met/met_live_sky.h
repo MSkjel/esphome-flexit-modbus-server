@@ -23,8 +23,8 @@ struct CloudCost {
   int fifths, start;
 };
 inline constexpr CloudCost CIRRUS_COST = {5, 330}, CUMULUS_COST = {6, 210};
-// The flag next to the clouds, and the far gulls with the lower ones
-inline constexpr int FLAG_BYTES = 600, GULLS_FAR_BYTES = 100;
+// The flag next to the clouds
+inline constexpr int FLAG_BYTES = 600;
 // Widths of the aurora's patches on the high and the low ribbon, what fits the pool on every night
 inline constexpr int AUR_HIGH_W = 52, AUR_LOW_W = 72;
 
@@ -386,7 +386,7 @@ inline void starry_night(const Scene &s) {
   stars_turn(s);
   sometimes(minutes(5), minutes(1), shoot);
   bool cabin = s.cabin;
-  int y = std::min(s.cabin_y + 9, H - 6), stop = window_x(s) - 2;
+  int y = std::min(s.cabin_y + 6, H - 9), stop = window_x(s) - 2;
   visitors(minutes(8), minutes(1, 6), 2,
            [=](int k) -> uint32_t { return k ? (cabin ? fox_by(y, stop) : 0) : satellite(); });
 }
@@ -422,11 +422,10 @@ inline Frames cloud(const Scene &s, int i, int *x, int *y) {
   return cumulus_cloud(c.e, c.n, c.top, c.base, c.shade, s.rgb[C_LIT + l], s.rgb[C_SHADE + l]);
 }
 
-// Whether the high clouds, or the middle and low ones, fit the panel as an animation each, next to the flag and
-// the gulls.
+// Whether the high clouds, or the middle and low ones, fit the panel as an animation each, next to the flag.
 inline bool clouds_fit(const Scene &s, bool high) {
   bool flag = s.at.flag_up && s.pole_x >= 0;
-  int n = 0, bytes = (flag ? FLAG_BYTES : 0) + (high ? 0 : GULLS_FAR_BYTES);
+  int n = 0, bytes = flag ? FLAG_BYTES : 0;
   for (int i = 0; i < s.nclouds; i++)
     if (high_cloud(s, i) == high) {
       int x, y;
@@ -436,7 +435,7 @@ inline bool clouds_fit(const Scene &s, bool high) {
       bytes += frame * c.fifths / 5 + c.start;
       n++;
     }
-  return n <= 4 - flag - !high && bytes <= SKY_POOL;
+  return n <= 4 - flag && bytes <= SKY_POOL;
 }
 
 // The high clouds drift with the wind at 1 to 2 px/s, the higher ones slower, thinning and thickening on slow
@@ -458,18 +457,13 @@ inline void drift_clouds(const Scene &s, bool high) {
 }
 
 inline void high_clouds(const Scene &s) { drift_clouds(s, true); }
-
-// The clouds, and a gull or two far off
-inline void lower_clouds(const Scene &s) {
-  drift_clouds(s, false);
-  flock({}, {{(int) rnd(40, 280), HORIZON - 70, 2, 3, HORIZON - 100, HORIZON - 40},
-             {(int) rnd(40, 280), HORIZON - 50, 2, 3, HORIZON - 80, HORIZON - 25}});
-}
+inline void lower_clouds(const Scene &s) { drift_clouds(s, false); }
 
 // ---- the fog
 
 // Banks a little lighter than the scene's fog creep along its edges with the wind, the near ones bigger and
-// quicker, thickening and thinning on slow waves. Over the far hills, and the middle ones in thick fog.
+// quicker, thickening and thinning on slow waves. Over the far hills, and the middle ones in thick fog, behind what's
+// nearer.
 inline void valley_fog(const Scene &s) {
   uint32_t f = s.rgb[C_FOG];
   std::array<uint32_t, 3> cols = {mix(f, 0xFFFFFF, 0.35f), mix(f, 0xFFFFFF, 0.22f), mix(f, 0xFFFFFF, 0.1f)};
@@ -488,7 +482,7 @@ inline void valley_fog(const Scene &s) {
   for (int i = 0; i < 4; i++) {
     std::string name = i < 2 ? "fog0" : "fog1";
     int k = i % 2, h = i < 2 ? 12 : 9, y = (i < 2 && thick ? edge[1] : edge[0] + (i < 2) * 3) - h + 4;
-    place(name, k, AT[i] * W / 8 - (i < 2 ? 55 : 38), y);
+    place(name, k, AT[i] * W / 8 - (i < 2 ? 55 : 38), y, {.depth = i < 2 && thick ? D_MID_ON : D_SEA});
     if (k)
       flip(name, k, true, false);
     area(name, k, -130, 0, 450, H, "cross", "screen");

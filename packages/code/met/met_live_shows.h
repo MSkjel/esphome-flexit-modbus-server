@@ -89,7 +89,7 @@ inline const Show SHOWS[] = {
      [](const Scene &s) { return s.cabin && s.puffs; }},
     {"High clouds", L_CIRRUS | L_FLAG, high_clouds, nullptr, high_shapes,
      [](const Scene &s) { return !s.at.dark && has_clouds(s, true) && !has_clouds(s, false) && clouds_fit(s, true); }},
-    {"Drifting clouds", L_CLOUDS | L_BIRDS | L_FLAG, lower_clouds, nullptr, lower_shapes,
+    {"Drifting clouds", L_CLOUDS | L_FLAG, lower_clouds, nullptr, lower_shapes,
      [](const Scene &s) { return !s.at.dark && has_clouds(s, false) && clouds_fit(s, false); }},
     {"Gulls over the cabin", L_BIRDS | L_FLAG, gulls, nullptr, cabin_wind,
      [](const Scene &s) { return s.cabin && !s.at.dark; }},

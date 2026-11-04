@@ -343,7 +343,9 @@ when the heater is on. `The forecast hasn't changed (HTTP 304)` in the log is fi
 time: gulls over the cabin, rain and snow falling from under the clouds, the aurora glowing, a moose at dusk, the
 sailboat, the town's windows, the lights on the Christmas spruce, fireworks on New Year's Eve, the flag waving on
 flag days and more, some of them by chance now and then. Very seldom something stranger comes by. The picture
-leaves out what they draw. They take the panel's animations, so turn your other ones off with it.
+leaves out what they draw, and tells the panel what in it is nearer, so they go behind it where they should: the
+sailboat behind the point and the flagpole, a roe deer out of the forest from behind a spruce. Your own animations
+are always in front of all of it. They take the panel's animations, so turn your other ones off with it.
 
 ### Picture and animation actions
 

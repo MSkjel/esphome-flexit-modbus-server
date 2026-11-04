@@ -55,9 +55,10 @@ inline char url[128];
 inline double lat, lon;
 inline int timeout_ms;  // http_request's
 inline std::string name;
-inline bool with_forecast;  // the Panel Weather Forecast switch
-inline Options options;     // set from met.yaml
-inline uint32_t pal[16];    // the scene's colours, for picture.h
+inline bool with_forecast;    // the Panel Weather Forecast switch
+inline Options options;       // set from met.yaml
+inline uint32_t pal[16];      // the scene's colours, for picture.h
+inline picture::Parts parts;  // and its parts
 
 // name's index in names, for met.yaml's selects. 0 if it's none of them
 template<size_t N> int option_of(const char *const (&names)[N], const char *name) {
@@ -193,6 +194,7 @@ inline void finish() {
   drawing->colours.end(s, shown.name == name && shown.format == PIC_PALETTE ? shown.pal : nullptr);
   live::apply(s);
   memcpy(pal, s.pal, sizeof pal);
+  parts = parts_of(s);
   drawing->row_y = -1;
   counting = false;
   built = true;
@@ -486,6 +488,7 @@ inline void setup(double latitude, double longitude, const char *picture, const 
     if (drawing)
       row(drawing->scene, y, idx);
   };
+  s.parts = [] { return parts; };
   s.done = free_drawing;
   s.encoding = picture::encoding_of(encoding);
   s.quality = picture::quality_of(quality);

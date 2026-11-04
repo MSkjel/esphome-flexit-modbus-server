@@ -1,6 +1,7 @@
 // The scene drawn a row at a time, as indexes into its 16 colours. Plain C++ without ESPHome, see met_scene.h.
 #pragma once
 #include <cstdint>
+#include "../panel/picture_plan.h"
 #include "met_scene.h"
 
 namespace flexit::panel::met {
@@ -10,6 +11,12 @@ void row(const Scene &s, int y, uint8_t *out);
 
 // The colour slots row() may draw in this scene, a bit each. More than it does only costs a count.
 uint64_t drawn(const Scene &s);
+
+// The picture's parts, once palette() gave the colours their places: the land's layers and the sea, each one's colours
+// from its top row down, then the forest left of its edge, the cabin and the pole in front of what walks on the near
+// hill, and the flag or pennant on the pole. A colour that's also in something farther off, like the white a cloud
+// lends the cabin, is left out, so nothing goes behind the sky.
+picture::Parts parts_of(const Scene &s);
 
 // Gives each colour slot and sprite its place in the 16 colours. Should the scene have more, the one that's least
 // missed goes to the colour nearest it until there are 16. Not the sprites' or other small things', unless there's

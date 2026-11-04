@@ -50,43 +50,45 @@ Pos sun_at(double lat, double lon, uint32_t t);
 // phase 0 new, 0.25 first quarter, 0.5 full, 0.75 last quarter
 Pos moon_at(double lat, double lon, uint32_t t, float *phase);
 
-// Bright stars. ra in hours, dec in degrees, bright 1 is drawn bigger
+// Bright stars. ra in hours, dec in degrees, bright 1 is drawn bigger, fig the figure it's drawn with
 struct Star {
   float ra, dec;
-  uint8_t bright;
+  uint8_t bright, fig;
 };
 // clang-format off: laid out by hand
 inline constexpr Star STARS[] = {
-    // 0 Polaris
-    {2.530f, 89.26f, 0},
+    // 0 Polaris, figure 0 with Kochab
+    {2.530f, 89.26f, 0, 0},
     // 1-7 the Big Dipper
-    {11.062f, 61.75f, 1}, {11.031f, 56.38f, 0}, {11.897f, 53.69f, 0}, {12.257f, 57.03f, 0},
-    {12.900f, 55.96f, 1}, {13.399f, 54.93f, 0}, {13.792f, 49.31f, 1},
+    {11.062f, 61.75f, 1, 1}, {11.031f, 56.38f, 0, 1}, {11.897f, 53.69f, 0, 1}, {12.257f, 57.03f, 0, 1},
+    {12.900f, 55.96f, 1, 1}, {13.399f, 54.93f, 0, 1}, {13.792f, 49.31f, 1, 1},
     // 8-12 Cassiopeia
-    {0.153f, 59.15f, 0}, {0.675f, 56.54f, 1}, {0.945f, 60.72f, 0}, {1.430f, 60.24f, 0}, {1.907f, 63.67f, 0},
-    // 13 Vega, 14 Deneb, 15 Altair
-    {18.616f, 38.78f, 1}, {20.690f, 45.28f, 1}, {19.846f, 8.87f, 1},
+    {0.153f, 59.15f, 0, 2}, {0.675f, 56.54f, 1, 2}, {0.945f, 60.72f, 0, 2}, {1.430f, 60.24f, 0, 2},
+    {1.907f, 63.67f, 0, 2},
+    // 13 Vega, 14 Deneb with Cygnus, 15 Altair
+    {18.616f, 38.78f, 1, 3}, {20.690f, 45.28f, 1, 4}, {19.846f, 8.87f, 1, 5},
     // 16-19 Cygnus
-    {20.370f, 40.26f, 0}, {19.512f, 27.96f, 0}, {20.770f, 33.97f, 0}, {19.750f, 45.13f, 0},
-    // 20 Capella, 21 Aldebaran, 22 Pleiades
-    {5.278f, 45.998f, 1}, {4.599f, 16.51f, 1}, {3.790f, 24.10f, 0},
+    {20.370f, 40.26f, 0, 4}, {19.512f, 27.96f, 0, 4}, {20.770f, 33.97f, 0, 4}, {19.750f, 45.13f, 0, 4},
+    // 20 Capella with Elnath and Menkalinan, 21 Aldebaran, 22 Pleiades
+    {5.278f, 45.998f, 1, 6}, {4.599f, 16.51f, 1, 7}, {3.790f, 24.10f, 0, 7},
     // 23-26 Orion: Betelgeuse, Rigel, Bellatrix, Saiph
-    {5.919f, 7.41f, 1}, {5.242f, -8.20f, 1}, {5.419f, 6.35f, 0}, {5.796f, -9.67f, 0},
+    {5.919f, 7.41f, 1, 8}, {5.242f, -8.20f, 1, 8}, {5.419f, 6.35f, 0, 8}, {5.796f, -9.67f, 0, 8},
     // 27-29 Orion's belt
-    {5.679f, -1.94f, 0}, {5.604f, -1.20f, 0}, {5.533f, -0.30f, 0},
+    {5.679f, -1.94f, 0, 8}, {5.604f, -1.20f, 0, 8}, {5.533f, -0.30f, 0, 8},
     // 30 Sirius, 31 Procyon, 32 Castor, 33 Pollux
-    {6.752f, -16.72f, 1}, {7.655f, 5.22f, 1}, {7.577f, 31.89f, 0}, {7.755f, 28.03f, 1},
+    {6.752f, -16.72f, 1, 9}, {7.655f, 5.22f, 1, 10}, {7.577f, 31.89f, 0, 11}, {7.755f, 28.03f, 1, 11},
     // 34 Regulus, 35 Denebola, 36 Arcturus, 37 Spica
-    {10.139f, 11.97f, 1}, {11.818f, 14.57f, 0}, {14.261f, 19.18f, 1}, {13.420f, -11.16f, 1},
+    {10.139f, 11.97f, 1, 12}, {11.818f, 14.57f, 0, 12}, {14.261f, 19.18f, 1, 13}, {13.420f, -11.16f, 1, 14},
     // 38 Antares, 39 Mirfak, 40 Algol
-    {16.490f, -26.43f, 1}, {3.405f, 49.86f, 0}, {3.136f, 40.96f, 0},
-    // 41-43 Andromeda
-    {0.140f, 29.09f, 0}, {1.162f, 35.62f, 0}, {2.065f, 42.33f, 0},
+    {16.490f, -26.43f, 1, 15}, {3.405f, 49.86f, 0, 16}, {3.136f, 40.96f, 0, 16},
+    // 41-43 Andromeda, with Pegasus
+    {0.140f, 29.09f, 0, 17}, {1.162f, 35.62f, 0, 17}, {2.065f, 42.33f, 0, 17},
     // 44-46 Pegasus, with Alpheratz
-    {23.063f, 28.08f, 0}, {23.079f, 15.21f, 0}, {0.220f, 15.18f, 0},
-    // 47 Hamal, 48 Elnath, 49 Menkalinan, 50 Kochab
-    {2.120f, 23.46f, 0}, {5.438f, 28.61f, 0}, {5.992f, 44.95f, 0}, {14.845f, 74.16f, 0},
+    {23.063f, 28.08f, 0, 17}, {23.079f, 15.21f, 0, 17}, {0.220f, 15.18f, 0, 17},
+    // 47 Hamal, 48 Elnath and 49 Menkalinan with Capella, 50 Kochab with Polaris
+    {2.120f, 23.46f, 0, 18}, {5.438f, 28.61f, 0, 6}, {5.992f, 44.95f, 0, 6}, {14.845f, 74.16f, 0, 0},
 };
+inline constexpr int FIGURES = 19;
 // clang-format on
 
 }  // namespace flexit::panel::met
