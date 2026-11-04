@@ -141,18 +141,18 @@ inline void rare_off() {
 inline bool rare_room(uint32_t ms) {
   bool slot = false;
   int places = 0;
-  for (auto &a : anim::anims) {
+  for (auto &a : overlay::overlays) {
     if (a.name.empty()) {
       slot = true;
       continue;
     }
-    if (a.state != anim::SENT)
+    if (a.state != overlay::SENT)
       return false;
     for (auto &c : a.copies)
       places += c.used;
   }
-  if (!slot || places >= ANIM_PLACES || anim::W.phase != anim::IDLE ||
-      anim::used_by_others(nullptr) + RARE_BYTES > ANIM_POOL)
+  if (!slot || places >= OVERLAY_PLACES || overlay::W.phase != overlay::IDLE ||
+      overlay::used_by_others(nullptr) + RARE_BYTES > OVERLAY_POOL)
     return false;
   uint32_t end = millis() + ms;
   for (const Timer &t : R.timers)
@@ -166,10 +166,10 @@ inline bool rare_room(uint32_t ms) {
 inline void when_on(const std::string &n, std::function<void()> fn, uint32_t waited = 0) {
   if (R.rare != n)
     return;  // gone meanwhile
-  const anim::Anim *a = anim::find(key(n));
-  if (a && a->state == anim::SENT) {
+  const overlay::Overlay *a = overlay::find(key(n));
+  if (a && a->state == overlay::SENT) {
     fn();
-  } else if (!a || a->state == anim::FAILED || waited >= RARE_WAIT) {
+  } else if (!a || a->state == overlay::FAILED || waited >= RARE_WAIT) {
     rare_off();
   } else {
     later(STEP, [=] { when_on(n, fn, waited + STEP); });

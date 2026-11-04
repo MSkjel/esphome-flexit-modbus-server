@@ -8,7 +8,7 @@
 #include <functional>
 #include <map>
 #include <string>
-#include "animation.h"
+#include "overlay.h"
 #include "items.h"
 #include "panel_link.h"
 #include "picture.h"
@@ -151,7 +151,7 @@ inline void after_hello(bool panel_started) {
     saver_due[i] = !saver_lines[i].empty();  // the panel forgot them at the hello, an empty one is its gap
   items_hello();
   picture::restarted();
-  anim::restarted();
+  overlay::restarted();
   shot::restarted();
 }
 
@@ -216,9 +216,9 @@ inline void setup(uint8_t panel_address) {
   };
   h[K_PIC_ACK] = [](uint32_t v) {  // each picks out its own
     picture::ack(v);
-    anim::ack(v);
+    overlay::ack(v);
   };
-  h[K_ANIM_GONE] = anim::gone;
+  h[K_OVERLAY_GONE] = overlay::gone;
   h[K_SHOT_DONE] = shot::done;
   h[K_SETTINGS] = settings::got;
   for (int i = 0; i < N_ITEMS; i++)
@@ -348,7 +348,7 @@ inline void loop() {
   }
   picture::refresh();
   picture::loop(deadline_us);
-  anim::loop(deadline_us);
+  overlay::loop(deadline_us);
   shot::loop();
 }
 

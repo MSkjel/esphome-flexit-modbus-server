@@ -66,7 +66,7 @@ enum : uint16_t {
   L_ANTENNA = 1 << 11,  // its red light
   L_BOAT = 1 << 12,
 };
-// How far off things are, for the panel's K_PIC_PART and K_ANIM_DEPTH. The picture's parts are the land's layers,
+// How far off things are, for the panel's K_PIC_PART and K_OVERLAY_DEPTH. The picture's parts are the land's layers,
 // each in front of the animations farther off than it. An animation without a depth is in front of them all.
 enum Depth : uint8_t {
   D_SKY = 0,        // behind the land

@@ -1,7 +1,7 @@
-// Screensaver animations from animation.yaml. All frames share 16 colours, one transparent if any pixel is, and
-// each frame after the first is the deflated rectangle that changed. The panel keeps up to ANIM_SLOTS of them in
-// ANIM_POOL and shows each in up to ANIM_PLACES places, the copies of one in step unless a copy gets a frame of
-// its own.
+// Screensaver overlays: the animations from animation.yaml and the weather's. All frames share 16 colours, one
+// transparent if any pixel is, and each frame after the first is the deflated rectangle that changed. The panel keeps
+// up to OVERLAY_SLOTS of them in OVERLAY_POOL and shows each in up to OVERLAY_PLACES places, the copies of one in step
+// unless a copy gets a frame of its own.
 #pragma once
 #include <strings.h>
 #include <algorithm>
@@ -19,7 +19,7 @@
 #include "transfer.h"
 #include "util.h"
 
-namespace flexit::panel::anim {
+namespace flexit::panel::overlay {
 
 inline int16_t clamp16(int v) { return (int16_t) std::clamp(v, -32768, 32767); }
 inline uint16_t clamp_u16(int v) { return (uint16_t) std::clamp(v, 0, 65535); }
@@ -39,13 +39,13 @@ struct Source {
 inline uint32_t frame_ms(const Source &s, int f) { return s.delays.empty() ? s.frame_ms : s.delays[f]; }
 inline std::map<std::string, Source> sources;
 
-// frame_ms goes in ANIM_TICK_MS steps, and the panel shows a frame ANIM_FRAME_MIN_MS at least
-inline constexpr int MAX_FRAME_MS = ANIM_DELAY_MAX * ANIM_TICK_MS;
+// frame_ms goes in OVERLAY_TICK_MS steps, and the panel shows a frame OVERLAY_FRAME_MIN_MS at least
+inline constexpr int MAX_FRAME_MS = OVERLAY_DELAY_MAX * OVERLAY_TICK_MS;
 inline void add(const std::string &name, Source s) {
-  int ms = std::clamp(s.frame_ms, ANIM_FRAME_MIN_MS, MAX_FRAME_MS);
+  int ms = std::clamp(s.frame_ms, OVERLAY_FRAME_MIN_MS, MAX_FRAME_MS);
   if (ms != s.frame_ms) {
     ESP_LOGW("panel", "Animation %s: frame_ms %d is outside %d..%d, it plays at %d", name.c_str(), s.frame_ms,
-             ANIM_FRAME_MIN_MS, MAX_FRAME_MS, ms);
+             OVERLAY_FRAME_MIN_MS, MAX_FRAME_MS, ms);
   }
   s.frame_ms = ms;
   sources[name] = std::move(s);
@@ -58,11 +58,11 @@ struct Copy {
   int16_t x = 0, y = 0;
   bool own = false;  // a frame of its own, out of step with the others
   uint8_t start = 0;
-  uint8_t depth = ANIM_NEAREST;  // K_ANIM_DEPTH's, sent with its PLACE
-  int fade = -1;                 // ms it fades in and out, -1 for the animation's
-  std::string doing;             // how it moves, for the status
-  uint16_t rounds = 0;           // to the end of, 0 = on and on
-  uint8_t tag = 0;               // of its ANIM_ROUNDS, the panel's ANIM_GONE has it
+  uint8_t depth = OVERLAY_NEAREST;  // K_OVERLAY_DEPTH's, sent with its PLACE
+  int fade = -1;                    // ms it fades in and out, -1 for the animation's
+  std::string doing;                // how it moves, for the status
+  uint16_t rounds = 0;              // to the end of, 0 = on and on
+  uint8_t tag = 0;                  // of its OVERLAY_ROUNDS, the panel's OVERLAY_GONE has it
   // What it was told since it was placed, the last of each kind and channel, sent again after a panel restart
   struct Told {
     uint16_t key;
@@ -76,12 +76,12 @@ struct Copy {
 enum State { WANT, SENT, FAILED };  // WANT: to be made and sent, or sent again after a panel restart
 
 // A slot on the panel, the index is the slot
-struct Anim {
+struct Overlay {
   std::string name;  // "" = free slot
   const Source *src = nullptr;
   int state = WANT, w = 0, h = 0, scale = 1;
   bool half = false;
-  uint8_t transp = ANIM_OPAQUE;
+  uint8_t transp = OVERLAY_OPAQUE;
   uint32_t pal[16] = {};
   std::vector<uint8_t> data;  // the frame records
   std::vector<Copy> copies;
@@ -90,15 +90,15 @@ struct Anim {
   bool lasting = false;       // it would fail again, so it waits until it's shown again
   size_t frame_bytes() const { return (size_t) w / 2 * h; }
 };
-inline Anim anims[ANIM_SLOTS];
+inline Overlay overlays[OVERLAY_SLOTS];
 
-// count() builds the palette from all frames, make() the records, send() sends them. One animation at a time.
+// count() builds the palette from all frames, make() the records, send() sends them. One overlay at a time.
 enum Phase { IDLE, COUNT, MAKE, SEND };
 inline constexpr int ROWS_PX = 256;  // pixels a call takes at least, a row or a few, so the time is looked at seldom
 inline constexpr uint32_t FNV_START = 2166136261u, FNV_PRIME = 16777619u;  // FNV-1a, for the frames' hashes
 
 struct Work {
-  Anim *a = nullptr;
+  Overlay *a = nullptr;
   int phase = IDLE, f = 0, y = 0;  // y: the row of frame f
   bool any_transp = false;
   Transfer t;
@@ -115,18 +115,18 @@ struct Work {
 };
 inline Work W;
 
-inline Anim *find(const std::string &name) {
-  for (auto &a : anims)
+inline Overlay *find(const std::string &name) {
+  for (auto &a : overlays)
     if (!a.name.empty() && a.name == name)
       return &a;
   return nullptr;
 }
 
-// Bytes of the panel's ANIM_POOL that the animations it has or is getting take, with their copies' own frames,
+// Bytes of the panel's OVERLAY_POOL that the overlays it has or is getting take, with their copies' own frames,
 // other than a's
-inline size_t used_by_others(const Anim *a) {
+inline size_t used_by_others(const Overlay *a) {
   size_t n = 0;
-  for (auto &o : anims) {
+  for (auto &o : overlays) {
     if (&o == a || !(o.state == SENT || (&o == W.a && W.t.head)))
       continue;
     n += o.frame_bytes() + o.data.size();
@@ -137,11 +137,11 @@ inline size_t used_by_others(const Anim *a) {
 }
 
 // What's left of the pool for the one being made
-inline size_t room() { return ANIM_POOL - std::min<size_t>(ANIM_POOL, used_by_others(W.a)); }
+inline size_t room() { return OVERLAY_POOL - std::min<size_t>(OVERLAY_POOL, used_by_others(W.a)); }
 
 inline std::string shown() {
   std::string s, failed;
-  for (auto &a : anims) {
+  for (auto &a : overlays) {
     if (a.name.empty())
       continue;
     if (a.state == FAILED) {
@@ -219,7 +219,7 @@ inline void stop() {
 // Gives up on the one in hand with the reason in the status, always false. A lasting failure isn't tried again
 // after a hello.
 inline bool fail(const std::string &why, bool lasting = false) {
-  Anim *a = W.a;
+  Overlay *a = W.a;
   stop();
   drop(a->data);
   a->why = why;
@@ -238,7 +238,7 @@ inline std::string too_big(size_t n) {
 
 // The most the records take while it's made: up to the room there can be, and one record over
 inline size_t data_max() {
-  return ANIM_POOL - W.a->frame_bytes() + ANIM_RECORD_HEAD + PDEFLATE_BOUND(W.a->frame_bytes());
+  return OVERLAY_POOL - W.a->frame_bytes() + OVERLAY_RECORD_HEAD + PDEFLATE_BOUND(W.a->frame_bytes());
 }
 
 // Whether the ESP has the RAM to make it: the colour counts, then the colour table, three frames, the records and
@@ -257,24 +257,25 @@ inline void put16(std::vector<uint8_t> &m, int at, int v) { plink_put16(&m[at], 
 // A glide sent again goes on for the time it had left
 inline void send_told(const Copy::Told &t) {
   std::vector<uint8_t> m = t.m;
-  if (t.key == K_ANIM_GLIDE) {
-    uint32_t ms = plink_get16(m.data() + ANIM_GLIDE_MS), gone = millis() - t.at;
-    put16(m, ANIM_GLIDE_MS, (int) (gone < ms ? ms - gone : 0));
+  if (t.key == K_OVERLAY_GLIDE) {
+    uint32_t ms = plink_get16(m.data() + OVERLAY_GLIDE_MS), gone = millis() - t.at;
+    put16(m, OVERLAY_GLIDE_MS, (int) (gone < ms ? ms - gone : 0));
   }
   link::send(t.key, m.data(), (int) m.size());
 }
 
 // tell() reads a WAVE's or MAP's channel and a GLIDE's or DRIFT's channels from one place
-static_assert(ANIM_WAVE_CHANNEL == (int) ANIM_MAP_CHANNEL && ANIM_GLIDE_CHANNELS == (int) ANIM_DRIFT_CHANNELS &&
-                  ANIM_WAVE_CHANNEL == (int) ANIM_GLIDE_CHANNELS,
+static_assert(OVERLAY_WAVE_CHANNEL == (int) OVERLAY_MAP_CHANNEL &&
+                  OVERLAY_GLIDE_CHANNELS == (int) OVERLAY_DRIFT_CHANNELS &&
+                  OVERLAY_WAVE_CHANNEL == (int) OVERLAY_GLIDE_CHANNELS,
               "the channels in the same place");
 
 // Sends m to copy c of a with its place filled in, now if the panel has the copy and again after a restart.
 // Replaces earlier ones with the same key and channel, for a GLIDE or DRIFT the ones on only its channels.
-inline void tell(Anim &a, Copy &c, uint16_t key, std::vector<uint8_t> m) {
-  m[ANIM_MSG_PLACE] = c.place;
-  bool bits = key == K_ANIM_GLIDE || key == K_ANIM_DRIFT;
-  uint8_t ch = bits || key == K_ANIM_WAVE || key == K_ANIM_MAP ? m[ANIM_GLIDE_CHANNELS] : 0;
+inline void tell(Overlay &a, Copy &c, uint16_t key, std::vector<uint8_t> m) {
+  m[OVERLAY_MSG_PLACE] = c.place;
+  bool bits = key == K_OVERLAY_GLIDE || key == K_OVERLAY_DRIFT;
+  uint8_t ch = bits || key == K_OVERLAY_WAVE || key == K_OVERLAY_MAP ? m[OVERLAY_GLIDE_CHANNELS] : 0;
   c.told.erase(std::remove_if(c.told.begin(), c.told.end(),
                               [&](const Copy::Told &t) { return t.key == key && (bits ? !(t.ch & ~ch) : t.ch == ch); }),
                c.told.end());
@@ -284,94 +285,94 @@ inline void tell(Anim &a, Copy &c, uint16_t key, std::vector<uint8_t> m) {
 }
 
 // Copy c's channels from ch on to the values v over ms, in the channels' units, one message
-inline void glide_copy(Anim &a, Copy &c, int ch, std::initializer_list<int> v, int ms, int ease) {
-  std::vector<uint8_t> m(ANIM_GLIDE_HEAD + 2 * v.size());
-  m[ANIM_GLIDE_CHANNELS] = (uint8_t) (((1u << v.size()) - 1) << ch);
-  put16(m, ANIM_GLIDE_MS, clamp_u16(ms));
-  m[ANIM_GLIDE_EASE] = (uint8_t) ease;
-  int at = ANIM_GLIDE_HEAD;
+inline void glide_copy(Overlay &a, Copy &c, int ch, std::initializer_list<int> v, int ms, int ease) {
+  std::vector<uint8_t> m(OVERLAY_GLIDE_HEAD + 2 * v.size());
+  m[OVERLAY_GLIDE_CHANNELS] = (uint8_t) (((1u << v.size()) - 1) << ch);
+  put16(m, OVERLAY_GLIDE_MS, clamp_u16(ms));
+  m[OVERLAY_GLIDE_EASE] = (uint8_t) ease;
+  int at = OVERLAY_GLIDE_HEAD;
   for (int x : v) {
     put16(m, at, clamp16(x));
     at += 2;
   }
-  tell(a, c, K_ANIM_GLIDE, m);
+  tell(a, c, K_OVERLAY_GLIDE, m);
 }
 
 inline int tenths(float v) { return clamp16((int) lroundf(v * 10)); }
 
 // Drifts x and y, or turn, per second
-inline void drift_copy(Anim &a, Copy &c, int ch, std::initializer_list<float> v) {
-  std::vector<uint8_t> m(ANIM_DRIFT_HEAD + 2 * v.size());
-  m[ANIM_DRIFT_CHANNELS] = (uint8_t) (((1u << v.size()) - 1) << ch);
-  int at = ANIM_DRIFT_HEAD;
+inline void drift_copy(Overlay &a, Copy &c, int ch, std::initializer_list<float> v) {
+  std::vector<uint8_t> m(OVERLAY_DRIFT_HEAD + 2 * v.size());
+  m[OVERLAY_DRIFT_CHANNELS] = (uint8_t) (((1u << v.size()) - 1) << ch);
+  int at = OVERLAY_DRIFT_HEAD;
   for (float x : v) {
     put16(m, at, tenths(x));
     at += 2;
   }
-  tell(a, c, K_ANIM_DRIFT, m);
+  tell(a, c, K_OVERLAY_DRIFT, m);
 }
 
-inline void drift_xy(Anim &a, Copy &c, float vx, float vy) {
-  drift_copy(a, c, ANIM_X, {vx, vy});
+inline void drift_xy(Overlay &a, Copy &c, float vx, float vy) {
+  drift_copy(a, c, OVERLAY_X, {vx, vy});
   c.doing = vx || vy ? ", drifting" : "";
 }
 
-inline void send_frame_rate(const Anim &a) {
-  uint8_t m[ANIM_FRAMES_LEN];
-  m[ANIM_FRAMES_SLOT] = (uint8_t) (&a - anims);
-  plink_put16(m + ANIM_FRAMES_RATE, a.frame_rate);
-  link::send(K_ANIM_FRAMES, m, sizeof m);
+inline void send_frame_rate(const Overlay &a) {
+  uint8_t m[OVERLAY_FRAMES_LEN];
+  m[OVERLAY_FRAMES_SLOT] = (uint8_t) (&a - overlays);
+  plink_put16(m + OVERLAY_FRAMES_RATE, a.frame_rate);
+  link::send(K_OVERLAY_FRAMES, m, sizeof m);
 }
 
 // Whether the panel's pool has room for a frame of a's own, once c's own one, if it has one there, is gone.
 // Warns if not.
-inline bool own_room(const Anim &a, const Copy *c) {
-  if (used_by_others(nullptr) + a.frame_bytes() - (c && c->placed && c->own ? a.frame_bytes() : 0) <= ANIM_POOL)
+inline bool own_room(const Overlay &a, const Copy *c) {
+  if (used_by_others(nullptr) + a.frame_bytes() - (c && c->placed && c->own ? a.frame_bytes() : 0) <= OVERLAY_POOL)
     return true;
   ESP_LOGW("panel", "Animation %s: no room in the panel's %u bytes for a copy with a frame of its own", a.name.c_str(),
-           (unsigned) ANIM_POOL);
+           (unsigned) OVERLAY_POOL);
   return false;
 }
 
-inline int fade_of(const Anim &a, const Copy &c) { return c.fade >= 0 ? c.fade : a.src->fade_ms; }
+inline int fade_of(const Overlay &a, const Copy &c) { return c.fade >= 0 ? c.fade : a.src->fade_ms; }
 
 inline void send_depth(const Copy &c) {
-  uint8_t m[ANIM_DEPTH_LEN];
-  m[ANIM_MSG_PLACE] = c.place;
-  m[ANIM_DEPTH_DEPTH] = c.depth;
-  link::send(K_ANIM_DEPTH, m, sizeof m);
+  uint8_t m[OVERLAY_DEPTH_LEN];
+  m[OVERLAY_MSG_PLACE] = c.place;
+  m[OVERLAY_DEPTH_DEPTH] = c.depth;
+  link::send(K_OVERLAY_DEPTH, m, sizeof m);
 }
 
 // Puts a copy on the panel with what it was told
-inline void send_place(Anim &a, Copy &c) {
-  uint8_t m[ANIM_PLACE_LEN];
-  m[ANIM_MSG_PLACE] = c.place;
-  m[ANIM_PLACE_SLOT] = (uint8_t) (&a - anims);
+inline void send_place(Overlay &a, Copy &c) {
+  uint8_t m[OVERLAY_PLACE_LEN];
+  m[OVERLAY_MSG_PLACE] = c.place;
+  m[OVERLAY_PLACE_SLOT] = (uint8_t) (&a - overlays);
   // one on the screen stays on it, the sizes round up at half size
   const Source &s = *a.src;
   bool in = c.x >= 0 && c.y >= 0 && c.x + s.w * s.scale <= PIC_MAX_W && c.y + s.h * s.scale <= PIC_MAX_H;
-  plink_put16(m + ANIM_PLACE_X, (uint16_t) (in ? std::min<int>(c.x, PIC_MAX_W - a.w * a.scale) : c.x));
-  plink_put16(m + ANIM_PLACE_Y, (uint16_t) (in ? std::min<int>(c.y, PIC_MAX_H - a.h * a.scale) : c.y));
-  m[ANIM_PLACE_OWN] = c.own;
-  m[ANIM_PLACE_START] = c.start;
-  plink_put16(m + ANIM_PLACE_FADE, (uint16_t) fade_of(a, c));
-  link::send(K_ANIM_PLACE, m, sizeof m);
-  if (c.depth != ANIM_NEAREST)
+  plink_put16(m + OVERLAY_PLACE_X, (uint16_t) (in ? std::min<int>(c.x, PIC_MAX_W - a.w * a.scale) : c.x));
+  plink_put16(m + OVERLAY_PLACE_Y, (uint16_t) (in ? std::min<int>(c.y, PIC_MAX_H - a.h * a.scale) : c.y));
+  m[OVERLAY_PLACE_OWN] = c.own;
+  m[OVERLAY_PLACE_START] = c.start;
+  plink_put16(m + OVERLAY_PLACE_FADE, (uint16_t) fade_of(a, c));
+  link::send(K_OVERLAY_PLACE, m, sizeof m);
+  if (c.depth != OVERLAY_NEAREST)
     send_depth(c);
   c.placed = true;
   for (auto &t : c.told)
     send_told(t);
 }
 
-// A slot, ANIM_PLACE_BIT | a place, or ANIM_ALL, faded out over ms first
-inline void send_clear(unsigned what, int ms = 0) { link::send(K_ANIM_CLEAR, (uint32_t) what | (uint32_t) ms << 8); }
+// A slot, OVERLAY_PLACE_BIT | a place, or OVERLAY_ALL, faded out over ms first
+inline void send_clear(unsigned what, int ms = 0) { link::send(K_OVERLAY_CLEAR, (uint32_t) what | (uint32_t) ms << 8); }
 
 // ---- making one
 
 // False if it doesn't fit on the screen or next to the others, or the ESP hasn't the RAM. Straight to half size if
 // a frame alone is over what's left, or the ESP only has the RAM for that, and it can.
 inline bool start() {
-  Anim &a = *W.a;
+  Overlay &a = *W.a;
   const Source &s = *a.src;
   if (s.scale != 1 && s.scale != 2)
     return fail("scale has to be 1 or 2", true);
@@ -404,7 +405,7 @@ inline bool start() {
 
 // Counts the colours of a row or a few, and at the end of a frame its hash
 inline void count() {
-  Anim &a = *W.a;
+  Overlay &a = *W.a;
   uint32_t h = W.sum;
   for (int n = 0; n < ROWS_PX && W.y < a.h; n += a.w, W.y++)
     for (int x = 0; x < a.w; x++) {
@@ -426,7 +427,7 @@ inline void count() {
 
 // After the last frame is counted: the palette, at once, and the RAM to make the frames
 inline void palette() {
-  Anim &a = *W.a;
+  Overlay &a = *W.a;
   int n = a.src->frames;
   W.frames = n;
   const std::vector<uint16_t> &d = a.src->delays;
@@ -438,7 +439,7 @@ inline void palette() {
   std::vector<uint16_t> bins;
   memset(a.pal, 0, sizeof a.pal);
   W.colours = median_cut(W.hist, W.any_transp ? 15 : 16, a.pal, bins);
-  a.transp = W.any_transp ? 15 : ANIM_OPAQUE;
+  a.transp = W.any_transp ? 15 : OVERLAY_OPAQUE;
   drop(W.hist);
   drop(bins);                // the lut takes their place, so has_ram()'s peak holds
   W.lut.assign(BINS, 0xFF);  // filled as make() meets the colours
@@ -462,26 +463,26 @@ inline void palette() {
 // ones after that are in the loop. False without the memory to compress it. Stops where data would have to grow,
 // which only happens past the pool, where made() turns it down anyway.
 inline bool record(const std::vector<uint8_t> *from, const std::vector<uint8_t> &to, uint32_t ms, bool back = false) {
-  Anim &a = *W.a;
-  const size_t most = ANIM_RECORD_HEAD + PDEFLATE_BOUND(a.frame_bytes());  // what a record takes while it's made
-  uint32_t ticks = std::max<uint32_t>(1, (ms + ANIM_TICK_MS / 2) / ANIM_TICK_MS);
+  Overlay &a = *W.a;
+  const size_t most = OVERLAY_RECORD_HEAD + PDEFLATE_BOUND(a.frame_bytes());  // what a record takes while it's made
+  uint32_t ticks = std::max<uint32_t>(1, (ms + OVERLAY_TICK_MS / 2) / OVERLAY_TICK_MS);
   if (back)
-    ticks = std::min<uint32_t>(ticks, ANIM_DELAY_MAX);
+    ticks = std::min<uint32_t>(ticks, OVERLAY_DELAY_MAX);
   else if (from && W.last && *from == to) {
-    uint8_t &last = a.data[W.last + ANIM_RECORD_DELAY];
-    uint32_t k = std::min<uint32_t>(ticks, ANIM_DELAY_MAX - last);
+    uint8_t &last = a.data[W.last + OVERLAY_RECORD_DELAY];
+    uint32_t k = std::min<uint32_t>(ticks, OVERLAY_DELAY_MAX - last);
     last = (uint8_t) (last + k);
     ticks -= k;
   }
   for (; ticks; from = &to) {
-    uint8_t delay = (uint8_t) std::min<uint32_t>(ticks, ANIM_DELAY_MAX);
+    uint8_t delay = (uint8_t) std::min<uint32_t>(ticks, OVERLAY_DELAY_MAX);
     size_t at = a.data.size();
     if (at + most > a.data.capacity())
       return true;  // it would move, a peak has_ram() didn't count
     a.data.resize(at + most);
     pdeflate_work_t work = {W.enc.data(), W.tok.data(), W.rest.data()};
     unsigned n =
-        plink_anim_record_in(&work, from ? from->data() : nullptr, to.data(), a.w, a.h, delay, a.data.data() + at);
+        plink_overlay_record_in(&work, from ? from->data() : nullptr, to.data(), a.w, a.h, delay, a.data.data() + at);
     a.data.resize(at + n);
     if (!n)
       return false;
@@ -502,7 +503,7 @@ inline void halve() {
 // For make(): all frames are in, or it's over the room left or there was no memory to compress it. Then it's
 // sent, or made again at half size if it can.
 inline void made(bool ok, size_t left) {
-  Anim &a = *W.a;
+  Overlay &a = *W.a;
   size_t need = a.frame_bytes() + a.data.size();
   drop_work();
   if (!ok || need > left) {
@@ -539,7 +540,7 @@ inline uint8_t index_of(uint32_t c) {
 // the one back to the first. A record goes in one go, so it waits for the next slice unless this one is fresh or
 // has the time the last record took. False when it waits.
 inline bool make(uint32_t deadline_us, bool fresh) {
-  Anim &a = *W.a;
+  Overlay &a = *W.a;
   if (W.y < a.h) {
     for (int n = 0; n < ROWS_PX && W.y < a.h; n += a.w, W.y++) {
       uint8_t *row = W.frame.data() + (size_t) W.y * (a.w / 2);
@@ -572,13 +573,13 @@ inline bool make(uint32_t deadline_us, bool fresh) {
 
 // The header once the link is free, then the records as it has room until deadline_us, then END
 inline void send(uint32_t deadline_us) {
-  Anim &a = *W.a;
+  Overlay &a = *W.a;
   Transfer::Pumped p = W.t.pump(deadline_us, [&a] {
     W.t.open(a.data.data(), (uint32_t) a.data.size());
-    uint8_t h[ANIM_BEGIN_HEAD + PIC_PAL_LEN];
-    link::send(K_ANIM_BEGIN, h,
-               plink_anim_begin(h, W.t.id, (uint8_t) (&a - anims), (uint16_t) a.w, (uint16_t) a.h, (uint8_t) a.scale,
-                                a.transp, (uint32_t) a.data.size(), a.pal));
+    uint8_t h[OVERLAY_BEGIN_HEAD + PIC_PAL_LEN];
+    link::send(K_OVERLAY_BEGIN, h,
+               plink_overlay_begin(h, W.t.id, (uint8_t) (&a - overlays), (uint16_t) a.w, (uint16_t) a.h,
+                                   (uint8_t) a.scale, a.transp, (uint32_t) a.data.size(), a.pal));
   });
   if (p == Transfer::AGAIN) {  // the panel lost it or its answer
     ESP_LOGW("panel", "Animation %s: no answer from the panel, sending it again", a.name.c_str());
@@ -589,7 +590,7 @@ inline void send(uint32_t deadline_us) {
 
 // The panel has it: its copies go on
 inline void done() {
-  Anim &a = *W.a;
+  Overlay &a = *W.a;
   W.phase = IDLE;
   W.t.reset();
   W.a = nullptr;
@@ -609,7 +610,7 @@ inline void done() {
 inline void ack(uint32_t v) {
   if (W.phase != SEND || !W.t.answers(v))
     return;  // for a picture or an earlier transfer
-  Anim &a = *W.a;
+  Overlay &a = *W.a;
   uint8_t st = v >> 24;
   if (st == PIC_PROGRESS) {
     status(progress(a.name, v, a.data.size()));
@@ -623,7 +624,7 @@ inline void ack(uint32_t v) {
 }
 
 // To be sent again, and made again from scratch if it failed
-inline void again(Anim &a) {
+inline void again(Overlay &a) {
   if (a.state == FAILED)
     a.half = false;
   a.state = WANT;
@@ -635,7 +636,7 @@ inline void again(Anim &a) {
 // for failures that would happen again.
 inline void restarted() {
   stop();
-  for (auto &a : anims)
+  for (auto &a : overlays)
     if (!(a.state == FAILED && a.lasting))
       again(a);
 }
@@ -644,20 +645,20 @@ inline void restarted() {
 
 // A free place on the panel, -1 with a warning about name's copy if all are taken
 inline int free_place(const std::string &name) {
-  for (int p = 0; p < ANIM_PLACES; p++) {
+  for (int p = 0; p < OVERLAY_PLACES; p++) {
     bool taken = false;
-    for (auto &a : anims)
+    for (auto &a : overlays)
       for (auto &c : a.copies)
         taken |= c.used && c.place == p;
     if (!taken)
       return p;
   }
-  ESP_LOGW("panel", "Animation %s: the panel shows %d copies at most", name.c_str(), ANIM_PLACES);
+  ESP_LOGW("panel", "Animation %s: the panel shows %d copies at most", name.c_str(), OVERLAY_PLACES);
   return -1;
 }
 
 // Copy i of a, made if it wasn't there, at place at if that's free. nullptr if the panel has no place left for it.
-inline Copy *copy_of(Anim &a, int i, int at = -1) {
+inline Copy *copy_of(Overlay &a, int i, int at = -1) {
   if ((int) a.copies.size() <= i)
     a.copies.resize(i + 1);
   Copy &c = a.copies[i];
@@ -681,23 +682,23 @@ inline const Source *source(const std::string &name) {
 }
 
 // The slot for name, taken if it hasn't one. nullptr if there's no such animation, or no slot or place left for it.
-inline Anim *slot_for(const std::string &name) {
-  if (Anim *a = find(name))
+inline Overlay *slot_for(const std::string &name) {
+  if (Overlay *a = find(name))
     return a;
   const Source *s = source(name);
   if (!s)
     return nullptr;
-  Anim *a = nullptr;
-  for (auto &o : anims)
+  Overlay *a = nullptr;
+  for (auto &o : overlays)
     if (o.name.empty() && !a)
       a = &o;
   if (!a) {
-    ESP_LOGW("panel", "No room for animation %s: the panel holds %d at a time", name.c_str(), ANIM_SLOTS);
+    ESP_LOGW("panel", "No room for animation %s: the panel holds %d at a time", name.c_str(), OVERLAY_SLOTS);
     return nullptr;
   }
   if (free_place(name) < 0)
     return nullptr;
-  *a = Anim();
+  *a = Overlay();
   a->name = name;
   a->src = s;
   if (s->on_shown)
@@ -706,34 +707,34 @@ inline Anim *slot_for(const std::string &name) {
 }
 
 // slot_for(), and a failed one is tried again
-inline Anim *want(const std::string &name) {
-  Anim *a = slot_for(name);
+inline Overlay *want(const std::string &name) {
+  Overlay *a = slot_for(name);
   if (a && a->state == FAILED)
     again(*a);
   return a;
 }
 
-inline void free_slot(Anim &a, bool send = true) {
+inline void free_slot(Overlay &a, bool send = true) {
   if (send && (a.state == SENT || (W.a == &a && W.t.head)))
-    send_clear((unsigned) (&a - anims), a.src->fade_ms);
+    send_clear((unsigned) (&a - overlays), a.src->fade_ms);
   if (W.a == &a)
     stop();
   if (a.src->on_shown)
     a.src->on_shown(false);
-  a = Anim();
+  a = Overlay();
 }
 
 // Clears one animation and all its copies, or all of them with no name, fading them out
 inline void clear(const std::string &name) {
   if (name.empty() || name == "None") {
     int ms = 0;
-    for (auto &a : anims)
+    for (auto &a : overlays)
       if (!a.name.empty()) {
         ms = std::max(ms, a.src->fade_ms);
         free_slot(a, false);
       }
-    send_clear(ANIM_ALL, ms);
-  } else if (Anim *a = find(name)) {
+    send_clear(OVERLAY_ALL, ms);
+  } else if (Overlay *a = find(name)) {
     free_slot(*a);
   }
   status(shown());
@@ -742,7 +743,7 @@ inline void clear(const std::string &name) {
 // panel_show_animation and the switches: shows it where its yaml puts it, alongside the others, and copy 0 there
 // with its drift again if it went. A failed one is tried again.
 inline void show(const std::string &name) {
-  Anim *a = want(name);
+  Overlay *a = want(name);
   if (!a)
     return;
   Copy *c = !a->copies.empty() && a->copies[0].used ? nullptr : copy_of(*a, 0);
@@ -783,14 +784,14 @@ inline void switched_on(const std::string &name) {
 
 // panel_place_animation: copy i of name at x, y, which can be off the screen, own = a frame of its own started start
 // frames in. Shows the animation if it isn't yet, a failed one is tried again. fade: ms it fades in and out, -1
-// for the animation's. depth: K_ANIM_DEPTH's. at: the place it takes if it's free. False if it isn't placed.
+// for the animation's. depth: K_OVERLAY_DEPTH's. at: the place it takes if it's free. False if it isn't placed.
 inline bool place(const std::string &name, int i, int x, int y, bool own, int start, int fade = -1,
-                  uint8_t depth = ANIM_NEAREST, int at = -1) {
-  if (i < 0 || i >= ANIM_PLACES) {
-    ESP_LOGW("panel", "Animation %s: copy %d isn't one of 0 to %d", name.c_str(), i, ANIM_PLACES - 1);
+                  uint8_t depth = OVERLAY_NEAREST, int at = -1) {
+  if (i < 0 || i >= OVERLAY_PLACES) {
+    ESP_LOGW("panel", "Animation %s: copy %d isn't one of 0 to %d", name.c_str(), i, OVERLAY_PLACES - 1);
     return false;
   }
-  Anim *a = want(name);
+  Overlay *a = want(name);
   if (!a)
     return false;
   if (own && a->state == SENT && !own_room(*a, i < (int) a->copies.size() ? &a->copies[i] : nullptr))
@@ -816,8 +817,8 @@ inline bool place(const std::string &name, int i, int x, int y, bool own, int st
 
 // Copy i of name's animation and the animation, nulls if it isn't shown. what is the action, panel_<what>_animation,
 // for the warning, none without it.
-inline std::pair<Anim *, Copy *> copy_for(const std::string &name, int i, const char *what = nullptr) {
-  Anim *a = find(name);
+inline std::pair<Overlay *, Copy *> copy_for(const std::string &name, int i, const char *what = nullptr) {
+  Overlay *a = find(name);
   if (a && i >= 0 && i < (int) a->copies.size() && a->copies[i].used)
     return {a, &a->copies[i]};
   if (what) {
@@ -833,12 +834,12 @@ inline void remove(const std::string &name, int i, int fade = -1) {
   if (!c)
     return;
   if (a->state == SENT && c->placed)
-    send_clear(ANIM_PLACE_BIT | c->place, fade >= 0 ? std::min(65535, fade) : fade_of(*a, *c));
+    send_clear(OVERLAY_PLACE_BIT | c->place, fade >= 0 ? std::min(65535, fade) : fade_of(*a, *c));
   *c = Copy();
   status(shown());
 }
 
-// Copy i of name goes to depth, K_ANIM_DEPTH's
+// Copy i of name goes to depth, K_OVERLAY_DEPTH's
 inline void depth(const std::string &name, int i, uint8_t d) {
   auto [a, c] = copy_for(name, i);
   if (!c || c->depth == d)
@@ -852,7 +853,7 @@ inline void depth(const std::string &name, int i, uint8_t d) {
 // place, so nothing shows between them, else from goes at once and to shows when it's in.
 inline void swap(const std::string &from, int i, const std::string &to, int x, int y, bool own, int start) {
   auto [a, c] = copy_for(from, i);
-  Anim *b = want(to);
+  Overlay *b = want(to);
   if (!c || !b) {
     remove(from, i, 0);
     place(to, i, x, y, own, start, 0);
@@ -865,7 +866,7 @@ inline void swap(const std::string &from, int i, const std::string &to, int x, i
   else
     remove(from, i, 0);
   if (!place(to, i, x, y, own, start, 0, was.depth, over ? was.place : -1) && over)
-    send_clear(ANIM_PLACE_BIT | was.place, 0);
+    send_clear(OVERLAY_PLACE_BIT | was.place, 0);
 }
 
 // Which of names s is, in any case, or -1 with a warning from panel_<what>_animation
@@ -881,17 +882,17 @@ template<size_t N> int option(const char *const (&names)[N], const std::string &
 }
 
 inline constexpr const char *CHANNELS[] = {"x", "y", "turn", "size", "opacity", "speed"};
-inline constexpr const char *EASES[] = {"none", "in", "out", "both"};    // ANIM_EASE_* bits
-inline constexpr const char *SLOWS[] = {"none", "low", "high", "both"};  // ANIM_WAVE_SLOW_* bits
-static_assert(sizeof CHANNELS / sizeof *CHANNELS == ANIM_CHANNELS, "a name for each channel");
+inline constexpr const char *EASES[] = {"none", "in", "out", "both"};    // OVERLAY_EASE_* bits
+inline constexpr const char *SLOWS[] = {"none", "low", "high", "both"};  // OVERLAY_WAVE_SLOW_* bits
+static_assert(sizeof CHANNELS / sizeof *CHANNELS == OVERLAY_CHANNELS, "a name for each channel");
 
-inline int no_change(int ch) { return ch >= ANIM_SIZE ? 100 : 0; }
+inline int no_change(int ch) { return ch >= OVERLAY_SIZE ? 100 : 0; }
 
 // For panel_glide_animation: copy i's x, y, turn, size, opacity or speed to v over ms, eased. A turn goes the short
 // way round, size, opacity and speed are percent.
 inline void glide(const std::string &name, int i, const std::string &what, int to, int ms, const std::string &ease) {
-  static const int LO[] = {-32768, -32768, -32768, ANIM_SIZE_MIN, 0, 0},
-                   HI[] = {32767, 32767, 32767, ANIM_SIZE_MAX, ANIM_OPACITY_MAX, ANIM_SPEED_MAX};
+  static const int LO[] = {-32768, -32768, -32768, OVERLAY_SIZE_MIN, 0, 0},
+                   HI[] = {32767, 32767, 32767, OVERLAY_SIZE_MAX, OVERLAY_OPACITY_MAX, OVERLAY_SPEED_MAX};
   auto [a, c] = copy_for(name, i, __func__);
   int ch = option(CHANNELS, what, __func__), e = option(EASES, ease, __func__);
   if (!c || ch < 0 || e < 0)
@@ -902,7 +903,7 @@ inline void glide(const std::string &name, int i, const std::string &what, int t
     return;
   }
   glide_copy(*a, *c, ch, {to}, ms, e);
-  if (ch <= ANIM_Y)
+  if (ch <= OVERLAY_Y)
     c->doing = ", moved";
   status(shown());
 }
@@ -917,7 +918,7 @@ inline void move(const std::string &name, int i, int x, int y, int ms, const std
     ESP_LOGW("panel", "panel_%s_animation: %d,%d over %d ms is out of range, it goes to %d,%d over %d ms", __func__, x,
              y, ms, clamp16(x), clamp16(y), clamp_u16(ms));
   }
-  glide_copy(*a, *c, ANIM_X, {x, y}, ms, e);
+  glide_copy(*a, *c, OVERLAY_X, {x, y}, ms, e);
   c->doing = ", moved to " + std::to_string(clamp16(x)) + "," + std::to_string(clamp16(y));
   status(shown());
 }
@@ -933,15 +934,15 @@ inline void drift(const std::string &name, int i, float vx, float vy) {
 // For panel_spin_animation: degrees per second clockwise, negative the other way. 0 stops it where it is.
 inline void spin(const std::string &name, int i, float speed) {
   if (auto [a, c] = copy_for(name, i, __func__); c)
-    drift_copy(*a, *c, ANIM_TURN, {speed});
+    drift_copy(*a, *c, OVERLAY_TURN, {speed});
 }
 
 // For panel_flip_animation: mirrored left to right, upside down, or both
 inline void flip(const std::string &name, int i, bool x, bool y) {
   if (auto [a, c] = copy_for(name, i, __func__); c) {
-    std::vector<uint8_t> m(ANIM_FLIP_LEN);
-    m[ANIM_FLIP_FLAGS] = (uint8_t) ((x ? ANIM_FLIP_X : 0) | (y ? ANIM_FLIP_Y : 0));
-    tell(*a, *c, K_ANIM_FLIP, m);
+    std::vector<uint8_t> m(OVERLAY_FLIP_LEN);
+    m[OVERLAY_FLIP_FLAGS] = (uint8_t) ((x ? OVERLAY_FLIP_X : 0) | (y ? OVERLAY_FLIP_Y : 0));
+    tell(*a, *c, K_OVERLAY_FLIP, m);
   }
 }
 
@@ -949,7 +950,7 @@ inline void flip(const std::string &name, int i, bool x, bool y) {
 // bounce.
 inline void area(const std::string &name, int i, int left, int top, int right, int bottom, const std::string &edge_x,
                  const std::string &edge_y) {
-  static const char *const EDGES[] = {"screen", "cross", "bounce"};  // ANIM_EDGE_*
+  static const char *const EDGES[] = {"screen", "cross", "bounce"};  // OVERLAY_EDGE_*
   auto [a, c] = copy_for(name, i, __func__);
   int ex = option(EDGES, edge_x, __func__), ey = option(EDGES, edge_y, __func__);
   if (!c || ex < 0 || ey < 0)
@@ -959,14 +960,14 @@ inline void area(const std::string &name, int i, int left, int top, int right, i
              left, top, right, bottom);
     return;
   }
-  std::vector<uint8_t> m(ANIM_AREA_LEN);
-  put16(m, ANIM_AREA_X0, clamp16(left));
-  put16(m, ANIM_AREA_Y0, clamp16(top));
-  put16(m, ANIM_AREA_X1, clamp16(right));
-  put16(m, ANIM_AREA_Y1, clamp16(bottom));
-  m[ANIM_AREA_EDGES] = (uint8_t) ex;
-  m[ANIM_AREA_EDGES + 1] = (uint8_t) ey;
-  tell(*a, *c, K_ANIM_AREA, m);
+  std::vector<uint8_t> m(OVERLAY_AREA_LEN);
+  put16(m, OVERLAY_AREA_X0, clamp16(left));
+  put16(m, OVERLAY_AREA_Y0, clamp16(top));
+  put16(m, OVERLAY_AREA_X1, clamp16(right));
+  put16(m, OVERLAY_AREA_Y1, clamp16(bottom));
+  m[OVERLAY_AREA_EDGES] = (uint8_t) ex;
+  m[OVERLAY_AREA_EDGES + 1] = (uint8_t) ey;
+  tell(*a, *c, K_OVERLAY_AREA, m);
 }
 
 // For panel_wander_animation: legs of speed_min..speed_max px/s toward heading +- spread for leg_min..leg_max ms,
@@ -980,16 +981,16 @@ inline void wander(const std::string &name, int i, float speed_min, float speed_
     ESP_LOGW("panel", "panel_%s_animation: each max has to be at least its min", __func__);
     return;
   }
-  std::vector<uint8_t> m(ANIM_WANDER_LEN);
-  put16(m, ANIM_WANDER_SPEED, std::max(0, tenths(speed_min)));
-  put16(m, ANIM_WANDER_SPEED + 2, std::max(0, tenths(speed_max)));
-  put16(m, ANIM_WANDER_HEADING, clamp16(heading));
-  put16(m, ANIM_WANDER_SPREAD, clamp16(spread));
-  put16(m, ANIM_WANDER_LEG, clamp_u16(leg_min));
-  put16(m, ANIM_WANDER_LEG + 2, clamp_u16(leg_max));
-  put16(m, ANIM_WANDER_REST, clamp_u16(rest_min));
-  put16(m, ANIM_WANDER_REST + 2, clamp_u16(rest_max));
-  tell(*a, *c, K_ANIM_WANDER, m);
+  std::vector<uint8_t> m(OVERLAY_WANDER_LEN);
+  put16(m, OVERLAY_WANDER_SPEED, std::max(0, tenths(speed_min)));
+  put16(m, OVERLAY_WANDER_SPEED + 2, std::max(0, tenths(speed_max)));
+  put16(m, OVERLAY_WANDER_HEADING, clamp16(heading));
+  put16(m, OVERLAY_WANDER_SPREAD, clamp16(spread));
+  put16(m, OVERLAY_WANDER_LEG, clamp_u16(leg_min));
+  put16(m, OVERLAY_WANDER_LEG + 2, clamp_u16(leg_max));
+  put16(m, OVERLAY_WANDER_REST, clamp_u16(rest_min));
+  put16(m, OVERLAY_WANDER_REST + 2, clamp_u16(rest_max));
+  tell(*a, *c, K_OVERLAY_WANDER, m);
   c->doing = ", wandering";
   status(shown());
 }
@@ -999,15 +1000,15 @@ inline void face(const std::string &name, int i, int facing, bool mirror, int ti
   auto [a, c] = copy_for(name, i, __func__);
   if (!c)
     return;
-  std::vector<uint8_t> m(ANIM_FACE_LEN);
-  m[ANIM_FACE_FLAGS] = (uint8_t) ((mirror ? ANIM_FACE_MIRROR : 0) | (level ? ANIM_FACE_LEVEL : 0));
-  put16(m, ANIM_FACE_FACING, (facing % 360 + 360) % 360);
-  put16(m, ANIM_FACE_TILT, std::clamp(tilt, 0, 180));
-  put16(m, ANIM_FACE_RATE, std::clamp(rate, 0, 32767));
-  tell(*a, *c, K_ANIM_FACE, m);
+  std::vector<uint8_t> m(OVERLAY_FACE_LEN);
+  m[OVERLAY_FACE_FLAGS] = (uint8_t) ((mirror ? OVERLAY_FACE_MIRROR : 0) | (level ? OVERLAY_FACE_LEVEL : 0));
+  put16(m, OVERLAY_FACE_FACING, (facing % 360 + 360) % 360);
+  put16(m, OVERLAY_FACE_TILT, std::clamp(tilt, 0, 180));
+  put16(m, OVERLAY_FACE_RATE, std::clamp(rate, 0, 32767));
+  tell(*a, *c, K_OVERLAY_FACE, m);
 }
 
-// For panel_wave_animation: copy i's channel goes between low and high on its own, see K_ANIM_WAVE. One back to no
+// For panel_wave_animation: copy i's channel goes between low and high on its own, see K_OVERLAY_WAVE. One back to no
 // change is let go, here and on the panel, which takes its place for a new one.
 inline void wave(const std::string &name, int i, const std::string &what, int low, int high, int rise, int fall,
                  int hold_high, int hold_low, int jitter, bool random, const std::string &slow) {
@@ -1022,25 +1023,25 @@ inline void wave(const std::string &name, int i, const std::string &what, int lo
   }
   bool off = low == high && low == no_change(ch);
   int n = 0;
-  for (auto &other : anims)
+  for (auto &other : overlays)
     for (auto &o : other.copies)
       for (auto &t : o.told)
-        n += t.key == K_ANIM_WAVE && !(&o == c && t.ch == ch);
-  if (!off && n >= ANIM_WAVES) {
-    ESP_LOGW("panel", "panel_%s_animation: the panel runs %d waves at most", __func__, ANIM_WAVES);
+        n += t.key == K_OVERLAY_WAVE && !(&o == c && t.ch == ch);
+  if (!off && n >= OVERLAY_WAVES) {
+    ESP_LOGW("panel", "panel_%s_animation: the panel runs %d waves at most", __func__, OVERLAY_WAVES);
     return;
   }
-  std::vector<uint8_t> m(ANIM_WAVE_LEN);
-  m[ANIM_WAVE_CHANNEL] = (uint8_t) ch;
-  put16(m, ANIM_WAVE_LO, low);
-  put16(m, ANIM_WAVE_HI, high);
-  put16(m, ANIM_WAVE_MS, clamp_u16(rise));
-  put16(m, ANIM_WAVE_MS + 2, clamp_u16(fall));
-  put16(m, ANIM_WAVE_HOLD, clamp_u16(hold_high));
-  put16(m, ANIM_WAVE_HOLD + 2, clamp_u16(hold_low));
-  m[ANIM_WAVE_JITTER] = (uint8_t) jitter;
-  m[ANIM_WAVE_FLAGS] = (uint8_t) (s | (random ? ANIM_WAVE_RANDOM : 0));
-  tell(*a, *c, K_ANIM_WAVE, m);
+  std::vector<uint8_t> m(OVERLAY_WAVE_LEN);
+  m[OVERLAY_WAVE_CHANNEL] = (uint8_t) ch;
+  put16(m, OVERLAY_WAVE_LO, low);
+  put16(m, OVERLAY_WAVE_HI, high);
+  put16(m, OVERLAY_WAVE_MS, clamp_u16(rise));
+  put16(m, OVERLAY_WAVE_MS + 2, clamp_u16(fall));
+  put16(m, OVERLAY_WAVE_HOLD, clamp_u16(hold_high));
+  put16(m, OVERLAY_WAVE_HOLD + 2, clamp_u16(hold_low));
+  m[OVERLAY_WAVE_JITTER] = (uint8_t) jitter;
+  m[OVERLAY_WAVE_FLAGS] = (uint8_t) (s | (random ? OVERLAY_WAVE_RANDOM : 0));
+  tell(*a, *c, K_OVERLAY_WAVE, m);
   if (off)
     c->told.pop_back();  // a restarted panel has none there either
 }
@@ -1051,21 +1052,21 @@ inline void map(const std::string &name, int i, const std::string &what, int lef
   int ch = option(CHANNELS, what, __func__);
   if (!c || ch < 0)
     return;
-  if (ch < ANIM_TURN) {
+  if (ch < OVERLAY_TURN) {
     ESP_LOGW("panel", "panel_%s_animation: x and y don't follow where it is", __func__);
     return;
   }
-  std::vector<uint8_t> m(ANIM_MAP_LEN);
-  m[ANIM_MAP_CHANNEL] = (uint8_t) ch;
-  int at = ANIM_MAP_VALUES;
+  std::vector<uint8_t> m(OVERLAY_MAP_LEN);
+  m[OVERLAY_MAP_CHANNEL] = (uint8_t) ch;
+  int at = OVERLAY_MAP_VALUES;
   for (int v : {left, right, top, bottom}) {
     put16(m, at, clamp16(v));
     at += 2;
   }
-  tell(*a, *c, K_ANIM_MAP, m);
+  tell(*a, *c, K_OVERLAY_MAP, m);
 }
 
-inline uint8_t tags;  // so an old ANIM_GONE doesn't take a copy placed again
+inline uint8_t tags;  // so an old OVERLAY_GONE doesn't take a copy placed again
 
 // For panel_rounds_animation: plays to the end of rounds rounds, then fades out and goes. 0 plays on.
 inline void rounds(const std::string &name, int i, int n) {
@@ -1074,28 +1075,28 @@ inline void rounds(const std::string &name, int i, int n) {
     return;
   c->rounds = clamp_u16(n);
   c->tag = ++tags;
-  std::vector<uint8_t> m(ANIM_ROUNDS_LEN);
-  put16(m, ANIM_ROUNDS_COUNT, c->rounds);
-  put16(m, ANIM_ROUNDS_FADE, fade_of(*a, *c));
-  m[ANIM_ROUNDS_TAG] = c->tag;
-  tell(*a, *c, K_ANIM_ROUNDS, m);
+  std::vector<uint8_t> m(OVERLAY_ROUNDS_LEN);
+  put16(m, OVERLAY_ROUNDS_COUNT, c->rounds);
+  put16(m, OVERLAY_ROUNDS_FADE, fade_of(*a, *c));
+  m[OVERLAY_ROUNDS_TAG] = c->tag;
+  tell(*a, *c, K_OVERLAY_ROUNDS, m);
 }
 
 // For panel_frame_rate_animation: how fast name's frames go, percent, 0 holds the frame it's on
 inline void frame_rate(const std::string &name, int percent) {
-  Anim *a = find(name);
+  Overlay *a = find(name);
   if (!a) {
     ESP_LOGW("panel", "panel_%s_animation: animation '%s' isn't shown", __func__, name.c_str());
     return;
   }
-  a->frame_rate = (uint16_t) std::clamp(percent, 0, ANIM_RATE_MAX);
+  a->frame_rate = (uint16_t) std::clamp(percent, 0, OVERLAY_RATE_MAX);
   if (a->state == SENT)
     send_frame_rate(*a);
 }
 
-// The panel's K_ANIM_GONE = place | tag << 8: a copy played its rounds and went
+// The panel's K_OVERLAY_GONE = place | tag << 8: a copy played its rounds and went
 inline void gone(uint32_t v) {
-  for (auto &a : anims)
+  for (auto &a : overlays)
     for (auto &c : a.copies)
       if (c.used && c.placed && c.rounds && c.place == (v & 0xFF) && c.tag == (v >> 8 & 0xFF)) {
         c = Copy();
@@ -1110,7 +1111,7 @@ inline void loop(uint32_t deadline_us) {
   if (W.phase == IDLE) {
     if (!link::connected)
       return;
-    for (auto &a : anims)
+    for (auto &a : overlays)
       if (!a.name.empty() && a.state == WANT) {
         W.a = &a;
         if (!a.data.empty()) {  // made already, sent again after a hello. It fit before, so it fits again.
@@ -1134,4 +1135,4 @@ inline void loop(uint32_t deadline_us) {
     send(deadline_us);
 }
 
-}  // namespace flexit::panel::anim
+}  // namespace flexit::panel::overlay

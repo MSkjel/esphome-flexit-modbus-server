@@ -43,8 +43,8 @@ unsigned plink_pack_row(const uint8_t *in, unsigned n, uint8_t *out) {
   return o;
 }
 
-unsigned plink_anim_record_in(const pdeflate_work_t *work, const uint8_t *prev, const uint8_t *cur, unsigned w,
-                              unsigned h, uint8_t delay, uint8_t *out) {
+unsigned plink_overlay_record_in(const pdeflate_work_t *work, const uint8_t *prev, const uint8_t *cur, unsigned w,
+                                 unsigned h, uint8_t delay, uint8_t *out) {
   unsigned rb = w / 2, x0 = rb, x1 = 0, y0 = h, y1 = 0;
   for (unsigned y = 0; y < h; y++)
     for (unsigned x = 0; x < rb; x++)
@@ -56,24 +56,24 @@ unsigned plink_anim_record_in(const pdeflate_work_t *work, const uint8_t *prev, 
       }
   if (y0 >= y1)
     x0 = x1 = y0 = y1 = 0;  // nothing changed, empty rectangle
-  out[ANIM_RECORD_DELAY] = delay;
-  out[ANIM_RECORD_X] = (uint8_t) x0;
-  out[ANIM_RECORD_Y] = (uint8_t) y0;
-  out[ANIM_RECORD_W] = (uint8_t) (x1 - x0);
-  out[ANIM_RECORD_H] = (uint8_t) (y1 - y0);
+  out[OVERLAY_RECORD_DELAY] = delay;
+  out[OVERLAY_RECORD_X] = (uint8_t) x0;
+  out[OVERLAY_RECORD_Y] = (uint8_t) y0;
+  out[OVERLAY_RECORD_W] = (uint8_t) (x1 - x0);
+  out[OVERLAY_RECORD_H] = (uint8_t) (y1 - y0);
   if (y0 == y1)
-    return ANIM_RECORD_HEAD;
+    return OVERLAY_RECORD_HEAD;
   uint32_t size = (x1 - x0) * (y1 - y0), n;
   if (work)
-    n = pdeflate_in(work, cur + y0 * rb + x0, x1 - x0, rb, size, out + ANIM_RECORD_HEAD, PDEFLATE_BOUND(size));
+    n = pdeflate_in(work, cur + y0 * rb + x0, x1 - x0, rb, size, out + OVERLAY_RECORD_HEAD, PDEFLATE_BOUND(size));
   else
-    n = pdeflate(cur + y0 * rb + x0, x1 - x0, rb, size, out + ANIM_RECORD_HEAD, PDEFLATE_BOUND(size));
-  return n ? ANIM_RECORD_HEAD + n : 0;
+    n = pdeflate(cur + y0 * rb + x0, x1 - x0, rb, size, out + OVERLAY_RECORD_HEAD, PDEFLATE_BOUND(size));
+  return n ? OVERLAY_RECORD_HEAD + n : 0;
 }
 
-unsigned plink_anim_record(const uint8_t *prev, const uint8_t *cur, unsigned w, unsigned h, uint8_t delay,
-                           uint8_t *out) {
-  return plink_anim_record_in(NULL, prev, cur, w, h, delay, out);
+unsigned plink_overlay_record(const uint8_t *prev, const uint8_t *cur, unsigned w, unsigned h, uint8_t delay,
+                              uint8_t *out) {
+  return plink_overlay_record_in(NULL, prev, cur, w, h, delay, out);
 }
 
 void plink_put_palette(uint8_t *b, const uint32_t *pal) {
@@ -110,16 +110,16 @@ int plink_pic_patch(uint8_t *b, uint8_t id, uint16_t y, uint16_t count, uint32_t
   return with_palette(b, PIC_PATCH_HEAD, pal);
 }
 
-int plink_anim_begin(uint8_t *b, uint8_t id, uint8_t slot, uint16_t w, uint16_t h, uint8_t scale, uint8_t transp,
-                     uint32_t size, const uint32_t *pal) {
+int plink_overlay_begin(uint8_t *b, uint8_t id, uint8_t slot, uint16_t w, uint16_t h, uint8_t scale, uint8_t transp,
+                        uint32_t size, const uint32_t *pal) {
   b[PIC_MSG_ID] = id;
-  b[ANIM_BEGIN_SLOT] = slot;
-  plink_put16(b + ANIM_BEGIN_W, w);
-  plink_put16(b + ANIM_BEGIN_H, h);
-  b[ANIM_BEGIN_SCALE] = scale;
-  b[ANIM_BEGIN_TRANSP] = transp;
-  plink_put32(b + ANIM_BEGIN_SIZE, size);
-  return with_palette(b, ANIM_BEGIN_HEAD, pal);
+  b[OVERLAY_BEGIN_SLOT] = slot;
+  plink_put16(b + OVERLAY_BEGIN_W, w);
+  plink_put16(b + OVERLAY_BEGIN_H, h);
+  b[OVERLAY_BEGIN_SCALE] = scale;
+  b[OVERLAY_BEGIN_TRANSP] = transp;
+  plink_put32(b + OVERLAY_BEGIN_SIZE, size);
+  return with_palette(b, OVERLAY_BEGIN_HEAD, pal);
 }
 
 int plink_kind(uint16_t key) {
@@ -130,8 +130,8 @@ int plink_kind(uint16_t key) {
     case K_PIC_END:
     case K_PIC_ACK:
     case K_PIC_CLEAR:
-    case K_ANIM_CLEAR:
-    case K_ANIM_GONE:
+    case K_OVERLAY_CLEAR:
+    case K_OVERLAY_GONE:
     case K_SHOT:
     case K_SHOT_DONE:
       return PLINK_EVENT;
@@ -140,12 +140,12 @@ int plink_kind(uint16_t key) {
     case K_PIC_PATCH:
     case K_PIC_DATA:
     case K_PIC_PART:
-    case K_ANIM_BEGIN:
-    case K_ANIM_DEPTH:
+    case K_OVERLAY_BEGIN:
+    case K_OVERLAY_DEPTH:
     case K_LOG:
       return PLINK_BYTES;
   }
-  if (key >= K_ANIM_FRAMES && key <= K_ANIM_ROUNDS)
+  if (key >= K_OVERLAY_FRAMES && key <= K_OVERLAY_ROUNDS)
     return PLINK_BYTES;
   if (key >= K_SAVER_LINE && key < K_SAVER_LINE + SAVER_LINES)
     return PLINK_BYTES;
