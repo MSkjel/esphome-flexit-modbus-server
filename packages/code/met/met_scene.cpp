@@ -773,8 +773,13 @@ static void shape(Land &d, Ground g, const float *ph) {
   }
 }
 
+// A skerry, drawn once the trees stand
+struct Skerry {
+  int x, y, rx, ry;
+};
+
 // Sea to a rocky shore, a lighthouse on the point, and a sailboat off the coast on a fine day
-static void coast(Scene &s, const Now &n, Rng &h) {
+static void coast(Scene &s, const Now &n, Rng &h, Skerry *sk) {
   s.sea = true;
   s.sea_top = HORIZON + 1;
   s.lighthouse = true;  // 32 tall
@@ -783,9 +788,9 @@ static void coast(Scene &s, const Now &n, Rng &h) {
   s.rgb[C_LH_BAND] = mix(mix(0x2A1418, 0x9A3426, n.light), s.rgb[C_SKY + 4], n.fog / 200);
   if (n.dark && n.o.frame % 2 == 0)  // the lamp, lit every other redraw
     box(s, LH_X - 1, s.lh_y - 29, 3, 3, 2, WARM_LIGHT);
-  for (int k = 0; k < 2; k++) {  // skerries
+  for (int k = 0; k < 2; k++) {  // skerries, see skerries()
     int x = k ? h.in(140, 215) : h.in(20, 90);
-    blob(s, x, h.in(170, 178), h.in(4, 7), h.in(1, 2), ON_WATER, s.rgb[C_HILL + 1]);
+    sk[k] = {x, h.in(170, 178), h.in(4, 7), h.in(1, 2)};
   }
   int bx = h.in(120, 225), by = h.in(168, 176);  // in any weather, so the trees after it stay put
   s.boat = {(int16_t) bx, (int16_t) by};
@@ -954,6 +959,33 @@ static void fog_edges(Scene &s, const Now &n, float ph) {
     }
 }
 
+// How far tree i reaches either side of its middle at row y, -1 above it
+static int tree_hw(const Scene &s, int i, int y) {
+  const Tree &t = s.tree[i];
+  int d = y - t.top;
+  if (d < 0)
+    return -1;
+  if (t.kind == 0)
+    return spruce_hw(d);
+  Crown c = crown_of(s, i);
+  return d >= c.rows ? 1 : t.kind == 1 ? c.rx : 1 + d / 5;
+}
+
+// The skerries no tree stands in front of, as one half hidden behind a crown looks like a branch of it
+static void skerries(Scene &s, const Skerry *sk) {
+  for (int k = 0; k < 2; k++) {
+    const Skerry &e = sk[k];
+    bool hidden = false;
+    for (int i = 0; i < s.ntrees; i++)
+      for (int y = e.y - e.ry; y <= e.y + e.ry; y++) {
+        int hw = tree_hw(s, i, y);
+        hidden |= hw >= 0 && abs(e.x - s.tree[i].x) <= hw + e.rx + 1;
+      }
+    if (!hidden)
+      blob(s, e.x, e.y, e.rx, e.ry, ON_WATER, s.rgb[C_HILL + 1]);
+  }
+}
+
 // The hills, the landscape, the cabin or the park, the trees and the fog. Seeded by the location, so it's always
 // the same landscape there.
 static void ground(Scene &s, const Now &n) {
@@ -973,8 +1005,9 @@ static void ground(Scene &s, const Now &n) {
   s.cabin = true;
   s.cabin_x = (int16_t) (CABIN_X + h.in(-8, 8));
   int ntrees = (int) std::size(s.tree), nfront = 11;
+  Skerry sk[2];
   if (n.o.ground == G_COAST) {
-    coast(s, n, h);
+    coast(s, n, h, sk);
     ntrees = nfront = 5;
   } else if (n.o.ground == G_MOUNTAINS) {
     mountains(s, n);
@@ -1006,6 +1039,8 @@ static void ground(Scene &s, const Now &n) {
     }
   }
   trees(s, n, h, ntrees, nfront);
+  if (n.o.ground == G_COAST)
+    skerries(s, sk);
   s.window_lit = n.sun.el < -3 && ((n.hour >= 6 && n.hour < 23) || n.xmas || n.newyear);  // asleep after eleven
   s.rgb[C_WINDOW] = n.halloween ? rgb4(255, 140, 40) : WARM_LIGHT;
   s.rgb[C_CABIN] = mix(mix(0x2A1418, 0x9A3426, n.light), s.rgb[C_HILL + 2], n.fog / 200);  // falu red
