@@ -1,7 +1,8 @@
-// Screensaver overlays: the animations from animation.yaml and the weather's. All frames share 16 colours, one
-// transparent if any pixel is, and each frame after the first is the deflated rectangle that changed. The panel keeps
-// up to OVERLAY_SLOTS of them in OVERLAY_POOL and shows each in up to OVERLAY_PLACES places, the copies of one in step
-// unless a copy gets a frame of its own.
+// Screensaver overlays: the animations from animation.yaml and the weather's. All frames share 16 colours, each with
+// its own opacity: the source's own, or counted from the frames with one clear if any pixel is. One frame goes as a
+// still, which the panel keeps packed. More go as an animation, each frame after the first the deflated rectangle
+// that changed. The panel keeps up to OVERLAY_SLOTS of them in OVERLAY_POOL and shows each in up to OVERLAY_PLACES
+// places, the copies of one in step unless a copy gets a frame of its own.
 #pragma once
 #include <strings.h>
 #include <algorithm>
@@ -33,6 +34,8 @@ struct Source {
   std::function<void(bool)> on_shown = {};
   int fade_ms = 0;
   std::vector<uint16_t> delays = {};  // ms each frame shows, if not all frame_ms
+  // Colours of its own, 0xAARRGGBB, 16 at most, each pixel the nearest. Counted from the frames if there are none.
+  std::vector<uint32_t> colours = {};
 };
 
 // ms frame f of s shows
@@ -80,15 +83,15 @@ struct Overlay {
   std::string name;  // "" = free slot
   const Source *src = nullptr;
   int state = WANT, w = 0, h = 0, scale = 1;
-  bool half = false;
-  uint8_t transp = OVERLAY_OPAQUE;
-  uint32_t pal[16] = {};
-  std::vector<uint8_t> data;  // the frame records
+  bool half = false, still = false;  // still: one frame, OVERLAY_STILL
+  uint32_t pal[16] = {};             // 0xAARRGGBB
+  std::vector<uint8_t> data;         // the frame records, or a still's pieces
   std::vector<Copy> copies;
   uint16_t frame_rate = 100;  // percent, 0 = paused
   std::string why;            // when it failed
   bool lasting = false;       // it would fail again, so it waits until it's shown again
   size_t frame_bytes() const { return (size_t) w / 2 * h; }
+  size_t panel_frame() const { return still ? 0 : frame_bytes(); }  // what the panel keeps of its frame
 };
 inline Overlay overlays[OVERLAY_SLOTS];
 
@@ -129,9 +132,9 @@ inline size_t used_by_others(const Overlay *a) {
   for (auto &o : overlays) {
     if (&o == a || !(o.state == SENT || (&o == W.a && W.t.head)))
       continue;
-    n += o.frame_bytes() + o.data.size();
+    n += o.panel_frame() + o.data.size();
     for (auto &c : o.copies)
-      n += c.placed && c.own ? o.frame_bytes() : 0;
+      n += c.placed && c.own ? o.panel_frame() : 0;
   }
   return n;
 }
@@ -172,25 +175,55 @@ inline void status(const std::string &s) { panel::status(id(panel_animation_stat
 
 inline bool opaque(uint32_t c) { return c >> 24 >= 128; }  // 0xAARRGGBB, at least half opaque
 
-// 0xAARRGGBB of the animation being made. At half size the 2x2 average, transparent if 3 or more of the 4 are.
-// The column that pads the width to even repeats the last one, so it doesn't count as transparent.
+// 0xAARRGGBB of the animation being made. At half size the 2x2 average, by alpha with colours of its own, else
+// transparent if 3 or more of the 4 are. The column that pads the width to even repeats the last one, so it doesn't
+// count as transparent.
 inline uint32_t px(int f, int x, int y) {
   const Source &s = *W.a->src;
   if (!W.a->half)
     return y < s.h ? s.pixel(f, std::min(x, s.w - 1), y) : 0;
-  uint32_t r = 0, g = 0, b = 0, n = 0;
+  bool soft = !s.colours.empty();
+  uint32_t r = 0, g = 0, b = 0, al = 0, n = 0;
   for (int dy = 0; dy < 2; dy++)
     for (int dx = 0; dx < 2; dx++) {
       int sx = std::min(2 * x + dx, s.w - 1), sy = 2 * y + dy;
-      uint32_t c = sy < s.h ? s.pixel(f, sx, sy) : 0;
-      if (!opaque(c))
+      uint32_t c = sy < s.h ? s.pixel(f, sx, sy) : 0, k = soft ? c >> 24 : 255;
+      if (!soft && !opaque(c))
         continue;
-      r += c >> 16 & 255;
-      g += c >> 8 & 255;
-      b += c & 255;
+      r += (c >> 16 & 255) * k;
+      g += (c >> 8 & 255) * k;
+      b += (c & 255) * k;
+      al += k;
       n++;
     }
-  return n >= 2 ? 0xFF000000u | (r / n) << 16 | (g / n) << 8 | b / n : 0;
+  if (!al || (!soft && n < 2))
+    return 0;
+  return (soft ? al / 4 : 255) << 24 | (r / al) << 16 | (g / al) << 8 | b / al;
+}
+
+// The source's own colour nearest c, as they look over anything: each channel by its alpha, and the alpha
+inline uint8_t nearest_own(uint32_t c, const uint32_t *pal, int n) {
+  auto by_alpha = [](uint32_t v, int at) { return (int) ((v >> at & 255) * (v >> 24) / 255); };
+  int best = 0;
+  uint32_t bd = UINT32_MAX;
+  for (int i = 0; i < n; i++) {
+    int dr = by_alpha(c, 16) - by_alpha(pal[i], 16), dg = by_alpha(c, 8) - by_alpha(pal[i], 8),
+        db = by_alpha(c, 0) - by_alpha(pal[i], 0), da = (int) (c >> 24) - (int) (pal[i] >> 24);
+    uint32_t d = (uint32_t) (2 * dr * dr + 4 * dg * dg + 3 * db * db + 3 * da * da);
+    if (d < bd) {
+      bd = d;
+      best = i;
+    }
+  }
+  return (uint8_t) best;
+}
+
+// The colours the panel draws none of, at an opacity that rounds to 0 of its 15ths
+inline uint16_t clear_colours(const uint32_t *pal) {
+  uint16_t m = 0;
+  for (int i = 0; i < 16; i++)
+    m |= (uint16_t) (((pal[i] >> 24) * 15 + 127) / 255 == 0) << i;
+  return m;
 }
 
 // Frees what count() and make() work in
@@ -236,15 +269,23 @@ inline std::string too_big(size_t n) {
   return (W.a->half ? "too big even at half size (over " : "too big at scale 2 (over ") + std::to_string(n) + " bytes)";
 }
 
-// The most the records take while it's made: up to the room there can be, and one record over
+// The most the records take while it's made: up to the room there can be, and one record over. A still's pieces up
+// to the pool.
 inline size_t data_max() {
+  if (W.a->still)
+    return OVERLAY_POOL;
   return OVERLAY_POOL - W.a->frame_bytes() + OVERLAY_RECORD_HEAD + PDEFLATE_BOUND(W.a->frame_bytes());
 }
 
 // Whether the ESP has the RAM to make it: the colour counts, then the colour table, three frames, the records and
-// pdeflate's work for a frame, in three blocks. Without exceptions a failed allocation restarts the ESP.
+// pdeflate's work for a frame, in three blocks. A still has one frame and no deflate. Without exceptions a failed
+// allocation restarts the ESP.
 inline bool has_ram() {
-  size_t f = W.a->frame_bytes(), work = PDEFLATE_ENC + PDEFLATE_TOK(f) + PDEFLATE_REST(f);
+  size_t f = W.a->frame_bytes();
+  if (W.a->still)
+    return panel::has_ram(std::max<size_t>(COUNT_RAM, BINS + f + data_max()),
+                          std::max<size_t>({BINS * 4, data_max(), f}));
+  size_t work = PDEFLATE_ENC + PDEFLATE_TOK(f) + PDEFLATE_REST(f);
   return panel::has_ram(std::max<size_t>(COUNT_RAM, BINS + 3 * f + data_max() + work),
                         std::max<size_t>({BINS * 4, data_max(), PDEFLATE_ENC, PDEFLATE_TOK(f)}));
 }
@@ -327,7 +368,7 @@ inline void send_frame_rate(const Overlay &a) {
 // Whether the panel's pool has room for a frame of a's own, once c's own one, if it has one there, is gone.
 // Warns if not.
 inline bool own_room(const Overlay &a, const Copy *c) {
-  if (used_by_others(nullptr) + a.frame_bytes() - (c && c->placed && c->own ? a.frame_bytes() : 0) <= OVERLAY_POOL)
+  if (used_by_others(nullptr) + a.panel_frame() - (c && c->placed && c->own ? a.panel_frame() : 0) <= OVERLAY_POOL)
     return true;
   ESP_LOGW("panel", "Animation %s: no room in the panel's %u bytes for a copy with a frame of its own", a.name.c_str(),
            (unsigned) OVERLAY_POOL);
@@ -383,7 +424,8 @@ inline bool start() {
     a.scale = s.scale * (a.half ? 2 : 1);
     a.w = ((a.half ? (s.w + 1) / 2 : s.w) + 1) & ~1;  // even, so rows are whole bytes
     a.h = a.half ? (s.h + 1) / 2 : s.h;
-    bool fits = a.frame_bytes() <= left;
+    a.still = s.frames == 1;
+    bool fits = a.panel_frame() <= left;
     if (fits && has_ram())
       break;
     if (!can_halve())
@@ -436,25 +478,38 @@ inline void palette() {
         (d.empty() || std::equal(d.begin() + p, d.end(), d.begin())))
       W.frames = p;
   drop(W.hash);
+  a.still = W.frames == 1;
   std::vector<uint16_t> bins;
   memset(a.pal, 0, sizeof a.pal);
-  W.colours = median_cut(W.hist, W.any_transp ? 15 : 16, a.pal, bins);
-  a.transp = W.any_transp ? 15 : OVERLAY_OPAQUE;
+  const std::vector<uint32_t> &own = a.src->colours;
+  if (!own.empty()) {
+    W.colours = (int) std::min<size_t>(own.size(), 16);
+    std::copy_n(own.begin(), W.colours, a.pal);
+  } else {
+    W.colours = median_cut(W.hist, W.any_transp ? 15 : 16, a.pal, bins);
+    for (int i = 0; i < W.colours; i++)
+      a.pal[i] |= 0xFF000000u;  // and 15 clear if any pixel is
+  }
   drop(W.hist);
   drop(bins);                // the lut takes their place, so has_ram()'s peak holds
   W.lut.assign(BINS, 0xFF);  // filled as make() meets the colours
   a.data.clear();
   a.data.reserve(data_max());  // so it never moves
   W.frame.resize(a.frame_bytes());
-  W.prev.resize(a.frame_bytes());
-  W.enc.resize(PDEFLATE_ENC / 4);
-  W.tok.resize(PDEFLATE_TOK(a.frame_bytes()) / 4);
-  W.rest.resize((PDEFLATE_REST(a.frame_bytes()) + 1) / 2);
+  if (!a.still) {
+    W.prev.resize(a.frame_bytes());
+    W.enc.resize(PDEFLATE_ENC / 4);
+    W.tok.resize(PDEFLATE_TOK(a.frame_bytes()) / 4);
+    W.rest.resize((PDEFLATE_REST(a.frame_bytes()) + 1) / 2);
+  }
   W.f = 0;
   W.last = 0;
   W.record_us = UINT32_MAX;
   W.phase = MAKE;
 }
+
+// ms in OVERLAY_TICK_MS, 1 at least
+inline uint32_t ticks_of(uint32_t ms) { return std::max<uint32_t>(1, (ms + OVERLAY_TICK_MS / 2) / OVERLAY_TICK_MS); }
 
 // Appends the record that turns `from` into `to`, or the whole frame if from is null, then waits ms. A record
 // waits MAX_FRAME_MS at most, the rest goes in empty records after it. A frame like the one before adds its time to
@@ -465,7 +520,7 @@ inline void palette() {
 inline bool record(const std::vector<uint8_t> *from, const std::vector<uint8_t> &to, uint32_t ms, bool back = false) {
   Overlay &a = *W.a;
   const size_t most = OVERLAY_RECORD_HEAD + PDEFLATE_BOUND(a.frame_bytes());  // what a record takes while it's made
-  uint32_t ticks = std::max<uint32_t>(1, (ms + OVERLAY_TICK_MS / 2) / OVERLAY_TICK_MS);
+  uint32_t ticks = ticks_of(ms);
   if (back)
     ticks = std::min<uint32_t>(ticks, OVERLAY_DELAY_MAX);
   else if (from && W.last && *from == to) {
@@ -500,11 +555,10 @@ inline void halve() {
   start();
 }
 
-// For make(): all frames are in, or it's over the room left or there was no memory to compress it. Then it's
-// sent, or made again at half size if it can.
-inline void made(bool ok, size_t left) {
+// For make(): all frames are in, or what they need is over the room left or there was no memory to compress them.
+// Then it's sent, or made again at half size if it can.
+inline void made(bool ok, size_t left, size_t need) {
   Overlay &a = *W.a;
-  size_t need = a.frame_bytes() + a.data.size();
   drop_work();
   if (!ok || need > left) {
     if (!can_halve()) {
@@ -521,8 +575,9 @@ inline void made(bool ok, size_t left) {
     return;
   }
   a.data.shrink_to_fit();
-  ESP_LOGI("panel", "Animation %s: %dx%d%s, %d frames%s, %u bytes", a.name.c_str(), a.w, a.h, a.half ? " drawn 2x" : "",
-           W.frames, W.frames < a.src->frames ? " (the rest repeat them)" : "", (unsigned) need);
+  ESP_LOGI("panel", "Animation %s: %dx%d%s, %s%s, %u bytes", a.name.c_str(), a.w, a.h, a.half ? " drawn 2x" : "",
+           a.still ? "still" : (std::to_string(W.frames) + " frames").c_str(),
+           W.frames < a.src->frames ? " (the rest repeat them)" : "", (unsigned) need);
   W.t.reset();
   W.phase = SEND;
   status("Sending " + a.name);
@@ -537,16 +592,17 @@ inline uint8_t index_of(uint32_t c) {
 }
 
 // Maps a row of the frame or a few to the palette. Once the frame is in, adds its record, and after the last frame
-// the one back to the first. A record goes in one go, so it waits for the next slice unless this one is fresh or
-// has the time the last record took. False when it waits.
+// the one back to the first. A still's pieces instead. A record goes in one go, so it waits for the next slice
+// unless this one is fresh or has the time the last record took. False when it waits.
 inline bool make(uint32_t deadline_us, bool fresh) {
   Overlay &a = *W.a;
   if (W.y < a.h) {
+    bool own = !a.src->colours.empty();
     for (int n = 0; n < ROWS_PX && W.y < a.h; n += a.w, W.y++) {
       uint8_t *row = W.frame.data() + (size_t) W.y * (a.w / 2);
       for (int x = 0; x < a.w; x++) {
         uint32_t c = px(W.f, x, W.y);
-        uint8_t i = opaque(c) ? index_of(c) : a.transp;
+        uint8_t i = own ? nearest_own(c, a.pal, W.colours) : opaque(c) ? index_of(c) : 15;
         row[x / 2] = (uint8_t) (x & 1 ? row[x / 2] | i : i << 4);
       }
     }
@@ -554,9 +610,19 @@ inline bool make(uint32_t deadline_us, bool fresh) {
   }
   if (!fits(deadline_us, W.record_us, fresh))
     return false;
-  uint32_t t0 = micros();
   W.y = 0;
   size_t left = room();
+  if (a.still) {
+    a.data.resize(left);
+    uint8_t delay = (uint8_t) std::min<uint32_t>(ticks_of(frame_ms(*a.src, 0)), OVERLAY_DELAY_MAX);
+    uint32_t n =
+        plink_overlay_pieces(W.frame.data(), a.w, a.h, clear_colours(a.pal), delay, a.data.data(), (uint32_t) left);
+    a.data.resize(n);
+    W.f = 1;
+    made(true, left, n ? n : left + 1);
+    return true;
+  }
+  uint32_t t0 = micros();
   bool ok = record(W.f ? &W.prev : nullptr, W.frame, frame_ms(*a.src, W.f));
   if (!W.f)
     W.first = W.frame;
@@ -565,7 +631,7 @@ inline bool make(uint32_t deadline_us, bool fresh) {
   if (ok && last && W.f > 1 && a.frame_bytes() + a.data.size() <= left)
     ok = record(&W.prev, W.first, frame_ms(*a.src, 0), true);
   if (!ok || last || a.frame_bytes() + a.data.size() > left)
-    made(ok, left);
+    made(ok, left, a.frame_bytes() + a.data.size());
   uint32_t us = micros() - t0;  // a frame that changed little goes quicker, the next may not
   W.record_us = W.record_us == UINT32_MAX ? us : std::max(us, W.record_us / 4 * 3);
   return true;
@@ -576,10 +642,10 @@ inline void send(uint32_t deadline_us) {
   Overlay &a = *W.a;
   Transfer::Pumped p = W.t.pump(deadline_us, [&a] {
     W.t.open(a.data.data(), (uint32_t) a.data.size());
-    uint8_t h[OVERLAY_BEGIN_HEAD + PIC_PAL_LEN];
+    uint8_t h[OVERLAY_BEGIN_HEAD + OVERLAY_PAL_LEN];
     link::send(K_OVERLAY_BEGIN, h,
-               plink_overlay_begin(h, W.t.id, (uint8_t) (&a - overlays), (uint16_t) a.w, (uint16_t) a.h,
-                                   (uint8_t) a.scale, a.transp, (uint32_t) a.data.size(), a.pal));
+               plink_overlay_begin(h, W.t.id, (uint8_t) (&a - overlays), a.still ? OVERLAY_STILL : OVERLAY_ANIMATED,
+                                   (uint16_t) a.w, (uint16_t) a.h, (uint8_t) a.scale, (uint32_t) a.data.size(), a.pal));
   });
   if (p == Transfer::AGAIN) {  // the panel lost it or its answer
     ESP_LOGW("panel", "Animation %s: no answer from the panel, sending it again", a.name.c_str());

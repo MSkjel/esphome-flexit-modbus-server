@@ -106,24 +106,33 @@ enum {
   PIC_BAD,         // header of the wrong length, data that doesn't decode to the rows, or a JPEG the panel can't draw
 };
 
-// ---- Screensaver overlays, drawn over the picture
-// BEGIN, an overlay: id, slot (0..OVERLAY_SLOTS - 1), w (2, even), h (2), scale (1 or 2), transparent colour index
-// (OVERLAY_OPAQUE = none), size (4), then at OVERLAY_BEGIN_HEAD the palette (16 x RGB). Then DATA up to size bytes and
-// END, as for a picture. The data is one plink_overlay_record per frame. The first is the whole first frame, the last
-// one takes the last frame back to the first. It replaces the slot's overlay and its places. The panel keeps every
-// slot's frame and records in OVERLAY_POOL, and answers PIC_TOO_BIG when they don't fit next to the others.
+// ---- Screensaver overlays, drawn over the picture: 16 colours, each with its own opacity, animated or still
+// BEGIN: id, slot (0..OVERLAY_SLOTS - 1), w (2, even), h (2), scale (1 or 2), OVERLAY_ANIMATED or OVERLAY_STILL, size
+// (4), then at OVERLAY_BEGIN_HEAD the palette: 16 x RGB, then their opacities from 0, clear, to 15, two a byte, the
+// first colour's in the high nibble. Then DATA up to size bytes and END, as for a picture. It replaces the slot's
+// overlay and its places. The panel keeps every slot's records, and an animated one's frame, in OVERLAY_POOL, and
+// answers PIC_TOO_BIG when they don't fit next to the others.
 #define K_OVERLAY_BEGIN 0x120
 enum {
   OVERLAY_BEGIN_SLOT = 1,
   OVERLAY_BEGIN_W,
   OVERLAY_BEGIN_H = 4,
   OVERLAY_BEGIN_SCALE = 6,
-  OVERLAY_BEGIN_TRANSP,
+  OVERLAY_BEGIN_KIND,
   OVERLAY_BEGIN_SIZE,
   OVERLAY_BEGIN_HEAD = 12,
 };
-// A record is OVERLAY_RECORD_HEAD bytes, delay, x / 2, y, w / 2 and h, then its deflated rectangle. The delay is in
-// OVERLAY_TICK_MS, up to OVERLAY_DELAY_MAX. Whatever its delay, a frame shows OVERLAY_FRAME_MIN_MS at least.
+#define OVERLAY_PAL_LEN (PIC_PAL_LEN + 8)
+// The data is records of OVERLAY_RECORD_HEAD bytes, delay, x / 2, y, w / 2 and h, then that rectangle of the frame:
+//   OVERLAY_ANIMATED  a record a frame from plink_overlay_record, the rectangle that changed, deflated. The first is
+//                     the whole first frame, the last takes the last frame back to the first.
+//   OVERLAY_STILL     its pieces from plink_overlay_pieces, each at most OVERLAY_PIECE_MAX bytes, its rows packed as
+//                     plink_pack_row packs them. Clear where there's none. The panel keeps them packed and unpacks
+//                     them as they're drawn. The first one's delay is how long a round is, see ROUNDS.
+// The delay is in OVERLAY_TICK_MS, up to OVERLAY_DELAY_MAX. Whatever its delay, a frame shows OVERLAY_FRAME_MIN_MS at
+// least.
+enum { OVERLAY_ANIMATED, OVERLAY_STILL };
+#define OVERLAY_PIECE_MAX 1280  // 8 rows of the screen
 enum {
   OVERLAY_RECORD_DELAY,
   OVERLAY_RECORD_X,
@@ -143,9 +152,10 @@ enum {
 enum { OVERLAY_FRAMES_SLOT, OVERLAY_FRAMES_RATE, OVERLAY_FRAMES_LEN = 3 };
 #define OVERLAY_RATE_MAX 1000
 // PLACE, where an overlay shows: place (0..OVERLAY_PLACES - 1), slot, x (2), y (2), own, start, fade (2). Replaces
-// that place, x and y signed, so it can start off the screen. Every place of a slot shows its frames in step,
-// unless own = 1 gives it a frame of its own (w x h / 2 bytes more of OVERLAY_POOL) that starts start frames in. It
-// fades in over fade ms, upright, full size and on the whole screen. Ignored without the overlay or the room.
+// that place, x and y signed, so it can start off the screen. Every place of an animated slot shows its frames in
+// step, unless own = 1 gives it a frame of its own (w x h / 2 bytes more of OVERLAY_POOL) that starts start frames
+// in. A still ignores own. It fades in over fade ms, upright, full size and on the whole screen. Ignored without the
+// overlay or the room.
 #define K_OVERLAY_PLACE 0x123
 enum {
   OVERLAY_PLACE_SLOT = 1,
@@ -254,13 +264,12 @@ enum { OVERLAY_ROUNDS_COUNT = 1, OVERLAY_ROUNDS_FADE = 3, OVERLAY_ROUNDS_TAG = 5
 #define K_OVERLAY_DEPTH 0x12E
 enum { OVERLAY_DEPTH_DEPTH = 1, OVERLAY_DEPTH_LEN };
 #define OVERLAY_NEAREST 255
-#define OVERLAY_OPAQUE 16
 #define OVERLAY_SLOTS 6
 #define OVERLAY_PLACES 8
 #define OVERLAY_WAVES 12  // waves the panel runs at a time, of all places together
 #define OVERLAY_PLACE_BIT 0x80
 #define OVERLAY_ALL 0xFF
-#define OVERLAY_POOL 8192  // panel memory for the animations, each one inflated frame of w x h / 2 bytes plus records
+#define OVERLAY_POOL 8192  // panel memory for the overlays: their records, and an animated one's frame of w x h / 2
 
 // ---- Screenshots: what the panel shows as a JPEG, which the ESP puts together from 64x8 tiles, numbered across and
 // then down. Each tile is one restart interval from pjpeg_tile() at the quality SHOT asked for. The ESP writes the
