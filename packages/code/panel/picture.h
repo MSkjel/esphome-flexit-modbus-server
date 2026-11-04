@@ -42,6 +42,7 @@ struct Source {
   // row y as indexes into it. Then nothing is counted or mapped.
   const uint32_t *pal = nullptr;
   std::function<void(int y, uint8_t *idx)> row;
+  std::function<Parts()> parts;  // optional, with row: its parts in front of the animations farther than them
   Encoding encoding = AUTO;
   int quality = 0;  // highest JPEG quality 1..100, 0 = the best that fits
 };
@@ -104,6 +105,7 @@ struct State {
   Sums sums;                  // while mapping
   Search search;
   Transfer t;                                          // the piece being sent
+  bool parts_sent = false;                             // made's parts, with the plan's first piece
   bool to_clear = false;                               // K_PIC_CLEAR still to send
   uint32_t retry_at = 0, piece_at = 0, piece_len = 0;  // the piece's bytes in made.data
   std::vector<uint32_t> hist;                          // pixel count per colour, at 4 bits per channel
@@ -480,6 +482,7 @@ inline void jpeg(uint32_t deadline_us) {
 inline bool choose() {
   bool palette =
       S.palette_fits && (S.src->encoding == PALETTE || S.colours <= 16 || !S.jpeg.w || S.made.err <= 2 * S.jpeg.err);
+  Parts parts = palette && own() && S.src->parts ? S.src->parts() : Parts{};  // their colours are the source's
   if (S.src->done)
     S.src->done();
   if (!palette && !S.jpeg.w) {
@@ -490,6 +493,7 @@ inline bool choose() {
   if (!palette)
     S.made = std::move(S.jpeg);
   S.made.name = S.name;
+  S.made.parts = parts;
   S.jpeg = Pic();
   S.made.data.shrink_to_fit();
   S.made.rows.shrink_to_fit();
@@ -523,9 +527,29 @@ inline void now_shown() {
   status("Shown: " + S.name + what(S.shown));
 }
 
-// The whole picture, or only the changed rows in pieces. False if nothing has to go.
+// The parts of made that differ from has, the panel's. After a BEGIN it has none.
+inline void send_parts(const Parts &has) {
+  for (int k = 0; k < PIC_PARTS; k++) {
+    const Part &p = S.made.parts[k];
+    if (p == has[k])
+      continue;
+    uint8_t m[PIC_PART_LEN];
+    m[0] = (uint8_t) k;
+    plink_put16(m + PIC_PART_X0, (uint16_t) p.x0);
+    plink_put16(m + PIC_PART_Y0, (uint16_t) p.y0);
+    plink_put16(m + PIC_PART_X1, (uint16_t) p.x1);
+    plink_put16(m + PIC_PART_Y1, (uint16_t) p.y1);
+    plink_put16(m + PIC_PART_COLOURS, p.colours);
+    m[PIC_PART_DEPTH] = p.depth;
+    link::send(K_PIC_PART, m, sizeof m);
+  }
+  S.parts_sent = true;
+}
+
+// The whole picture, or only the changed rows and parts in pieces. False if nothing has to go.
 inline bool plan() {
   S.jobs.clear();
+  S.parts_sent = false;
   const Pic &made = S.made, &shown = S.shown;
   bool same = shown.name == made.name && shown.format == made.format && shown.w == made.w && shown.h == made.h;
   if (same && made.format != PIC_JPEG) {
@@ -602,8 +626,11 @@ inline void begin_piece() {
   if (j.full) {  // BEGIN, the palette for 16 colours
     int n = plink_pic_begin(h, S.t.id, made.format, made.w, made.h, S.piece_len, jpeg ? nullptr : made.pal);
     link::send(K_PIC_BEGIN, h, n);
-  } else {  // PATCH, the palette if it changed
+    send_parts(Parts{});  // BEGIN dropped the panel's
+  } else {                // PATCH, the palette if it changed
     link::send(K_PIC_PATCH, h, plink_pic_patch(h, S.t.id, j.y, j.count, S.piece_len, j.pal ? made.pal : nullptr));
+    if (!S.parts_sent)
+      send_parts(S.shown.parts);
   }
   if (jpeg)
     return;

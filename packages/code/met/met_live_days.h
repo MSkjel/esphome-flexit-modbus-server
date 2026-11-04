@@ -131,7 +131,7 @@ inline void easter(const Scene &s) {
     place("hare", 0, -22, hill.at(-12) - 8);
     later(amble("hare", 0, hill, -22, stop, 14, 10, 8, 0, 32), [=] {  // hops 32 px long
       swap("hare", 0, "haresit", stop, y);
-      later(4000, [=] {
+      later(ms_of("haresit") - STEP, [=] {
         swap("haresit", 0, "hare", stop, y);
         remove_later(amble("hare", 0, hill, stop, W + 10, 18, 10, 8, 0, 32), "hare", 0);
       });

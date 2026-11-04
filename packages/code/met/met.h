@@ -1,7 +1,8 @@
 // met_scene.h as a panel picture. met.yaml calls fetch() for the forecast, poll() for its answer and redraw()
 // every few minutes so the sun and moon move. Only changed rows are sent to the panel. MET Norway is asked again
-// once its last answer has expired, with If-Modified-Since, in a task of its own so the bus is still answered, and
-// less often while it refuses or doesn't answer, see fetched() and unreachable().
+// once its last answer has expired, with If-Modified-Since, in a task of its own so the bus is still answered, soon
+// again after a server error and less often while it refuses or doesn't answer, see fetched() and unreachable(). The
+// forecast is kept through all of that until it runs out.
 #pragma once
 #include <esp_crt_bundle.h>
 #include <esp_http_client.h>
@@ -9,6 +10,8 @@
 #include <freertos/task.h>
 #include <strings.h>
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -55,9 +58,10 @@ inline char url[128];
 inline double lat, lon;
 inline int timeout_ms;  // http_request's
 inline std::string name;
-inline bool with_forecast;  // the Panel Weather Forecast switch
-inline Options options;     // set from met.yaml
-inline uint32_t pal[16];    // the scene's colours, for picture.h
+inline bool with_forecast;    // the Panel Weather Forecast switch
+inline Options options;       // set from met.yaml
+inline uint32_t pal[16];      // the scene's colours, for picture.h
+inline picture::Parts parts;  // and its parts
 
 // name's index in names, for met.yaml's selects. 0 if it's none of them
 template<size_t N> int option_of(const char *const (&names)[N], const char *name) {
@@ -193,6 +197,7 @@ inline void finish() {
   drawing->colours.end(s, shown.name == name && shown.format == PIC_PALETTE ? shown.pal : nullptr);
   live::apply(s);
   memcpy(pal, s.pal, sizeof pal);
+  parts = parts_of(s);
   drawing->row_y = -1;
   counting = false;
   built = true;
@@ -307,22 +312,41 @@ struct Fetch {
   int timeout_ms;
   int status = 0;  // 0 = no answer
   Weather w;
-  std::string last_modified, expires;
+  std::string last_modified, expires, retry_after;
   unsigned stack_left = 0;
 };
 
+// Retry-After's seconds from now, given as seconds or as an HTTP date. 0 without one.
+inline uint32_t retry_after_s(const std::string &v, uint32_t now) {
+  if (v.empty())
+    return 0;
+  if (isdigit((unsigned char) v[0]))
+    return (uint32_t) strtoul(v.c_str(), nullptr, 10);
+  uint32_t t = http_date(v);
+  return t > now ? t - now : 0;
+}
+
 // api.met.no's answer, 2xx with the forecast read from it into f.w, or 304 if it hasn't changed. 203 is a product
-// that's deprecated, its data is still good. Refused, it waits an hour, then twice as long each time up to 12.
+// that's deprecated, its data is still good. A server error, 502 or 503 when it's busy, or an answer without a
+// forecast in it is usually over soon: it asks again a minute later, then twice as long each time up to half an hour.
+// Refused, it waits an hour, then twice as long each time up to 12. Longer if Retry-After says so.
 inline void fetched(const Fetch &f) {
   answered = true;
   retry_soon = false;
   bool ok = f.status >= 200 && f.status < 300 && f.w.ok;
+  uint32_t now = now_s();
   if (ok || f.status == 304) {
     backoff_s = 0;
-    uint32_t now = now_s(), e = http_date(f.expires);
+    uint32_t e = http_date(f.expires);
     not_before = e ? std::max(e, now + 600) : now + 3600;  // at least 10 min, in case our clock is off
   } else {
-    back_off(3600, 12 * 3600);  // 429 is too many requests, 403 refused
+    if (f.status >= 500 || f.status < 300) {
+      back_off(60, 1800);
+      retry_soon = true;  // tick() asks when it's time, not the next check
+    } else {
+      back_off(3600, 12 * 3600);  // 429 is too many requests, 403 refused
+    }
+    not_before = std::max(not_before, now + std::min<uint32_t>(retry_after_s(f.retry_after, now), 12 * 3600));
   }
   if (f.status == 304) {
     ESP_LOGI("met", "The forecast hasn't changed (HTTP 304)");
@@ -332,8 +356,10 @@ inline void fetched(const Fetch &f) {
     ESP_LOGW("met", "MET Norway says this product is deprecated");
   }
   if (!ok) {
-    ESP_LOGW("met", "No forecast from MET Norway (HTTP %d)", f.status);
-    on_status("No forecast (HTTP " + std::to_string(f.status) + ")");
+    ESP_LOGW("met", "No forecast from MET Norway (HTTP %d), asking again in %u s", f.status,
+             (unsigned) (not_before - now));
+    on_status(std::string(weather.ok ? "Kept the last forecast" : "No forecast") + " (HTTP " +
+              std::to_string(f.status) + ")");
     return;
   }
   const Weather &w = f.w;
@@ -357,6 +383,8 @@ inline esp_err_t on_header(esp_http_client_event_t *e) {
       f.last_modified = e->header_value;
     else if (!strcasecmp(e->header_key, "expires"))
       f.expires = e->header_value;
+    else if (!strcasecmp(e->header_key, "retry-after"))
+      f.retry_after = e->header_value;
   }
   return ESP_OK;
 }
@@ -486,6 +514,7 @@ inline void setup(double latitude, double longitude, const char *picture, const 
     if (drawing)
       row(drawing->scene, y, idx);
   };
+  s.parts = [] { return parts; };
   s.done = free_drawing;
   s.encoding = picture::encoding_of(encoding);
   s.quality = picture::quality_of(quality);

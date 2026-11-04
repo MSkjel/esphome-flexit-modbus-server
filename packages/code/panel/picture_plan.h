@@ -1,6 +1,7 @@
 // What goes to the panel for a converted picture: all of it, or the changed rows in pieces, packed by pzip against
 // what the panel holds. Plain C++ without ESPHome.
 #pragma once
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -9,7 +10,19 @@
 
 namespace flexit::panel::picture {
 
-// A converted picture. pal and rows are only for 16 colours.
+// A part of a 16-colour picture in front of the animations farther than it, see K_PIC_PART
+struct Part {
+  int16_t x0 = 0, y0 = 0, x1 = 0, y1 = 0;  // x1 and y1 just past it, empty for none
+  uint16_t colours = 0;                    // a bit for each palette index that makes it
+  uint8_t depth = 0;
+  bool operator==(const Part &o) const {
+    return x0 == o.x0 && y0 == o.y0 && x1 == o.x1 && y1 == o.y1 && colours == o.colours && depth == o.depth;
+  }
+  bool operator!=(const Part &o) const { return !(*this == o); }
+};
+using Parts = std::array<Part, PIC_PARTS>;
+
+// A converted picture. pal, rows and parts are only for 16 colours.
 struct Pic {
   std::string name;
   uint8_t format = PIC_PALETTE;
@@ -19,6 +32,7 @@ struct Pic {
   std::vector<uint8_t> data;
   std::vector<uint16_t> rows;  // offset of each row in data, plus the end
   double err = 0;              // mean squared error per pixel, Y + Cb + Cr
+  Parts parts{};
 };
 
 struct Job {  // one transfer, the whole picture or rows y..y+count-1, with or without the palette
@@ -26,7 +40,8 @@ struct Job {  // one transfer, the whole picture or rows y..y+count-1, with or w
   uint16_t y, count;
 };
 
-// The rows of made that differ from shown, in pieces into jobs, or all of it if they don't fit. Both 16 colours at
+// The rows of made that differ from shown, in pieces into jobs, or all of it if they don't fit. A piece of no rows
+// if only the palette or the parts changed. Both 16 colours at
 // the same size. Returns the pieces' bytes.
 uint32_t patches(const Pic &made, const Pic &shown, std::vector<Job> &jobs);
 

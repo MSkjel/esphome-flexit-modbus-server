@@ -46,6 +46,8 @@ uint32_t patches(const Pic &made, const Pic &shown, std::vector<Job> &jobs) {
     else
       jobs[0].pal = true;
   }
+  if (jobs.empty() && made.parts != shown.parts)
+    jobs.push_back({false, false, 0, 0});  // only the parts changed, they go with its header
   if (!fits)
     jobs.assign(1, {true, true, 0, made.h});
   return bytes;

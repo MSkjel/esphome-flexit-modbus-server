@@ -569,7 +569,9 @@ static void aurora(Scene &s, const Now &n) {
   s.rgb[C_AUR_EDGE] = mix(s.rgb[C_SKY], hue[2], 0.5f);
 }
 
-// Faint random stars, and the catalogue ones where they really are
+// Faint random stars, and the catalogue ones where they really are. A figure is drawn as it looks from here: its
+// middle where it is in the panorama, its stars about that at sky_y()'s px per degree both up and across. At the
+// panorama's own 360 degrees across W it would come out two or three times too tall for its width.
 static void stars(Scene &s, const Now &n) {
   if (n.sun.el >= -7 || n.grey >= 0.85f)
     return;
@@ -582,14 +584,34 @@ static void stars(Scene &s, const Now &n) {
   s.rgb[C_STAR] = 0xFFFFFF;  // same white as the forecast text
   s.rgb[C_DIM] = s.aurora ? s.rgb[C_STAR] : mix(s.rgb[C_SKY + 1], 0xE8EEFA, 0.4f);
   Turn turn = turn_at(n.lat, n.lon, j2000(n.t));
-  const float rad = (float) kRad;
-  for (unsigned i = 0; i < std::size(STARS) && n.cover < 70; i++) {
-    Pos p = horizontal(STARS[i].ra * 15 * rad, STARS[i].dec * rad, turn);
-    if (p.el < 1 || p.el > 58)
-      continue;
-    s.bright_x[s.nbright] = (int16_t) sky_x(p.az);
-    s.bright_y[s.nbright] = (int16_t) std::max(3, sky_y(p.el));
-    s.bright_big[s.nbright++] = STARS[i].bright;
+  const float rad = (float) kRad, px = (HORIZON - 26) / 55.0f / rad;  // px per radian
+  struct Dir {
+    float n, e, u;  // toward north, east and up
+    float dot(const Dir &o) const { return n * o.n + e * o.e + u * o.u; }
+  };
+  Pos p[std::size(STARS)];
+  Dir d[std::size(STARS)];
+  for (unsigned i = 0; i < std::size(STARS); i++) {
+    p[i] = horizontal(STARS[i].ra * 15 * rad, STARS[i].dec * rad, turn);
+    float el = p[i].el * rad, az = p[i].az * rad;
+    d[i] = {cosf(el) * cosf(az), cosf(el) * sinf(az), sinf(el)};
+  }
+  for (int f = 0; f < FIGURES && n.cover < 70; f++) {
+    Dir c = {0, 0, 0};  // its middle
+    for (unsigned i = 0; i < std::size(STARS); i++)
+      if (STARS[i].fig == f)
+        c = {c.n + d[i].n, c.e + d[i].e, c.u + d[i].u};
+    float k = sqrtf(c.dot(c)), el = asinf(c.u / k), az = atan2f(c.e, c.n);
+    Dir across = {-sinf(az), cosf(az), 0}, up = {-sinf(el) * cosf(az), -sinf(el) * sinf(az), cosf(el)};
+    int x0 = sky_x((float) wrap360(az / rad)), y0 = sky_y(el / rad);
+    for (unsigned i = 0; i < std::size(STARS); i++) {
+      if (STARS[i].fig != f || p[i].el < 1 || p[i].el > 58)
+        continue;
+      float to = d[i].dot(c) / k;  // how far it is toward the middle, for the view square on from there
+      s.bright_x[s.nbright] = (int16_t) ((x0 + iround(d[i].dot(across) / to * px) + W) % W);
+      s.bright_y[s.nbright] = (int16_t) std::max(3, y0 - iround(d[i].dot(up) / to * px));
+      s.bright_big[s.nbright++] = STARS[i].bright;
+    }
   }
 }
 

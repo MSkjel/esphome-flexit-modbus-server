@@ -196,7 +196,9 @@ static void on_poll(pbus_gaps_t *g, const uint8_t *f, uint32_t lo_us, uint32_t h
     // On time if right after another step and possibly on the grid. The time since that step is between lo
     // and hi.
     int32_t lo = (int32_t) (lo_us - g->step_hi_us), hi = (int32_t) (hi_us - g->step_lo_us);
-    int32_t k = (lo / 2 + hi / 2 + PBUS_GAP_STEP_US / 2) / PBUS_GAP_STEP_US * PBUS_GAP_STEP_US;
+    // The grid step nearest the middle. Held below top, the rounding can't pass INT32_MAX, and the step is the same.
+    int32_t mid = lo / 2 + hi / 2, top = INT32_MAX - PBUS_GAP_STEP_US / 2;
+    int32_t k = ((mid < top ? mid : top) + PBUS_GAP_STEP_US / 2) / PBUS_GAP_STEP_US * PBUS_GAP_STEP_US;
     bool off_grid = lo > k + PBUS_GAP_GRID_US || hi < k - PBUS_GAP_GRID_US;
     if (g->step_ok && k > 0 && !off_grid)
       g->req = f[0];
@@ -235,7 +237,8 @@ void pbus_gaps_frame(pbus_gaps_t *g, const uint8_t *f, int n, bool crc_ok, uint3
     return;                                // a link frame
   bool ok = n >= 4 && crc_ok;              // one whole frame with its CRC at the end
   bool probe = ok && n == 8 && f[1] == 4;  // the CX60 looking for panels, also at address 0xFE
-  bool cx60 = probe || cx60_len(f, n, ok) == n;
+  // cx60_len() is 0 for none, which an empty burst would match
+  bool cx60 = probe || (n > 0 && cx60_len(f, n, ok) == n);
   g->open = false;
   if (cx60) {
     if (g->armed)  // did it come back sooner than its steps say?

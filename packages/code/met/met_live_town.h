@@ -119,7 +119,7 @@ inline void glitter(const Scene &s) {
     int gx = (int) rnd(l, r - 2), gy = (int) rnd(top, top + 7);
     later(870 * i, [=] {
       int glint = ms_of("glitter", 1, 4), dark = ms_of("glitter") - glint;  // from frame 4 round to 0, then 1 to 3
-      place("glitter", i, gx, gy, {true, 4});
+      place("glitter", i, gx, gy, {true, 4, -1, D_SEA});
       area("glitter", i, l, top, r + 1, top + 10, "bounce", "bounce");
       wander("glitter", i, 3, 6, 0, 180, dark, dark, glint, glint);
     });
@@ -137,7 +137,7 @@ inline uint32_t sjark_by(Lane n) {
   bool left = chance(0.5f);
   int len = std::min(n.r - n.l, 50), a = n.l + (int) rnd(0, (float) (n.r - n.l - len));
   int x0 = left ? a + len : a, x1 = left ? a : a + len, ms = len * 1000 * 5 / 4;  // 0.8 px/s
-  place_flipped("sjark", 0, x0, n.y, left, {false, 0, 4000});
+  place_flipped("sjark", 0, x0, n.y, left, {false, 0, 4000, D_SEA});
   move("sjark", 0, flip_x("sjark", x1, left), n.y, ms);
   return gone_later(ms, "sjark", 4000);
 }
@@ -145,7 +145,7 @@ inline uint32_t sjark_by(Lane n) {
 // A sea eagle soars in over the fjord from the side away from the sun, circles there a while and goes. The ms.
 inline uint32_t sea_eagle() {
   in_light("seaeagle");
-  return gone_later(soar("seaeagle", 82, 22, 7), "seaeagle");
+  return gone_later(soar("seaeagle", 78, 22, 7), "seaeagle");
 }
 
 // A porpoise rolls along its lane, up and under twice. The ms it takes.
@@ -154,7 +154,7 @@ inline uint32_t porpoise(Lane n) {
   bool left = chance(0.5f);
   int len = 26, a = n.l + (int) rnd(0, (float) (n.r - n.l - len)), x0 = left ? a + len : a, x1 = left ? a : a + len;
   int ms = 2 * ms_of("porpoise");
-  place_flipped("porpoise", 0, x0, n.y, left, {true, 0, 0});
+  place_flipped("porpoise", 0, x0, n.y, left, {true, 0, 0, D_SEA});
   rounds("porpoise", 0, 2);
   move("porpoise", 0, flip_x("porpoise", x1, left), n.y, ms);
   return gone_later(ms, "porpoise", 0);
@@ -171,7 +171,7 @@ inline void sail(const Scene &s) {
     in_gap(l, r);
   if (room)
     x = std::clamp(x, l + 1, r - 13);
-  place_flipped("boat", 0, x, y, !left);
+  place_flipped("boat", 0, x, y, !left, {.depth = D_SEA});
   if (room)
     sail_on({(int16_t) (l + 1), (int16_t) (r - 13), (int16_t) y, left}, x, left);
   int a = room ? l + 1 : x, b = room ? r : x + 13;  // where the sailboat goes
@@ -188,11 +188,11 @@ inline void sail(const Scene &s) {
     sjark.l = (int16_t) (sl + 2);
     sjark.r = (int16_t) (sr - 2 - 24);
   }
-  roll.y = (int16_t) (s.boat.y + 2);
-  if (gap_stretch(water(s, roll.y, roll.y + 2, false), sl, sr, 40) ||
-      (stretch(water(s, roll.y, roll.y + 2, false), -1, sl, sr) && sr - sl >= 40)) {
+  roll.y = (int16_t) (s.boat.y + 1);
+  if (gap_stretch(water(s, roll.y, roll.y + 3, false), sl, sr, 40) ||
+      (stretch(water(s, roll.y, roll.y + 3, false), -1, sl, sr) && sr - sl >= 40)) {
     roll.l = (int16_t) sl;
-    roll.r = (int16_t) (sr - 5);
+    roll.r = (int16_t) (sr - 9);
   }
   visitors(minutes(6), minutes(1, 5), 3, [sjark, roll](int k) -> uint32_t {
     if (k == 1)
@@ -210,7 +210,7 @@ inline void sail(const Scene &s) {
   Cols open = water(s, shore - 10, shore - 1, false);
   if (!gap_stretch(open, l, r, 30) && (!stretch(open, -1, l, r) || r - l < 40))
     return;
-  place("eiders", 0, (l + r) / 2 - 7, shore - 8, {true});
+  place("eiders", 0, (l + r) / 2 - 7, shore - 8, {true, 0, -1, D_SEA});
   area("eiders", 0, l, shore - 10, r + 1, shore, "bounce", "bounce");
   face("eiders", 0, 180);
   wander("eiders", 0, 0.3f, 0.6f, 180, 30, 8000, 15000, 5000, 20000);
@@ -237,7 +237,7 @@ inline void lighthouse(const Scene &s) {
     return;
   int y = s.sea_top - 5, ms = (r - 26 - x) * 10000 / 7;  // 0.7 px/s
   sometimes(minutes(60), minutes(10, 40), [=] {
-    place("ship", 0, x, y, {false, 0, 5000});
+    place("ship", 0, x, y, {false, 0, 5000, D_SEA});
     drift("ship", 0, 0.7f, 0);
     return remove_later(ms, "ship", 0, 5000) + 5000;
   });
@@ -369,7 +369,7 @@ inline void pigeons(const Scene &s) {
     int x = b.x + (b.w - 34) / 2;
     bool flag =
         s.pole_x >= 0 && s.pole_top < b.top && s.pole_x + PENNANT_RIGHT >= x && s.pole_x - PENNANT_LEFT <= x + 33;
-    if (!b.back && b.kind == 0 && b.w >= 34 && b.top - 14 >= (s.overlay ? OV_H : 0) && !flag &&
+    if (!b.back && b.kind == 0 && b.w >= 34 && b.top - 16 >= (s.overlay ? OV_H : 0) && !flag &&
         (best < 0 || b.w > s.bld[best].w))
       best = i;
   }
@@ -377,7 +377,7 @@ inline void pigeons(const Scene &s) {
     return;
   const Bld &b = s.bld[best];
   in_light("pigeons");
-  place("pigeons", 0, b.x + (b.w - 34) / 2, b.top - 14, {false, 0, 2000});
+  place("pigeons", 0, b.x + (b.w - 34) / 2, b.top - 16, {false, 0, 2000});
 }
 
 inline void town_day(const Scene &s) {
@@ -385,8 +385,7 @@ inline void town_day(const Scene &s) {
   for (int i = 0; i < s.nbld; i++)
     if (!s.bld[i].back && s.bld[i].kind < 2)
       roof = std::min<int>(roof, s.bld[i].top);
-  flock({{60, roof - 30, 6, 10, roof - 50, roof + 5}, {220, roof - 40, 5, 8, roof - 56, roof}},
-        {{140, 40, 2, 3, 24, 62}, {280, 52, 2, 3, 28, 66}});
+  flock({{60, roof - 30, 6, 10, roof - 50, roof + 5}, {220, roof - 40, 5, 8, roof - 56, roof}});
   // Now and then along the road a tram, the bus or a cyclist in the bike lane, keeping right
   int y = tram_y(s);
   visitors(minutes(4), minutes(2), 3, [y](int k) -> uint32_t {

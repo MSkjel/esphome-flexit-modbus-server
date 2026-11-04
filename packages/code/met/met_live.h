@@ -109,6 +109,11 @@ inline int ms_of(const std::string &name, int from = 0, int to = INT_MAX) {
   const Frames *sp = frames_of(name);
   return sp ? sp->ms(from, to) : 0;
 }
+// Where name, its top at y, comes out of the forest at e from and goes back into, see Edge::out()
+inline int out_of(const Edge &e, const std::string &name, int y) {
+  const Frames *sp = frames_of(name);
+  return sp ? e.out(sp->w, sp->h, y + sp->h - 1) : -2;
+}
 
 // name's sprite as a panel animation
 inline bool ready(const std::string &name) {
@@ -159,15 +164,17 @@ inline void in_light(const char *n) {
 
 // How a copy is placed
 struct How {
-  bool own = false;  // a frame of its own
-  int start = 0;     // frames in, with one
-  int fade = -1;     // ms it fades in, -1 the usual 300
+  bool own = false;              // a frame of its own
+  int start = 0;                 // frames in, with one
+  int fade = -1;                 // ms it fades in, -1 the usual 300
+  uint8_t depth = ANIM_NEAREST;  // a Depth, behind the scene's parts nearer than it
 };
 inline void place(const std::string &n, int i, int x, int y, How o = {}) {
   if (ready(n))
-    anim::place(key(n), i, x, y, o.own, o.start, o.fade);
+    anim::place(key(n), i, x, y, o.own, o.start, o.fade, o.depth);
 }
 inline void flip(const std::string &n, int i, bool h, bool v) { anim::flip(key(n), i, h, v); }
+inline void depth(const std::string &n, int i, uint8_t d) { anim::depth(key(n), i, d); }
 // The panel pads a sprite to an even width, so a mirrored odd-width one moves a column. x that makes up for it.
 inline int flip_x(const std::string &n, int x, bool flipped) {
   const Frames *sp = frames_of(n);
@@ -180,11 +187,11 @@ inline void place_flipped(const std::string &n, int i, int x, int y, bool flippe
     flip(n, i, true, false);
 }
 inline void remove(const std::string &n, int i, int fade = 300) { anim::remove(key(n), i, fade); }
-// Copy i of from swaps for to at x, y, with own a frame of its own start frames in. Neither fades, so it doesn't
-// show.
+// Copy i of from swaps for to at x, y, at its depth, with own a frame of its own start frames in. Nothing shows
+// between them.
 inline void swap(const std::string &from, int i, const std::string &to, int x, int y, bool own = false, int start = 0) {
-  remove(from, i, 1);
-  place(to, i, x, y, {own, start, 0});
+  if (ready(to))
+    anim::swap(key(from), i, key(to), x, y, own, start);
 }
 // swap() to to facing left if left, see place_flipped()
 inline void swap_flipped(const std::string &from, int i, const std::string &to, int x, int y, bool left,
@@ -285,31 +292,62 @@ inline void visitors(uint32_t mean, uint32_t first, int n, std::function<uint32_
   });
 }
 
-// Copy 0 of walk from x0 along row y at speed px/s to stop, where it's stay for a round of stay's frames, dy rows
-// higher, then on to x1, facing the way it goes, and gone. The ms it takes.
-inline uint32_t stop_by(const char *walk, const char *stay, int x0, int stop, int x1, int y, int dy, float speed) {
-  bool left = x1 < x0;
+// The longest a visit waits for its sprites to get to the panel, the link busy, before it's called off
+inline constexpr uint32_t READY_WAIT = 5000;
+inline void on_panel(const char *n, const char *other, uint32_t at, std::function<void()> fn, uint32_t waited) {
+  auto state = [](const char *s) {
+    const anim::Anim *a = s ? anim::find(key(s)) : nullptr;
+    return !s ? (int) anim::SENT : a ? a->state : (int) anim::FAILED;
+  };
+  int a = state(n), b = state(other);
+  if (a == anim::SENT && b == anim::SENT) {
+    fn();
+    gone_later(at, n, 0, other);
+  } else if (a == anim::FAILED || b == anim::FAILED || waited >= READY_WAIT) {
+    clear(n);
+    if (other)
+      clear(other);
+  } else {
+    later(STEP, [=] { on_panel(n, other, at, fn, waited + STEP); });
+  }
+}
+// A visit from out of sight back out of it, fn, once the panel has its sprite n and other, so it doesn't come in
+// late and catch up in sight. They're gone at ms on, see gone_later(). The ms from now it can take.
+inline uint32_t set_off(const char *n, const char *other, uint32_t at, std::function<void()> fn) {
+  preload(n);
+  if (other)
+    preload(other);
+  on_panel(n, other, at, std::move(fn), 0);
+  return READY_WAIT + at + 100;
+}
+
+// Copy 0 of walk in from off one side along row y at speed px/s to stop, where it's stay for a round of stay's
+// frames, dy rows higher, then on off the other side or back the way it came, facing the way it goes. The ms it
+// takes.
+inline uint32_t stop_by(const char *walk, const char *stay, int stop, int y, int dy, float speed) {
+  const Frames *f = frames_of(walk);
+  int w = f ? f->w : 0;
+  bool left = chance(0.5f), back = chance(0.5f), on = back ? !left : left;  // the way it comes and goes on
+  int x0 = left ? W + 2 : -w - 2, x1 = on ? -w - 2 : W + 2;
   int in = (int) ((float) abs(stop - x0) * 1000 / speed), out = (int) ((float) abs(x1 - stop) * 1000 / speed);
   int still = ms_of(stay) - STEP;
-  preload(stay);
-  place_flipped(walk, 0, x0, y, left);
-  move(walk, 0, flip_x(walk, stop, left), y, in);
-  later(in, [=] {
-    swap_flipped(walk, 0, stay, stop, y - dy, left, true);
-    rounds(stay, 0, 1);
+  return set_off(walk, stay, in + still + out, [=] {
+    place_flipped(walk, 0, x0, y, left);
+    move(walk, 0, flip_x(walk, stop, left), y, in);
+    later(in, [=] { swap_flipped(walk, 0, stay, stop, y - dy, left, true); });
+    later(in + still, [=] {
+      swap_flipped(stay, 0, walk, stop, y, on);
+      move(walk, 0, flip_x(walk, x1, on), y, out);
+    });
   });
-  later(in + still, [=] {
-    swap_flipped(stay, 0, walk, stop, y, left);
-    move(walk, 0, flip_x(walk, x1, left), y, out);
-  });
-  return gone_later(in + still + out, walk, 300, stay);
 }
 
 // Copy 0 of n soars in from off the side away from the sun, circles rx by ry px round row y there a while and goes
-// off higher up. The ms it takes.
+// off higher up, facing the way it flies. The ms it takes.
 inline uint32_t soar(const char *n, int y, int rx, int ry) {
   bool left = R.sun_x > W / 2;  // where it comes in from
   place(n, 0, left ? -40 : W + 20, y - 16, {true});
+  face(n, 0);
   wave(n, 0, "x", -rx, rx, 12000, 12000, 0, 0, 20, false, "both");
   wave(n, 0, "y", -ry, ry, 8000, 8000, 0, 0, 20, false, "both");
   move(n, 0, left ? 60 : 225, y, 12000, "out");
@@ -454,63 +492,62 @@ struct NearHill {
     return (y[x / 4] * (4 - x % 4) + y[x / 4 + 1] * (x % 4) + 2) / 4;
   }
 };
-// The row of the near hill's lowest point over columns l to r - 1, and of its highest
+// The row of the near hill's lowest point over columns l to r - 1
 inline int hill_low(const Scene &s, int l, int r) {
   int y = 0;
   for (int x = l; x < r; x++)
     y = std::max<int>(y, s.land->hill[2][x]);
   return y;
 }
-inline int hill_high(const Scene &s, int l, int r) {
-  int y = H;
-  for (int x = l; x < r; x++)
-    y = std::min<int>(y, s.land->hill[2][x]);
-  return y;
-}
 
-// Copy i of n from x0 to x1 along the hill, a step every step px or so at speed px/s, and with downhill quicker
-// downhill and slower uphill. Its top is dy above the hill's top under its middle, mid px in. Returns the ms it
-// takes.
-inline uint32_t amble(const char *n, int i, const NearHill &h, int x0, int x1, float speed, int mid, int dy,
-                      float downhill = 0, int step = 12) {
+// An amble()'s moves, each to x, y over ms to fn(x, y, ms) in turn. The ms they take.
+template<class F>
+uint32_t amble_steps(const NearHill &h, int x0, int x1, float speed, int mid, int dy, float downhill, int step, F fn) {
   int steps = std::max(1, abs(x1 - x0) / step), px = x0, py = h.at(x0 + mid) - dy;
   uint32_t t = 0;
   for (int k = 1; k <= steps; k++) {
     int x = x0 + (x1 - x0) * k / steps, y = h.at(x + mid) - dy, dx = std::max(1, abs(x - px));
     float v = speed * std::clamp(1 + downhill * (y - py) / dx, 0.6f, 1.5f);
     int ms = (int) (dx * 1000 / v);
-    move_later(t, n, i, x, y, ms);
+    fn(x, y, ms);
     t += ms;
     px = x;
     py = y;
   }
   return t;
 }
+// Copy i of n from x0 to x1 along the hill, a step every step px or so at speed px/s, and with downhill quicker
+// downhill and slower uphill. Its top is dy above the hill's top under its middle, mid px in. Returns the ms it
+// takes.
+inline uint32_t amble(const char *n, int i, const NearHill &h, int x0, int x1, float speed, int mid, int dy,
+                      float downhill = 0, int step = 12) {
+  uint32_t t = 0;
+  return amble_steps(h, x0, x1, speed, mid, dy, downhill, step, [&](int x, int y, int ms) {
+    move_later(t, n, i, x, y, ms);
+    t += ms;
+  });
+}
+// The ms an amble() takes
+inline uint32_t amble_ms(const NearHill &h, int x0, int x1, float speed, int mid, int dy, float downhill = 0,
+                         int step = 12) {
+  return amble_steps(h, x0, x1, speed, mid, dy, downhill, step, [](int, int, int) {});
+}
 
-// Gulls, drawn at two sizes instead of scaled: near ones lower and quicker, far ones high, slow and hazy, on gusts
-// of slow waves, facing the way they fly. Each from x, y at speed s0..s1, between rows top and bottom.
+// Gulls back and forth across the picture and round out of sight, on gusts of slow waves, facing the way they fly.
+// Each from x, y at speed s0..s1, between rows top and bottom.
 struct Gull {
   int x, y;
   float s0, s1;
   int top, bottom;
 };
-inline void flock(std::initializer_list<Gull> near, std::initializer_list<Gull> far) {
+inline void flock(std::initializer_list<Gull> gulls) {
   int i = 0;
-  for (const Gull &g : near) {
-    place("gull", i, g.x, g.y, {false, (5 * i) % 8});
-    area("gull", i, -20, g.top, 340, g.bottom, "cross", "bounce");
+  for (const Gull &g : gulls) {
+    place("gull", i, g.x, g.y, {i > 0, (5 * i) % 8});  // the others beating in their own time
+    area("gull", i, -24, g.top, 344, g.bottom, "bounce", "bounce");
     wave("gull", i, "speed", 70, 130, 4000, 4000, 2000, 2000, 50, true, "both");
     face("gull", i);
-    wander("gull", i, g.s0, g.s1, 0, 180, 3000, 9000, 0, 0);
-    i++;
-  }
-  i = 0;
-  for (const Gull &g : far) {
-    place("gullfar", i, g.x, g.y, {false, i * 3});
-    area("gullfar", i, -10, g.top, 330, g.bottom, "cross", "bounce");
-    glide("gullfar", i, "opacity", 75, 0);
-    face("gullfar", i);
-    wander("gullfar", i, g.s0, g.s1, 0, 180, 5000, 12000, 0, 0);
+    wander("gull", i, g.s0, g.s1, 0, 20, 3000, 9000, 0, 0);
     i++;
   }
 }
@@ -540,8 +577,9 @@ inline void chimney(const char *name, int puffs, int x, int y, int rise, int dri
     later((uint32_t) ((ms_of(name) - STEP) * i / puffs), [=] { puff(name, i, x, y, rise, drift, wdir); });
 }
 
-// Some of the picture's bright stars in full view sparkle now and then, two kinds by turns on times that don't line
-// up: the big ones first, as far from the others as they can be. Not near the moon, nor over the forecast or skip.
+// Some of the picture's bright stars in full view sparkle now and then, each from another of the twinkle's dark
+// whiles, so they don't line up: the big ones first, as far from the others as they can be. Not near the moon, nor
+// over the forecast or skip.
 inline void twinkle_stars(const Scene &s, Box skip = {}) {
   uint8_t px[W];
   int pick[6], n = 0;
@@ -568,13 +606,12 @@ inline void twinkle_stars(const Scene &s, Box skip = {}) {
     seen[best] = false;
     pick[n] = best;
   }
-  for (int i = 0; i < 6; i++) {
-    const char *name = i % 2 ? "twinkle2" : "twinkle";
+  static constexpr int DARK[] = {0, 9, 4, 13, 8, 17};  // its frames that start a dark while
+  for (int i = 0; i < 6; i++)
     if (i < n)
-      place(name, i / 2, s.bright_x[pick[i]] - 2, s.bright_y[pick[i]] - 2, {true, i * 4 % 9});
+      place("twinkle", i, s.bright_x[pick[i]] - 2, s.bright_y[pick[i]] - 2, {true, DARK[i]});
     else
-      remove(name, i / 2);
-  }
+      remove("twinkle", i);
 }
 
 // Every animation of the show goes, faded out
