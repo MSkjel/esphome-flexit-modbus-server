@@ -82,6 +82,7 @@ enum Depth : uint8_t {
 struct Options {
   Ground ground = G_HILLS;
   Aurora aurora = A_AUTO;  // auto = some clear nights north of 55 degrees
+  float facing = 180;      // azimuth in the picture's middle, clockwise from north: 0 north, 90 east, 180 south
   int heater_pct = 0;      // the unit's heater %, for the chimney smoke
   bool fireplace = false;  // more smoke
   uint32_t frame = 0;      // counts the redraws, for the lights that blink and the fireworks
