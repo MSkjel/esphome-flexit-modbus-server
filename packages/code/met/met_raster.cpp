@@ -19,7 +19,7 @@ static void span(uint8_t *row, int a, int b, uint8_t c) {
     memset(row + a, c, (size_t) (b - a + 1));
 }
 
-// span() at both edges too, where north is
+// span() at both edges too, where the sky behind the picture is, north when it faces south
 static void wrap_span(uint8_t *row, int a, int b, uint8_t c) {
   for (int k = -1; k <= 1; k++)
     span(row, a + k * W, b + k * W, c);

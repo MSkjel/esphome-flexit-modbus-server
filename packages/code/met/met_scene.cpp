@@ -402,7 +402,9 @@ static void sky_colours(float el, uint32_t *top, uint32_t *bottom, uint32_t *glo
   *glow = mix(K[k].glow, K[k + 1].glow, t);
 }
 
-static int sky_x(float az) { return (int) (az / 360 * W) % W; }  // north at the edges, south in the middle
+// Azimuth to x: options.facing in the middle, its opposite at both edges. 180 has south in the middle, north at the
+// edges and east on the left.
+static int sky_x(float az, float facing) { return (int) (wrap360(az - facing + 180) / 360 * W) % W; }
 static int sky_y(float el) { return HORIZON - (int) (el * (HORIZON - 26) / 55); }
 
 // 0 winter with snow on the ground, 1 winter without, 2 spring, 3 summer, 4 autumn
@@ -444,8 +446,9 @@ Now::Now(const Weather &weather, const Options &options, double la, double lo, u
   gust = w.gust;
   fair = w.ok && sun.el > 3 && cover < 60 && !rain && !snow && !thunder && fog < 30 && wind < 12;
   fireplace = o.fireplace;
-  // The picture faces south, east on the left. A wind from the east half blows things to the right.
-  wdir = (int8_t) (w.wind_from > 180 && w.wind_from < 360 ? -1 : 1);
+  // Things drift to the right when the wind blows toward the right of where the picture faces, options.facing.
+  // Facing south, east is on the left, so a wind from the east half blows things to the right.
+  wdir = (int8_t) (sinf((float) ((w.wind_from + 180 - o.facing) * kRad)) < 0 ? -1 : 1);
   hour = (uint8_t) (local % 86400 / 3600);
   int m, d;
   civil_from_days((int32_t) (local / 86400) - 1, &year, &m, &d);
@@ -498,7 +501,7 @@ static void sky(Scene &s, const Now &n) {
   float g = n.glow;
   if (g > 0.15f) {
     s.glow = true;
-    s.glow_x = (int16_t) sky_x(n.sun.az);
+    s.glow_x = (int16_t) sky_x(n.sun.az, n.o.facing);
     s.glow_rx = (int16_t) (90 + 60 * g);
     s.glow_ry = (int16_t) (16 + 22 * g);
     s.rgb[C_GLOW] = mix(s.rgb[C_SKY + 4], glow, 0.3f + 0.45f * g);
@@ -509,7 +512,7 @@ static void sky(Scene &s, const Now &n) {
 static void sun_moon(Scene &s, const Now &n) {
   if (n.sun.el > -1) {
     s.sun = true;
-    s.sun_x = (int16_t) sky_x(n.sun.az);
+    s.sun_x = (int16_t) sky_x(n.sun.az, n.o.facing);
     s.sun_y = (int16_t) std::max(SUN_R + 2, sky_y(n.sun.el));  // stays in the picture south of Norway
     uint32_t behind = s.glow ? s.rgb[C_GLOW] : s.rgb[C_SKY + band_of(s.sun_y)];
     if (n.grey > 0.75f || n.fog >= 60) {
@@ -523,7 +526,7 @@ static void sun_moon(Scene &s, const Now &n) {
   }
   if (n.moon.el > 1 && n.sun.el < 10) {
     s.moon = true;
-    s.moon_x = (int16_t) sky_x(n.moon.az);
+    s.moon_x = (int16_t) sky_x(n.moon.az, n.o.facing);
     s.moon_y = (int16_t) std::max(MOON_R + 2, sky_y(n.moon.el));
     s.moon_phase = n.moon_phase;
     s.rgb[C_MOON] = mix(0xDCE6F2, 0xF4F6FA, 1 - n.light);
@@ -603,7 +606,7 @@ static void stars(Scene &s, const Now &n) {
         c = {c.n + d[i].n, c.e + d[i].e, c.u + d[i].u};
     float k = sqrtf(c.dot(c)), el = asinf(c.u / k), az = atan2f(c.e, c.n);
     Dir across = {-sinf(az), cosf(az), 0}, up = {-sinf(el) * cosf(az), -sinf(el) * sinf(az), cosf(el)};
-    int x0 = sky_x((float) wrap360(az / rad)), y0 = sky_y(el / rad);
+    int x0 = sky_x(az / rad, n.o.facing), y0 = sky_y(el / rad);
     for (unsigned i = 0; i < std::size(STARS); i++) {
       if (STARS[i].fig != f || p[i].el < 1 || p[i].el > 58)
         continue;
@@ -686,7 +689,7 @@ static void precipitation(Scene &s, const Now &n) {
   const Weather &w = n.w;
   if (n.rain && !n.snow && n.sun.el > 1 && n.sun.el < 42 && n.grey < 0.8f) {  // with the sun out and low enough
     s.rainbow = true;
-    int x = sky_x(n.sun.az + 180);  // opposite the sun, kept whole on the screen
+    int x = sky_x(n.sun.az + 180, n.o.facing);  // opposite the sun, kept whole on the screen
     s.rb_x = (int16_t) (x < RB_RX ? RB_RX : x > W - 1 - RB_RX ? W - 1 - RB_RX : x);
     s.rb_y = (int16_t) (HORIZON + n.sun.el * 1.6f);
     uint32_t behind = s.rgb[C_SKY + 2];
