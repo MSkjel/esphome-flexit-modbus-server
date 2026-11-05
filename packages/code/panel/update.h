@@ -184,14 +184,8 @@ template<typename Response> void download(Response &r) {
 // cut off after this.
 inline constexpr size_t HEAD_LEN = 64;
 
-// Reads the version from the start of the download into latest_version. Leaves it be if there's none.
-void check_head(const Download &d);
-
-// update.yaml's check passes its response here
-template<typename Response> void checked(Response &r) {
-  check_head({r->status_code, r->content_length, [&r](uint8_t *buf, size_t max) { return r->read(buf, max); },
-              [&r]() { return r->is_read_complete(); }});
-}
+// The version from the start of the file into latest_version. False if there's none, which leaves it be.
+bool check_head(const uint8_t *head, size_t n);
 
 // With the firmware staged
 void begin();

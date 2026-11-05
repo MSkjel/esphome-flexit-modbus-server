@@ -1,6 +1,10 @@
-// update.cpp for update.yaml: the component and settings.h behind its hooks, the panel's bus address from the link
+// update.cpp for update.yaml: the component and settings.h behind its hooks, the panel's bus address from the link,
+// and the check for a new version through fetch.h
 #pragma once
+#include <algorithm>
+#include <cstring>
 #include <functional>
+#include <new>
 #include <string>
 #include <utility>
 #include "panel.h"
@@ -43,10 +47,52 @@ inline void setup(std::function<void(const std::string &)> status_fn, std::funct
   id(server).add_on_frame_callback(on_frame);
 }
 
+// The start of the file, where its version is
+struct Head : fetch::Request {
+  uint8_t head[HEAD_LEN];
+  size_t got = 0;
+  bool feed(const char *p, size_t n) override {
+    n = std::min(n, HEAD_LEN - got);
+    memcpy(head + got, p, n);
+    got += n;
+    return got < HEAD_LEN;
+  }
+};
+
+// The file at the Panel Firmware URL, looked at every check_interval and when Home Assistant asks
+struct Check : fetch::Asker {
+  const std::string *url = nullptr;  // the text's state
+  fetch::Request *make(int) override {
+    auto *r = new (std::nothrow) Head();
+    if (r) {
+      r->url = *url;
+      r->header = "Range";
+      r->value = "bytes=0-" + std::to_string(HEAD_LEN - 1);
+      r->tx_buffer = 4096;  // GitHub's releases redirect to a URL about 1.7 KB long
+    }
+    return r;
+  }
+  bool got(fetch::Request &r) override {
+    auto &h = static_cast<Head &>(r);
+    return check_head(h.head, h.got);
+  }
+};
+inline Check check;
+
 // update.yaml's Panel Firmware entity. It has no state until both versions are known, so a stock panel's says unknown
-// rather than offer an update. press is the Flash Panel Firmware button, which holds up the loop through the download.
-template<typename Entity> inline void attach(Entity *entity, std::function<void()> check, std::function<void()> press) {
-  entity->on_check(std::move(check));
+// rather than offer an update. url is the Panel Firmware URL text, every its check_interval, and press the Flash Panel
+// Firmware button, which holds up the loop through the download.
+template<typename Entity, typename Text>
+inline void attach(Entity *entity, Text *url, const char *every, std::function<void()> press) {
+  check.what = "panel firmware version";
+  check.server = "the Panel Firmware URL";
+  check.url = &url->state;
+  check.every_s = std::max<uint32_t>(picture::interval_ms(every) / 1000, 60);
+  fetch::add(check);
+  entity->on_check([]() {
+    if (!check.asking)
+      check.ask();
+  });
   entity->on_install([press = std::move(press)]() {
     installing = true;
     on_change();

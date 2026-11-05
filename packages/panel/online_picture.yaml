@@ -22,8 +22,10 @@ defaults:
   quality: auto
 
 display: []
+
+# online_image's downloads. TLS's handshake takes a few seconds on a busy ESP, more than the default 4.5 s.
 http_request:
-  id: panel_http
+  timeout: 15s
 
 image:
   - platform: online_image
@@ -48,5 +50,5 @@ esphome:
     - then:
         - lambda: |-
             flexit::panel::picture::add_online_image(
-                "${name}", id(panel_picture_${name}), id(panel_http), "${url}", "${update_interval}", "${format}",
-                "${resize}", "${encoding}", "${quality}");
+                "${name}", id(panel_picture_${name}), "${url}", "${update_interval}", "${format}", "${resize}",
+                "${encoding}", "${quality}");

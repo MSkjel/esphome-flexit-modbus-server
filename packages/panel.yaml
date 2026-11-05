@@ -49,6 +49,11 @@ interval:
   - interval: 20ms
     then:
       - lambda: flexit::panel::loop();
+  # fetch.h's askers, the weather's and the space pictures', each once it's due. Not while the panel's picture is
+  # being made or sent, which would slow TLS's handshake past its timeout.
+  - interval: 1s
+    then:
+      - lambda: flexit::panel::fetch::tick(flexit::panel::picture::S.phase > flexit::panel::picture::START);
 
 binary_sensor:
   - platform: template

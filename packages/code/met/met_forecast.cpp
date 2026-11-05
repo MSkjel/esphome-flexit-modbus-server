@@ -1,10 +1,8 @@
 // MET Norway's forecast, see met_forecast.h
 #include "met_forecast.h"
-#include <algorithm>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include "met_sky_math.h"
+#include "../panel/dates.h"
 
 namespace flexit::panel::met {
 
@@ -36,90 +34,75 @@ Hour now_of(const Weather &w, uint32_t t) {
   return h;
 }
 
-bool Reader::got(size_t k) {
-  n += k;
-  buf[n] = 0;
-  if (!series) {
-    const char *p = strstr(buf, "\"timeseries\":[");
-    if (!p) {
-      drop(n - std::min<size_t>(n, 15));  // the key may be cut in two
-      return true;
-    }
-    series = true;
-    drop((size_t) (p - buf));
+void Forecast::value(int depth, const char *key, int, const char *v) {
+  if (depth == 4 && !*parent() && !strcmp(key, "time")) {
+    time = utc_of(v);
+    return;
   }
-  for (;;) {  // each hour once the next one starts, so the last one, maybe cut off, is never read
-    const char *e = strstr(buf, "{\"time\"");
-    const char *f = e ? strstr(e + 1, "{\"time\"") : nullptr;
-    if (!f)
-      return n < SIZE;
-    if (!hour(std::string_view(e, (size_t) (f - e))))
-      return false;
-    drop((size_t) (f - buf));
+  if (depth != 7)
+    return;
+  const char *in = parent(2);
+  if (!strcmp(in, "instant")) {
+    if (!strcmp(key, "air_temperature")) {
+      temp = strtof(v, nullptr);
+      has_temp = true;
+    }
+    if (w.ok)
+      return;  // the rest is for the weather now
+    static constexpr struct {
+      const char *key;
+      float Weather::*to;
+    } NOW[] = {{"cloud_area_fraction", &Weather::cloud},
+               {"cloud_area_fraction_low", &Weather::cloud_low},
+               {"cloud_area_fraction_medium", &Weather::cloud_mid},
+               {"cloud_area_fraction_high", &Weather::cloud_high},
+               {"fog_area_fraction", &Weather::fog},
+               {"wind_speed", &Weather::wind},
+               {"wind_speed_of_gust", &Weather::gust},
+               {"wind_from_direction", &Weather::wind_from}};
+    for (const auto &n : NOW)
+      if (!strcmp(key, n.key)) {
+        w.*n.to = strtof(v, nullptr);
+        has_cloud = has_cloud || n.to == &Weather::cloud;
+      }
+    return;
+  }
+  bool one = !strcmp(in, "next_1_hours");
+  if (!one && strcmp(in, "next_6_hours"))
+    return;
+  Next &n = one ? n1 : n6;
+  n.seen = true;
+  if (!strcmp(key, "symbol_code")) {
+    strncpy(n.symbol, v, SYMBOL - 1);
+    n.symbol[SYMBOL - 1] = 0;
+  } else if (!strcmp(key, "precipitation_amount")) {
+    n.rain = strtof(v, nullptr);
+  } else if (!strcmp(key, "probability_of_thunder")) {
+    n.thunder = strtof(v, nullptr);
   }
 }
 
-void Reader::drop(size_t k) {
-  memmove(buf, buf + k, n - k + 1);
-  n -= k;
-}
-
-bool Reader::hour(std::string_view e) {
-  auto at = [&](const char *key, size_t from = 0) -> size_t {
-    char k[40];
-    snprintf(k, sizeof k, "\"%s\":", key);
-    size_t p = e.find(k, from);
-    return p == std::string_view::npos ? p : p + strlen(k);
-  };
-  auto num = [&](const char *key, float &out, size_t from = 0) {
-    size_t p = at(key, from);
-    if (p != std::string_view::npos)
-      out = strtof(e.data() + p, nullptr);
-    return p != std::string_view::npos;
-  };
-  auto symbol = [&](size_t from, char *out, size_t size) {  // out stays "" without one
-    size_t s = at("symbol_code", from);
-    if (s == std::string_view::npos || s >= e.size() || e[s] != '"')
-      return;
-    size_t end = e.find('"', s + 1);
-    if (end != std::string_view::npos) {
-      size_t n = std::min(end - s - 1, size - 1);
-      memcpy(out, e.data() + s + 1, n);
-      out[n] = 0;
+// An hour's end: a later one without its time or temperature is skipped, without the first there's no forecast
+void Forecast::end(int depth, const char *key) {
+  if (depth != 4 || strcmp(key, "timeseries"))
+    return;
+  if (time && has_temp && (w.ok || has_cloud)) {
+    if (!w.ok) {
+      const Next &n = n1.seen ? n1 : n6;
+      w.time = time;
+      w.temp = temp;
+      w.rain = n.rain;
+      w.thunder = n.thunder;
+      memcpy(w.symbol, n.symbol, SYMBOL);
+      w.ok = true;
     }
-  };
-  int y, mo, d, h;
-  float temp;
-  if (sscanf(e.data(), "{\"time\":\"%d-%d-%dT%d", &y, &mo, &d, &h) != 4 || !num("air_temperature", temp))
-    return w.ok;  // a later hour is skipped, without the first there's no forecast
-  uint32_t time = unix_of(y, mo, d, h);
-  size_t n1 = at("next_1_hours");
-  if (!w.ok) {
-    if (!num("cloud_area_fraction", w.cloud))
-      return false;
-    w.time = time;
-    w.temp = temp;
-    num("cloud_area_fraction_low", w.cloud_low);
-    num("cloud_area_fraction_medium", w.cloud_mid);
-    num("cloud_area_fraction_high", w.cloud_high);
-    num("fog_area_fraction", w.fog);
-    num("wind_speed", w.wind);
-    num("wind_speed_of_gust", w.gust);
-    num("wind_from_direction", w.wind_from);
-    size_t next = n1 != std::string_view::npos ? n1 : at("next_6_hours");
-    if (next != std::string_view::npos) {
-      num("precipitation_amount", w.rain, next);
-      num("probability_of_thunder", w.thunder, next);
-      symbol(next, w.symbol, sizeof w.symbol);
-    }
-    w.ok = true;
+    if (n1.seen)
+      w.hour[w.hours++] = {time, temp, icon_of(n1.symbol)};
   }
-  if (n1 != std::string_view::npos) {
-    char sym[SYMBOL] = "";
-    symbol(n1, sym, sizeof sym);
-    w.hour[w.hours++] = {time, temp, icon_of(sym)};
-  }
-  return w.hours < HOURS;
+  stop = !w.ok || w.hours == HOURS;
+  time = 0;
+  has_temp = false;
+  n1 = n6 = Next();
 }
 
 }  // namespace flexit::panel::met

@@ -1,5 +1,6 @@
 #include "update.h"
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include "esp_ota_ops.h"
@@ -142,11 +143,22 @@ int32_t name_version(const uint8_t *s, size_t n) {
   char name[0xF0];
   memcpy(name, s + 2, s[1]);
   name[s[1]] = 0;
-  unsigned maj, min, patch;
-  char more;
-  if (sscanf(name, "ci600 %3u.%3u.%3u%c", &maj, &min, &patch, &more) != 3 || maj > 255 || min > 255 || patch > 255)
+  // "ci600 2.0.10": three numbers of at most 255, nothing after them
+  if (strncmp(name, "ci600 ", 6))
     return -1;
-  return (int32_t) (maj << 16 | min << 8 | patch);
+  const char *p = name + 6;
+  uint32_t v = 0;
+  for (int i = 0; i < 3; i++) {
+    if ((i && *p++ != '.') || !isdigit((unsigned char) *p))
+      return -1;
+    unsigned n = 0;
+    for (int k = 0; k < 3 && isdigit((unsigned char) *p); k++)
+      n = n * 10 + (unsigned) (*p++ - '0');
+    if (n > 255)
+      return -1;
+    v = v << 8 | n;
+  }
+  return *p ? -1 : (int32_t) v;
 }
 
 std::string version_text(uint32_t v) {
@@ -329,29 +341,15 @@ void stage(const Download &d) {
   ram.deallocate(buf, BLK);
 }
 
-void check_head(const Download &d) {
-  uint8_t head[HEAD_LEN];
-  size_t got = 0;
-  uint32_t heard = millis();
-  while ((d.status_code == 200 || d.status_code == 206) && got < sizeof head) {
-    int n = d.read(head + got, sizeof head - got);
-    App.feed_wdt();
-    if (n == READ_AGAIN && millis() - heard < STALL_MS)
-      continue;
-    if (n <= 0)
-      break;
-    heard = millis();
-    got += n;
-  }
-  int32_t v = name_version(head, got);
-  if (v < 0) {
-    ESP_LOGW(TAG, "No panel firmware version at the URL (HTTP %d)", d.status_code);
-    return;
-  }
+bool check_head(const uint8_t *head, size_t n) {
+  int32_t v = name_version(head, n);
+  if (v < 0)
+    return false;
   ESP_LOGI(TAG, "The firmware at the URL is %s", version_text(v).c_str());
   latest_version = v;
   if (on_change)
     on_change();
+  return true;
 }
 
 // Ends the flash, gives the bus back

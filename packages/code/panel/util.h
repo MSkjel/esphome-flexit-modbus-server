@@ -49,7 +49,7 @@ template<typename T> T *ptr_of(T &r) { return &r; }
 
 template<typename T> void drop(std::vector<T> &v) { std::vector<T>().swap(v); }  // empty, with its RAM freed
 
-// HTTPS requests in tasks of their own, met.h's and picture_online.h's, whose TLS buffers come and go meanwhile
+// fetch.h's requests in tasks of their own, whose TLS buffers come and go meanwhile
 inline std::atomic<int> requests{0};
 inline constexpr size_t REQUEST_RAM = 24 * 1024;
 

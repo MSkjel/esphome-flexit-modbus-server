@@ -8,6 +8,7 @@
 #include <functional>
 #include <map>
 #include <string>
+#include "fetch.h"
 #include "overlay.h"
 #include "items.h"
 #include "panel_link.h"
@@ -346,6 +347,7 @@ inline void loop() {
     send_registers();
     items_loop();
   }
+  fetch::loop();
   picture::refresh();
   picture::loop(deadline_us);
   overlay::loop(deadline_us);
