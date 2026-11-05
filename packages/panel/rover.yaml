@@ -1,0 +1,41 @@
+# A rover: where Perseverance or Curiosity has driven, on the CTX map of its crater, as a screensaver picture, see
+# code/space/rover.h. Needs panel.yaml. Show it with the "Panel Picture" select or the panel_show_picture action.
+#   - path: packages/panel/rover.yaml
+#     vars: {rover: perseverance}
+# rover: perseverance or curiosity, also the picture's name. Both can be included.
+# update_interval: how often its waypoints are read, about 650 KB
+# Its map, made by scripts/rover_maps.py, takes 38 KB of flash.
+# Waypoints: NASA/JPL-Caltech. Map: CTX mosaic, NASA/JPL-Caltech/MSSS, the Murray Lab at Caltech.
+defaults:
+  update_interval: 6h
+  encoding: auto
+  quality: auto
+
+select:
+  - id: !extend panel_picture
+    options: ["${rover}"]
+
+# TLS takes its buffers as each record comes and goes, so the waypoints, read beside the pictures, need less RAM at once
+esp32:
+  framework:
+    sdkconfig_options:
+      CONFIG_MBEDTLS_DYNAMIC_BUFFER: "y"
+
+text_sensor:
+  - platform: template
+    id: panel_${rover}_status
+    name: "Panel Rover ${rover}"
+    entity_category: diagnostic
+    icon: "mdi:map-marker-path"
+
+esphome:
+  # Only here, so builds without the space pictures don't compile their code
+  includes:
+    - ../code/marks
+    - ../code/space
+  on_boot:
+    - then:
+        - lambda: |-
+            flexit::panel::space::rover::setup("${rover}", flexit::panel::space::rover::${rover}_mosaic,
+                                               "${update_interval}", "${encoding}", "${quality}",
+                                               id(panel_${rover}_status));

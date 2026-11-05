@@ -349,6 +349,50 @@ leaves out what they draw, and tells the panel what in it is nearer, so they go 
 sailboat behind the point and the flagpole, a roe deer out of the forest from behind a spruce. Your own animations
 are always in front of all of it. They take the panel's animations, so turn your other ones off with it.
 
+### Space pictures
+
+What NASA and JPL publish, made into pictures on the ESP and kept up to date. Their text goes over them as a still
+animation, so it stays sharp when the picture goes as a JPEG; it takes 2 to 4.5 KB of the panel's 8 KB for
+animations while it's shown. Times are local, 24-hour.
+
+<table>
+<tr>
+<td align="center"><img src="https://github.com/MSkjel/flexit-ci600-firmware/raw/screens/all/esp/esp_mars_today.png" width="280" alt="Mars today"><br><sub><code>mars_today.yaml</code></sub></td>
+<td align="center"><img src="https://github.com/MSkjel/flexit-ci600-firmware/raw/screens/all/esp/esp_earth_today.png" width="280" alt="Earth today"><br><sub><code>earth_today.yaml</code></sub></td>
+<td align="center"><img src="https://github.com/MSkjel/flexit-ci600-firmware/raw/screens/all/esp/esp_probes.png" width="280" alt="Probes"><br><sub><code>probes.yaml</code></sub></td>
+</tr>
+<tr>
+<td align="center"><img src="https://github.com/MSkjel/flexit-ci600-firmware/raw/screens/all/esp/esp_perseverance.png" width="280" alt="Perseverance"><br><sub><code>rover.yaml</code>, Perseverance</sub></td>
+<td align="center"><img src="https://github.com/MSkjel/flexit-ci600-firmware/raw/screens/all/esp/esp_curiosity.png" width="280" alt="Curiosity"><br><sub>and Curiosity</sub></td>
+<td></td>
+</tr>
+</table>
+
+```yaml
+      - path: packages/panel/mars_today.yaml       # Perseverance's newest colour photo, named "mars_today"
+      - path: packages/panel/earth_today.yaml      # the whole Earth from DSCOVR, named "earth_today"
+      - path: packages/panel/rover.yaml            # a rover's track on its crater, named after it
+        vars: {rover: perseverance}
+      - path: packages/panel/probes.yaml           # where the probes are, named "probes"
+```
+
+| Package | Vars and what it does |
+|---|---|
+| `mars_today.yaml` | `name`, `update_interval` (6h), `resize` (160x120, 320x240 needs PSRAM), `encoding`, `quality`. Reads NASA's list of Perseverance's newest raw images, about 110 KB, as it streams. The newest sol's colour photo looking out nearest the horizon is downloaded when it's shown, its levels stretched as the raw frames are dim, with the sol, the time on Mars and the date over it |
+| `earth_today.yaml` | `name`, `update_interval` (3h). Reads EPIC's list of the day's photos, 14 KB, and draws the newest one's thumbnail at the right, with when it was taken, how far away DSCOVR was and what's in the middle of it |
+| `rover.yaml` | `rover` (`perseverance` or `curiosity`, also its name, both can be included), `update_interval` (6h), `encoding`, `quality`. Reads the rover's waypoints, about 650 KB, as they stream and keeps a point a pixel. Its track goes on the CTX map of its crater, the last 120 or 300 sols cyan, with where it is and which way it faces, the years, and how far it has driven and climbed. A map takes 38 KB of flash, 16 colours; `scripts/rover_maps.py` makes them |
+| `probes.yaml` | `name`, `update_interval` (1d), `encoding` (jpeg, in 16 colours the Sun's shades would take the planets'), `quality`. Asks JPL Horizons where each of 11 probes is, one after the other, about 4.5 KB each, and works the planets out on the ESP. Mercury to Mars are to scale with the probes near them, the outer planets and the far probes are arrows at the edge, and the three farthest are at the left, with how long Voyager 1's signal takes and the day it takes a day |
+
+Their lists are read one at a time, in turn with `met.yaml`'s forecast, the online pictures and the update check,
+and they set `CONFIG_MBEDTLS_DYNAMIC_BUFFER`, so TLS only holds its buffers while one is read. All four take about
+105 KB of flash with one rover, and no PSRAM. `Panel Mars Today`, `Panel Earth Today`, `Panel Rover <rover>` and
+`Panel Probes` say what each read last. When a server is down or busy the picture stays as it was and it's asked
+again as `met.yaml` does.
+
+Raw images NASA/JPL-Caltech/ASU, EPIC photos NASA EPIC Team, waypoints NASA/JPL-Caltech, CTX mosaic
+NASA/JPL-Caltech/MSSS and the Murray Lab at Caltech, positions NASA/JPL Horizons, planets' orbits E. M. Standish
+(JPL).
+
 ### Picture and animation actions
 
 Like the [other actions](#messages-views-and-settings), in Home Assistant and as scripts in your YAML.

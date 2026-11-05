@@ -1,0 +1,49 @@
+# Earth today: the whole sunlit Earth as the EPIC camera on DSCOVR saw it last, as a screensaver picture with when it
+# was taken, how far away it was seen from and what it faces, see code/space/earth_today.h. Needs panel.yaml. Show it
+# with the "Panel Picture" select or the panel_show_picture action.
+#   - path: packages/panel/earth_today.yaml
+# update_interval: how often EPIC's list of the newest day's photos is read, about 14 KB. A new day comes once a day
+# or two.
+# encoding and quality work as in picture.yaml
+# Photos: NASA EPIC Team.
+defaults:
+  name: earth_today
+  update_interval: 3h
+  encoding: auto
+  quality: auto
+
+packages:
+  picture: !include
+    file: online_picture.yaml
+    vars:
+      name: ${name}
+      url: https://epic.gsfc.nasa.gov/  # earth_today.h sets the photo's once it has read the list
+      format: JPEG
+      resize: 120x120  # EPIC's thumbnails, scaled up on the ESP
+      encoding: ${encoding}
+      quality: ${quality}
+
+# TLS takes its buffers as each record comes and goes, so the list, read beside the pictures, needs less RAM at once
+esp32:
+  framework:
+    sdkconfig_options:
+      CONFIG_MBEDTLS_DYNAMIC_BUFFER: "y"
+
+text_sensor:
+  - platform: template
+    id: panel_${name}_status
+    name: "Panel Earth Today"
+    entity_category: diagnostic
+    icon: "mdi:earth"
+
+esphome:
+  # Only here, so builds without the space pictures don't compile their code
+  includes:
+    - ../code/marks
+    - ../code/space
+  on_boot:
+    - priority: 590  # after online_picture.yaml's
+      then:
+        - lambda: |-
+            flexit::panel::space::earth::setup("${name}", id(panel_picture_${name}), "${update_interval}",
+                                               id(panel_${name}_status));

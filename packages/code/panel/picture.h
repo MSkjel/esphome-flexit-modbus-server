@@ -35,6 +35,7 @@ struct Source {
   std::function<uint32_t(int, int)> pixel;   // 0xRRGGBB
   std::function<void()> done;                // optional, its pixels aren't needed now
   std::function<void()> picked;              // optional, it was picked to be shown
+  std::function<void(bool)> on_panel;        // optional: true once it's on the panel, false once another is wanted
   // Optional: what it has to do before size() can say yes, like met.h drawing its scene, a slice at a time until
   // deadline_us. True once there's nothing more to do now.
   std::function<bool(uint32_t deadline_us)> prepare;
@@ -120,9 +121,17 @@ inline State S;
 
 inline void status(const std::string &s) { status(id(panel_picture_status), s); }
 
+// The one wanted until now isn't
+inline void left(const std::string &name) {
+  auto it = sources.find(S.want);
+  if (it != sources.end() && S.want != name && it->second.on_panel)
+    it->second.on_panel(false);
+}
+
 // The Panel Picture select's set_action. An online picture is downloaded again. "None" or "" is none.
 inline void picked(const std::string &name) {
   if (name.empty() || name == "None") {
+    left("");
     S.want.clear();
     S.redo = true;
     S.to_clear = true;  // K_PIC_CLEAR also stops an animation on its way, so loop() waits for that
@@ -137,6 +146,7 @@ inline void picked(const std::string &name) {
   }
   if (it->second.picked)
     it->second.picked();
+  left(name);
   S.want = name;
   S.redo = true;
 }
@@ -525,6 +535,8 @@ inline void now_shown() {
   S.phase = IDLE;
   S.t.tries = 0;
   status("Shown: " + S.name + what(S.shown));
+  if (S.src->on_panel && S.name == S.want)
+    S.src->on_panel(true);
 }
 
 // The parts of made that differ from has, the panel's. After a BEGIN it has none.
