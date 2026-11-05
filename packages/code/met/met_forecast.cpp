@@ -1,5 +1,6 @@
 // MET Norway's forecast, see met_forecast.h
 #include "met_forecast.h"
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include "../panel/dates.h"
@@ -103,6 +104,42 @@ void Forecast::end(int depth, const char *key) {
   time = 0;
   has_temp = false;
   n1 = n6 = Next();
+}
+
+float wave_at(const Sea &sea, uint32_t t) {
+  float best = -1;
+  uint32_t gap = 3 * 3600 + 1800 + 1;
+  for (int i = 0; i < sea.hours; i++) {
+    uint32_t mid = sea.time[i] + 1800, d = t > mid ? t - mid : mid - t;
+    if (d < gap) {
+      gap = d;
+      best = sea.height[i];
+    }
+  }
+  return best;
+}
+
+void Waves::value(int depth, const char *key, int, const char *v) {
+  if (depth == 4 && !*parent() && !strcmp(key, "time"))
+    time = utc_of(v);
+  else if (depth == 7 && !strcmp(parent(2), "instant") && !strcmp(key, "sea_surface_wave_height")) {
+    height = std::max(0.0f, strtof(v, nullptr));
+    has = true;
+  }
+}
+
+// An hour's end: one without its time or waves is skipped
+void Waves::end(int depth, const char *key) {
+  if (depth != 4 || strcmp(key, "timeseries"))
+    return;
+  if (time && has) {
+    sea.time[sea.hours] = time;
+    sea.height[sea.hours++] = height;
+    sea.ok = true;
+  }
+  stop = sea.hours == SEA_HOURS;
+  time = 0;
+  has = false;
 }
 
 }  // namespace flexit::panel::met

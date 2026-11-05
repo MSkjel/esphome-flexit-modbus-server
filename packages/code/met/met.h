@@ -21,6 +21,7 @@ extern "C" bool flexit_fireplace_active() __attribute__((weak));
 namespace flexit::panel::met {
 
 inline Weather weather;  // the forecast, from the coming hour on
+inline Sea sea;          // the waves, from Oceanforecast. Not ok inland, where MET Norway has none
 
 // The dashboard tile's label and icon for each Icon
 struct Kind {
@@ -64,6 +65,24 @@ struct Forecasts : fetch::Asker {
   bool got(fetch::Request &r) override;
 };
 inline Forecasts forecasts;
+
+// A request for the waves, and what's read from its answer
+struct SeaAsk : fetch::Request {
+  Waves f;
+  bool feed(const char *p, size_t n) override { return f.feed(p, n); }
+};
+
+// MET Norway's Oceanforecast, asked through fetch.h after the forecast. Inland it has no waves, a 422, and is asked
+// again the next day. No status of its own, Panel Weather is the forecast's.
+struct Seas : fetch::Asker {
+  std::string modified;
+  char url[128];
+  fetch::Request *make(int) override;
+  bool got(fetch::Request &r) override;
+  void answered(fetch::Request *r) override;
+  void none(int status);
+};
+inline Seas seas;
 
 inline void tile(Icon icon, float temp) {
   item_label(now_item, KINDS[icon].name);
@@ -171,6 +190,7 @@ inline bool begin() {
 #pragma GCC diagnostic pop
   options.frame++;
   Scene &s = drawing->scene;
+  weather.wave = wave_at(sea, (uint32_t) t.timestamp);
   build(s, weather, lat, lon, (uint32_t) t.timestamp, with_forecast, utc_offset, options);
   s.live = live::leaves_out(s);  // what the animations that fit it draw themselves
   drawing->colours.start(s);
@@ -292,6 +312,58 @@ inline bool Forecasts::got(fetch::Request &r) {
   return true;
 }
 
+inline fetch::Request *Seas::make(int) {
+  auto *r = new (std::nothrow) SeaAsk();
+  if (r) {
+    r->url = url;
+    r->header = "If-Modified-Since";
+    r->value = modified;
+  }
+  return r;
+}
+
+// No waves here: none drawn, asked again tomorrow
+inline void Seas::none(int status) {
+  every_s = 86400;
+  modified.clear();
+  bool had = sea.ok;
+  sea = Sea{};
+  if (had)
+    redraw();
+  ESP_LOGI("met", "No waves here (HTTP %d), MET Norway has them for points at sea", status);
+}
+
+// Oceanforecast's answer, as Forecasts::got() has the forecast's. One without waves is inland, see none().
+inline bool Seas::got(fetch::Request &r) {
+  uint32_t now = fetch::now_s(), e = fetch::http_date(r.expires);
+  every_s = e ? std::max(e, now + 600) - now : 3600;
+  if (r.status == 304)
+    return true;
+  const Sea &w = static_cast<SeaAsk &>(r).f.sea;
+  if (!w.ok) {
+    none(r.status);
+    return true;
+  }
+  sea = w;
+  if (!r.last_modified.empty())
+    modified = r.last_modified;
+  ESP_LOGI("met", "Waves: %.1f m", wave_at(sea, now));
+  redraw();
+  return true;
+}
+
+// A 422 (or 400, 404) is a point inland, not a refusal to back off from
+inline void Seas::answered(fetch::Request *r) {
+  if (r->status == 422 || r->status == 400 || r->status == 404) {
+    asking = nullptr;
+    none(r->status);
+    schedule.got(*r, true, every_s);
+    delete r;
+    return;
+  }
+  fetch::Asker::answered(r);
+}
+
 // From met.yaml's on_boot. status: Panel Weather.
 template<typename S>
 void setup(double latitude, double longitude, const char *picture, const char *encoding, const char *quality,
@@ -305,6 +377,11 @@ void setup(double latitude, double longitude, const char *picture, const char *e
   forecasts.server = "MET Norway";
   forecasts.status = ptr_of(status);
   fetch::add(forecasts);
+  snprintf(seas.url, sizeof seas.url,
+           "https://api.met.no/weatherapi/oceanforecast/2.0/complete?lat=%.4f&lon=%.4f", lat, lon);
+  seas.what = "waves";
+  seas.server = "MET Norway";
+  fetch::add(seas);  // after the forecast, so that's asked first
   name = picture;
   now_item = Item("weather", ITEM_SENSOR)
                  .view(false)
@@ -315,6 +392,7 @@ void setup(double latitude, double longitude, const char *picture, const char *e
                  .decimals(1)
                  .range(-50, 50)
                  .add();
+  seas.wanted = [] { return options.ground == G_COAST && with_forecast; };  // only the coast shows the waves
   picture::Source s;
   s.size = [](int &w, int &h) {
     w = W;

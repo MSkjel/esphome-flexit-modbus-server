@@ -202,6 +202,8 @@ struct Asker : Caller {
   int timeout_ms = 15000;
   int steps = 1;
   text_sensor::TextSensor *status = nullptr;
+  // Optional: false while nothing would show the answer, so it isn't asked then and keeps its schedule for later
+  bool (*wanted)() = nullptr;
   Schedule schedule;
   Request *asking = nullptr;
   int step = 0;
@@ -313,7 +315,7 @@ inline void poll() {
 // Each asker that's due asked, unless busy
 inline void ask_due(bool busy) {
   for (Asker *a : askers)
-    if (!busy && !a->asking && a->schedule.due())
+    if (!busy && !a->asking && (!a->wanted || a->wanted()) && a->schedule.due())
       a->ask();
 }
 
