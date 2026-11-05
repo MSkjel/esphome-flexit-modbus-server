@@ -341,6 +341,11 @@ when the heater is on. `The forecast hasn't changed (HTTP 304)` in the log is fi
 MET is busy or down (HTTP 502, 503) the picture keeps the last forecast and asks again a minute later, then less
 often, up to every half hour.
 
+On the coast, with `Panel Weather Forecast` on, MET's wave height from its ocean forecast (Oceanforecast 2.0) is
+written right of the lighthouse, just above the sea, in the forecast's lettering. It's only asked for then, after
+the forecast, and again once it expires. Inland MET has no waves and answers 422, nothing is written, and the ESP asks again the
+next day.
+
 `Panel Animation Weather`, on unless you turn it off, adds slow animations that fit the picture, one show at a
 time: gulls over the cabin, rain and snow falling from under the clouds, the aurora glowing, a moose at dusk, the
 sailboat, the town's windows, the lights on the Christmas spruce, fireworks on New Year's Eve, the flag waving on

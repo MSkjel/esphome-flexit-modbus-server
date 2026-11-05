@@ -778,6 +778,29 @@ struct Skerry {
   int x, y, rx, ry;
 };
 
+// t in the forecast's font k times as big, centred on cx with its top at y, as two sprites: its outline in o, then
+// the letters over it in c. None without room for both.
+static void sprite_text(Scene &s, int cx, int y, const char *t, int k, uint32_t c, uint32_t o) {
+  int w = ov_text_width(t, k), h = 7 * k, x0 = cx - w / 2;
+  if (w + 2 > 64 || h + 2 > 24 || s.nsprites + 2 > SPRITES)
+    return;
+  Sprite *out = sprite(s, x0 - 1, y - 1, w + 2, h + 2, 2, o), *in = sprite(s, x0, y, w, h, 2, c);
+  int x = 0;
+  for (const char *p = t; *p; p++)
+    for (const Glyph &g : FONT)
+      if (g.c == *p) {
+        for (int r = 0; r < h; r++)
+          for (int col = 0; col < g.w * k; col++)
+            if (g.b.row[r / k] >> (g.w - 1 - col / k) & 1) {
+              sprite_set(in, x + col, r);
+              for (int dy = 0; dy <= 2; dy++)
+                for (int dx = 0; dx <= 2; dx++)
+                  sprite_set(out, x + col + dx, r + dy);
+            }
+        x += (g.w + 1) * k;
+      }
+}
+
 // Sea to a rocky shore, a lighthouse on the point, and a sailboat off the coast on a fine day
 static void coast(Scene &s, const Now &n, Rng &h, Skerry *sk) {
   s.sea = true;
@@ -1239,8 +1262,16 @@ void build(Scene &s, const Weather &w, double lat, double lon, uint32_t t, bool 
   life(s, n, rng);
   holidays(s, n, rng);
   s.at = n;
-  if (with_forecast && w.ok && s.ov)
+  if (with_forecast && w.ok && s.ov) {
     overlay(s, n, offset);
+    // and on the coast Oceanforecast's wave height with it, right of the lighthouse just above the sea, as the
+    // forecast's text
+    if (s.ground == G_COAST && w.wave >= 0) {
+      char b[8];
+      snprintf(b, sizeof b, w.wave < 9.95f ? "%.1fm" : "%.0fm", w.wave);
+      sprite_text(s, (LH_X + 5 + W) / 2, s.sea_top - 17, b, 2, s.rgb[C_TEXT], s.rgb[C_OUTLINE]);
+    }
+  }
 }
 
 }  // namespace flexit::panel::met
