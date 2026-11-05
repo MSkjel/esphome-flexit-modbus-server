@@ -377,8 +377,8 @@ void setup(double latitude, double longitude, const char *picture, const char *e
   forecasts.server = "MET Norway";
   forecasts.status = ptr_of(status);
   fetch::add(forecasts);
-  snprintf(seas.url, sizeof seas.url,
-           "https://api.met.no/weatherapi/oceanforecast/2.0/complete?lat=%.4f&lon=%.4f", lat, lon);
+  snprintf(seas.url, sizeof seas.url, "https://api.met.no/weatherapi/oceanforecast/2.0/complete?lat=%.4f&lon=%.4f", lat,
+           lon);
   seas.what = "waves";
   seas.server = "MET Norway";
   fetch::add(seas);  // after the forecast, so that's asked first

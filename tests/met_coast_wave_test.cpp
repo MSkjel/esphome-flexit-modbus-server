@@ -96,8 +96,8 @@ int main() {
   // Oceanforecast's hours, in parts that cut the keys in two too. The last hour is read once the next one starts,
   // so it waits for one more, and an hour without the height is skipped.
   std::string answer = "{\"type\":\"Feature\",\"properties\":{\"timeseries\":[";
-  answer += hour(14, "\"sea_surface_wave_height\":1.2,") + hour(15, "\"sea_surface_wave_height\":1.8,") +
-            hour(16, "") + hour(17, "\"sea_surface_wave_height\":-0.3,") + hour(18, "\"sea_surface_wave_height\":2.0,");
+  answer += hour(14, "\"sea_surface_wave_height\":1.2,") + hour(15, "\"sea_surface_wave_height\":1.8,") + hour(16, "") +
+            hour(17, "\"sea_surface_wave_height\":-0.3,") + hour(18, "\"sea_surface_wave_height\":2.0,");
   answer += "{\"time\":\"2026-08-20T19:00:00Z\"}]}}";
   for (size_t k : {answer.size(), (size_t) 1, (size_t) 7, (size_t) 100}) {
     Sea sea = read_sea(answer, k);
@@ -139,7 +139,7 @@ int main() {
       continue;
     int l, r, top, bottom;
     CHECK(drawn(*t, l, r, top, bottom) > 20);
-    CHECK(l > LH_X + 4 && r < W);  // clear of the lighthouse, on the screen
+    CHECK(l > LH_X + 4 && r < W);                     // clear of the lighthouse, on the screen
     CHECK(bottom < scene.sea_top - 1 && top > OV_H);  // above the sea, under the forecast
     widths[i] = t->w;
     first[i] = t->rows[7];
