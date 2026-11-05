@@ -332,8 +332,8 @@ letters, digits and `_`.
 | `picture.yaml` | `name`, `file` (PNG or JPEG next to your config). `encoding`: `auto`, `palette` (16 colours) or `jpeg`; a palette picture that doesn't fit the panel's 14 KB goes as a JPEG anyway. `quality`: the JPEG quality, or `auto` for the best that fits |
 | `online_picture.yaml` | `name`, `url`, `update_interval` (like `10min`, `1.5h` or `1d`, `never` = only when shown), `format` (PNG, JPEG, BMP or AUTO), `resize` (160x120 default, blown up to the screen; 320x240 needs PSRAM), plus `encoding` and `quality`. A failed download is retried after 30 s, then twice as long each time. Before each download the ESP asks the server about the file and skips one it doesn't have the RAM for, with the reason in `Panel Picture Status`. A JPEG has to fit in RAM whole, so the server has to send its size; PNG and BMP are read a bit at a time. For a Home Assistant camera use `ha_picture.yaml` |
 | `ha_picture.yaml` | `name`, `entity_id` (a `camera.` or `image.` entity, with `kind: image` for the latter), `ha_url` (`http://homeassistant.local:8123`), `width` (320, HA scales the camera picture down to it when the camera can), plus `update_interval`, `resize`, `format`, `encoding` and `quality` as above. HA only hands out camera pictures with a token that changes now and then; the ESP follows the entity's `access_token` attribute, so nothing to set up. If the camera won't scale, the full picture is often too big for an ESP without PSRAM and is skipped; a Frigate camera's own `latest.jpg?h=120` through `online_picture.yaml` is the way round that |
-| `animation.yaml` | `name`, `file` (a GIF), `resize` (64x64 default), `x`, `y` (top left on the 320x240 screen), `scale` (1, or 2 to draw each pixel 2x), `frame_ms` (40 to 2550, the GIF's own timing isn't used), `drift_x`, `drift_y` (pixels per second it drifts, wrapping round the screen seamlessly), `fade_ms` (300, how long copies fade in and out). The panel plays all its animations from 8 KB, up to 6 at a time in up to 8 places, so keep them small: about 64x64 with a few frames, or more frames if little changes between them. Too big at scale 1 and it's made at half size and drawn 2x. `Panel Animation Status` says what's shown and what didn't fit |
-| `met.yaml` | `latitude`, `longitude`, `scene` (hills, coast, mountains, city), `aurora` (auto, off, always), `update_interval` (5 min, the forecast is only fetched again when MET says it expired), `redraw_interval`, `name` (weather). `Panel Weather Scene`, `Panel Weather Aurora` and `Panel Weather Forecast` change it from Home Assistant, `Panel Animation Weather` brings it to life |
+| `animation.yaml` | `name`, `file` (a GIF), `resize` (64x64 default), `x`, `y` (top left on the 320x240 screen), `scale` (1, or 2 to draw each pixel 2x), `frame_ms` (40 to 2550, the GIF's own timing isn't used), `drift_x`, `drift_y` (pixels per second it drifts, wrapping round the screen seamlessly), `fade_ms` (300, how long copies fade in and out). The panel plays all its animations from 8 KB, up to 6 at a time in up to 8 places, so keep them small: about 64x64 with a few frames, or more frames if little changes between them. A single frame goes as a still, which the panel keeps packed, so it takes only that, not w x h / 2 bytes. Too big at scale 1 and it's made at half size and drawn 2x. `Panel Animation Status` says what's shown and what didn't fit |
+| `met.yaml` | `latitude`, `longitude`, `scene` (hills, coast, mountains, city), `aurora` (auto, off, always), `redraw_interval`, `name` (weather). The forecast is asked for again once MET says it has expired. `Panel Weather Scene`, `Panel Weather Aurora` and `Panel Weather Forecast` change it from Home Assistant, `Panel Animation Weather` brings it to life |
 
 `met.yaml` draws the sky for the time of day and the next hour's weather from [MET Norway](https://api.met.no)
 (CC BY 4.0). The weather right now is also an item, so it can be a dashboard tile, and the cabin's chimney smokes
@@ -349,6 +349,50 @@ leaves out what they draw, and tells the panel what in it is nearer, so they go 
 sailboat behind the point and the flagpole, a roe deer out of the forest from behind a spruce. Your own animations
 are always in front of all of it. They take the panel's animations, so turn your other ones off with it.
 
+### Space pictures
+
+What NASA and JPL publish, made into pictures on the ESP and kept up to date. Their text goes over them as a still
+animation, so it stays sharp when the picture goes as a JPEG; it takes 2 to 4.5 KB of the panel's 8 KB for
+animations while it's shown. Times are local, 24-hour.
+
+<table>
+<tr>
+<td align="center"><img src="https://github.com/MSkjel/flexit-ci600-firmware/raw/screens/all/esp/esp_mars_today.png" width="280" alt="Mars today"><br><sub><code>mars_today.yaml</code></sub></td>
+<td align="center"><img src="https://github.com/MSkjel/flexit-ci600-firmware/raw/screens/all/esp/esp_earth_today.png" width="280" alt="Earth today"><br><sub><code>earth_today.yaml</code></sub></td>
+<td align="center"><img src="https://github.com/MSkjel/flexit-ci600-firmware/raw/screens/all/esp/esp_probes.png" width="280" alt="Probes"><br><sub><code>probes.yaml</code></sub></td>
+</tr>
+<tr>
+<td align="center"><img src="https://github.com/MSkjel/flexit-ci600-firmware/raw/screens/all/esp/esp_perseverance.png" width="280" alt="Perseverance"><br><sub><code>rover.yaml</code>, Perseverance</sub></td>
+<td align="center"><img src="https://github.com/MSkjel/flexit-ci600-firmware/raw/screens/all/esp/esp_curiosity.png" width="280" alt="Curiosity"><br><sub>and Curiosity</sub></td>
+<td></td>
+</tr>
+</table>
+
+```yaml
+      - path: packages/panel/mars_today.yaml       # Perseverance's newest colour photo, named "mars_today"
+      - path: packages/panel/earth_today.yaml      # the whole Earth from DSCOVR, named "earth_today"
+      - path: packages/panel/rover.yaml            # a rover's track on its crater, named after it
+        vars: {rover: perseverance}
+      - path: packages/panel/probes.yaml           # where the probes are, named "probes"
+```
+
+| Package | Vars and what it does |
+|---|---|
+| `mars_today.yaml` | `name`, `update_interval` (6h), `resize` (160x120, 320x240 needs PSRAM), `encoding`, `quality`. Reads NASA's list of Perseverance's newest raw images, about 110 KB, as it streams. The newest sol's colour photo looking out nearest the horizon is downloaded when it's shown, its levels stretched as the raw frames are dim, with the sol, the time on Mars and the date over it |
+| `earth_today.yaml` | `name`, `update_interval` (3h). Reads EPIC's list of the day's photos, 14 KB, and draws the newest one's thumbnail at the right, with when it was taken, how far away DSCOVR was and what's in the middle of it |
+| `rover.yaml` | `rover` (`perseverance` or `curiosity`, also its name, both can be included), `update_interval` (6h), `encoding`, `quality`. Reads the rover's waypoints, about 650 KB, as they stream and keeps a point a pixel. Its track goes on the CTX map of its crater, the last 120 or 300 sols cyan, with where it is and which way it faces, the years, and how far it has driven and climbed. A map takes 38 KB of flash, 16 colours; `scripts/rover_maps.py` makes them |
+| `probes.yaml` | `name`, `update_interval` (1d), `encoding` (jpeg, in 16 colours the Sun's shades would take the planets'), `quality`. Asks JPL Horizons where each of 11 probes is, one after the other, about 4.5 KB each, and works the planets out on the ESP. Mercury to Mars are to scale with the probes near them, the outer planets and the far probes are arrows at the edge, and the three farthest are at the left, with how long Voyager 1's signal takes and the day it takes a day |
+
+Their lists are read one at a time, in turn with `met.yaml`'s forecast, the online pictures and the update check,
+and they set `CONFIG_MBEDTLS_DYNAMIC_BUFFER`, so TLS only holds its buffers while one is read. All four take about
+105 KB of flash with one rover, and no PSRAM. `Panel Mars Today`, `Panel Earth Today`, `Panel Rover <rover>` and
+`Panel Probes` say what each read last. When a server is down or busy the picture stays as it was and it's asked
+again as `met.yaml` does.
+
+Raw images NASA/JPL-Caltech/ASU, EPIC photos NASA EPIC Team, waypoints NASA/JPL-Caltech, CTX mosaic
+NASA/JPL-Caltech/MSSS and the Murray Lab at Caltech, positions NASA/JPL Horizons, planets' orbits E. M. Standish
+(JPL).
+
 ### Picture and animation actions
 
 Like the [other actions](#messages-views-and-settings), in Home Assistant and as scripts in your YAML.
@@ -357,7 +401,7 @@ Like the [other actions](#messages-views-and-settings), in Home Assistant and as
 |---|---|
 | `panel_show_picture` (`name`), `panel_clear_picture` | The screensaver picture, same as the `Panel Picture` select |
 | `panel_show_animation` (`name`), `panel_clear_animation` (`name`, or none for all) | An animation over it, where its yaml puts it, the same as its `Panel Animation <name>` switch. Showing it again puts copy 0 back there if it went. Any combination of them, within the panel's 8 KB |
-| `panel_place_animation` (`name`, `copy`, `x`, `y`, `own`, `start`), `panel_remove_animation` (`name`, `copy`) | The same animation in more places, which can start off the screen to come in. Copy 0 is the one `panel_show_animation` shows, copy 1 and up are extra. They play in step and cost nothing extra, unless `own: true` gives the copy a frame of its own, which takes another w x h / 2 bytes of the 8 KB and starts `start` frames in |
+| `panel_place_animation` (`name`, `copy`, `x`, `y`, `own`, `start`), `panel_remove_animation` (`name`, `copy`) | The same animation in more places, which can start off the screen to come in. Copy 0 is the one `panel_show_animation` shows, copy 1 and up are extra. They play in step and cost nothing extra, unless `own: true` gives the copy a frame of its own, which takes another w x h / 2 bytes of the 8 KB and starts `start` frames in. A still ignores `own` |
 | `panel_move_animation` (`name`, `copy`, `x`, `y`, `ms`, `ease`), `panel_drift_animation` (`name`, `copy`, `vx`, `vy`) | Glide a copy to `x`, `y` over `ms` (0 jumps, 65535 at most), or drift it at `vx`, `vy` pixels per second (to a tenth, like 0.5), round the screen or as its area says; 0, 0 stops it. Drifting over a JPEG photo costs more redraws than over a palette picture, so keep it slow there |
 | `panel_glide_animation` (`name`, `copy`, `what`, `to`, `ms`, `ease`) | One of a copy's `x`, `y`, `turn`, `size`, `opacity` or `speed` to `to` over `ms`. A turn goes the short way round, size is 10 to 400, opacity 0 to 100, speed 0 to 1000 |
 | `panel_spin_animation` (`name`, `copy`, `speed`), `panel_flip_animation` (`name`, `copy`, `horizontal`, `vertical`) | Spin a copy at `speed` degrees per second, negative the other way, 0 stops it where it is. Flip mirrors it left to right, upside down or both. Quarter turns and flips stay sharp, other angles look rougher |

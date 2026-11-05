@@ -66,7 +66,7 @@ enum : uint16_t {
   L_ANTENNA = 1 << 11,  // its red light
   L_BOAT = 1 << 12,
 };
-// How far off things are, for the panel's K_PIC_PART and K_ANIM_DEPTH. The picture's parts are the land's layers,
+// How far off things are, for the panel's K_PIC_PART and K_OVERLAY_DEPTH. The picture's parts are the land's layers,
 // each in front of the animations farther off than it. An animation without a depth is in front of them all.
 enum Depth : uint8_t {
   D_SKY = 0,        // behind the land
@@ -169,7 +169,9 @@ struct Cloud {
   uint8_t n;
 };
 
-// A one-colour bitmap. Layer 0 is drawn in the sky behind the ground, 1 in front of it, 2 on top of everything.
+// A one-colour bitmap. Layer 0 is drawn in the sky behind the ground, ON_WATER on the sea behind the middle land and
+// what stands on it, 1 in front of the ground, 2 on top of everything.
+inline constexpr int ON_WATER = 3;
 struct Sprite {
   int16_t x, y;
   uint8_t w, h;                  // at most 64 by 24

@@ -40,13 +40,13 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
     turn_on_action:
-      - lambda: flexit::panel::anim::switched_on("${name}");
+      - lambda: flexit::panel::overlay::switched_on("${name}");
     turn_off_action:
-      - lambda: flexit::panel::anim::clear("${name}");
+      - lambda: flexit::panel::overlay::clear("${name}");
 
 esphome:
   on_boot:
     - priority: -100
       then:
         - lambda: |-
-            flexit::panel::anim::add_gif("${name}", id(panel_animation_${name}), id(panel_anim_${name}), ${frame_ms}, ${x}, ${y}, ${scale}, ${drift_x}, ${drift_y}, ${fade_ms});
+            flexit::panel::overlay::add_gif("${name}", id(panel_animation_${name}), id(panel_anim_${name}), ${frame_ms}, ${x}, ${y}, ${scale}, ${drift_x}, ${drift_y}, ${fade_ms});

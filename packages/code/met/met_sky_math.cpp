@@ -3,28 +3,6 @@
 
 namespace flexit::panel::met {
 
-uint32_t days_from_civil(int y, int m, int d) {
-  y -= m <= 2;
-  int era = (y >= 0 ? y : y - 399) / 400;
-  int yoe = y - era * 400, doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
-  return (uint32_t) (era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468);
-}
-
-void civil_from_days(int32_t z, int *y, int *m, int *d) {
-  z += 719468;
-  int era = (z >= 0 ? z : z - 146096) / 146097;
-  int doe = z - era * 146097;
-  int yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-  int doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
-  *d = doy - (153 * mp + 2) / 5 + 1;
-  *m = mp < 10 ? mp + 3 : mp - 9;
-  *y = yoe + era * 400 + (*m <= 2);
-}
-
-uint32_t unix_of(int y, int m, int d, int h, int mi, int s) {
-  return days_from_civil(y, m, d) * 86400u + (uint32_t) (h * 3600 + mi * 60 + s);
-}
-
 int day_of_year(int y, int m, int d) { return (int) (days_from_civil(y, m, d) - days_from_civil(y, 1, 1)) + 1; }
 
 int easter_day_of_year(int y) {

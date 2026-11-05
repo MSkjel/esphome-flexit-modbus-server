@@ -224,57 +224,22 @@ int main() {
   s[0] = 0x12;
   CHECK(name_version(s.data(), s.size()) == -1);
 
-  // The check: the version from the start of the file, with or without the server minding the range
-  auto check = [](Http h) {
-    Http *r = &h;
+  // The check: the version from the start of the file
+  auto check = [](std::vector<uint8_t> head) {
     latest_version = -1;
-    checked(r);
+    check_head(head.data(), head.size());
     return latest_version;
   };
-  Http whole;
-  whole.body = stream("ci600 1.2.3");
-  whole.body.resize(100000, 0x55);
-  Http at_most = whole;
-  CHECK(check(whole) == 0x010203);
-  Http *cut = &at_most;
-  checked(cut);
-  CHECK(at_most.pos == HEAD_LEN);  // it stopped there
-  Http part;
-  part.status_code = 206;
-  part.body = stream("ci600 1.2.4");
-  part.body.resize(HEAD_LEN, 0x55);
-  CHECK(check(part) == 0x010204);
-  Http slow = part;
-  slow.pause_at = 4;
-  slow.pauses = 2;
-  CHECK(check(slow) == 0x010204);
-  Http missing = part;
-  missing.status_code = 404;
-  CHECK(check(missing) == -1);
-  Http page = part;
-  page.status_code = 200;
-  page.body = {'<', 'h', 't', 'm', 'l', '>'};
-  CHECK(check(page) == -1);
-  Http empty = part;
-  empty.body.clear();
-  CHECK(check(empty) == -1);
-  Http silent = part;
-  silent.stop = 4;
-  silent.then = READ_AGAIN;
-  CHECK(check(silent) == -1);
+  auto head = stream("ci600 1.2.4");
+  head.resize(HEAD_LEN, 0x55);
+  CHECK(check(head) == 0x010204);
+  CHECK(check({'<', 'h', 't', 'm', 'l', '>'}) == -1);
+  CHECK(check({}) == -1);
   latest_version = 0x010203;  // a failed check keeps what it knew
-  Http *gone = &missing;
-  missing.pos = 0;
-  checked(gone);
-  CHECK(latest_version == 0x010203);
   int changes = 0;
   on_change = [&changes]() { changes++; };
-  checked(gone);
-  CHECK(!changes);
-  Http again = part;
-  Http *found = &again;
-  checked(found);
-  CHECK(changes == 1 && latest_version == 0x010204);
+  CHECK(!check_head(head.data(), 4) && latest_version == 0x010203 && !changes);
+  CHECK(check_head(head.data(), head.size()) && changes == 1 && latest_version == 0x010204);
   status("Testing");
   CHECK(changes == 2);
   on_change = nullptr;

@@ -9,8 +9,8 @@
 namespace esphome {
 namespace flexit_modbus_server {
 
-// Knows nothing about flashing. update.yaml says what to do on a check or an install, and packages/code/panel's
-// update_yaml.h what to show.
+// Knows nothing about flashing. packages/code/panel's update_yaml.h says what to do on a check or an install, and what
+// to show.
 class PanelUpdate : public update::UpdateEntity {
  public:
   void perform(bool) override {  // the Panel Firmware Force switch is what forces a flash

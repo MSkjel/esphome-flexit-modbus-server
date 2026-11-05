@@ -11,7 +11,7 @@
 #include <map>
 #include <string>
 #include <vector>
-#include "../panel/animation.h"
+#include "../panel/overlay.h"
 #include "met_raster.h"
 #include "met_sprites.h"
 
@@ -67,7 +67,7 @@ inline void free_px() {
   R.drawn = nullptr;
 }
 
-// Pixel x, y of sp's frame f, for animation.h. The frame is drawn whole and kept, 4 bytes a pixel, up to 28 KB
+// Pixel x, y of sp's frame f, for overlay.h. The frame is drawn whole and kept, 4 bytes a pixel, up to 28 KB
 // for the rain. Without the RAM it stays empty: a failed allocation would restart the ESP.
 inline uint32_t frame_pixel(const Frames *sp, int f, int x, int y) {
   if (R.drawn != sp || R.drawn_f != f) {
@@ -118,16 +118,16 @@ inline int out_of(const Edge &e, const std::string &name, int y) {
 // name's sprite as a panel animation
 inline bool ready(const std::string &name) {
   std::string k = key(name);
-  if (anim::sources.count(k))
+  if (overlay::sources.count(k))
     return true;
   const Frames *sp = frames_of(name);
   if (!sp)
     return false;
   auto pixel = [sp](int f, int x, int y) { return frame_pixel(sp, f, x, y); };
-  anim::Source s{sp->w, sp->h, sp->count(), 100, 0, 0, 1, pixel};
+  overlay::Source s{sp->w, sp->h, sp->count(), 100, 0, 0, 1, pixel};
   s.delays = sp->delays;
   s.fade_ms = 300;
-  anim::add(k, std::move(s));
+  overlay::add(k, std::move(s));
   R.names.push_back(k);
   return true;
 }
@@ -135,8 +135,8 @@ inline bool ready(const std::string &name) {
 // Takes name's animation off the panel, to be made again
 inline void unload(const std::string &name) {
   std::string k = key(name);
-  anim::clear(k);
-  anim::sources.erase(k);
+  overlay::clear(k);
+  overlay::sources.erase(k);
   R.names.erase(std::remove(R.names.begin(), R.names.end(), k), R.names.end());
   R.sprites.erase(name);
   R.drawn = nullptr;
@@ -164,17 +164,17 @@ inline void in_light(const char *n) {
 
 // How a copy is placed
 struct How {
-  bool own = false;              // a frame of its own
-  int start = 0;                 // frames in, with one
-  int fade = -1;                 // ms it fades in, -1 the usual 300
-  uint8_t depth = ANIM_NEAREST;  // a Depth, behind the scene's parts nearer than it
+  bool own = false;                 // a frame of its own
+  int start = 0;                    // frames in, with one
+  int fade = -1;                    // ms it fades in, -1 the usual 300
+  uint8_t depth = OVERLAY_NEAREST;  // a Depth, behind the scene's parts nearer than it
 };
 inline void place(const std::string &n, int i, int x, int y, How o = {}) {
   if (ready(n))
-    anim::place(key(n), i, x, y, o.own, o.start, o.fade, o.depth);
+    overlay::place(key(n), i, x, y, o.own, o.start, o.fade, o.depth);
 }
-inline void flip(const std::string &n, int i, bool h, bool v) { anim::flip(key(n), i, h, v); }
-inline void depth(const std::string &n, int i, uint8_t d) { anim::depth(key(n), i, d); }
+inline void flip(const std::string &n, int i, bool h, bool v) { overlay::flip(key(n), i, h, v); }
+inline void depth(const std::string &n, int i, uint8_t d) { overlay::depth(key(n), i, d); }
 // The panel pads a sprite to an even width, so a mirrored odd-width one moves a column. x that makes up for it.
 inline int flip_x(const std::string &n, int x, bool flipped) {
   const Frames *sp = frames_of(n);
@@ -186,12 +186,12 @@ inline void place_flipped(const std::string &n, int i, int x, int y, bool flippe
   if (flipped)
     flip(n, i, true, false);
 }
-inline void remove(const std::string &n, int i, int fade = 300) { anim::remove(key(n), i, fade); }
+inline void remove(const std::string &n, int i, int fade = 300) { overlay::remove(key(n), i, fade); }
 // Copy i of from swaps for to at x, y, at its depth, with own a frame of its own start frames in. Nothing shows
 // between them.
 inline void swap(const std::string &from, int i, const std::string &to, int x, int y, bool own = false, int start = 0) {
   if (ready(to))
-    anim::swap(key(from), i, key(to), x, y, own, start);
+    overlay::swap(key(from), i, key(to), x, y, own, start);
 }
 // swap() to to facing left if left, see place_flipped()
 inline void swap_flipped(const std::string &from, int i, const std::string &to, int x, int y, bool left,
@@ -201,38 +201,38 @@ inline void swap_flipped(const std::string &from, int i, const std::string &to, 
     flip(to, i, true, false);
 }
 // name's animation and its copies go, faded out
-inline void clear(const std::string &n) { anim::clear(key(n)); }
+inline void clear(const std::string &n) { overlay::clear(key(n)); }
 // a show's sprite ready on the panel before it's placed, so a swap to it doesn't wait
 inline void preload(const std::string &n) {
   if (ready(n))
-    anim::slot_for(key(n));
+    overlay::slot_for(key(n));
 }
 inline void move(const std::string &n, int i, int x, int y, int ms, const char *ease = "none") {
-  anim::move(key(n), i, x, y, ms, ease);
+  overlay::move(key(n), i, x, y, ms, ease);
 }
-inline void drift(const std::string &n, int i, float vx, float vy) { anim::drift(key(n), i, vx, vy); }
+inline void drift(const std::string &n, int i, float vx, float vy) { overlay::drift(key(n), i, vx, vy); }
 inline void glide(const std::string &n, int i, const char *what, int to, int ms, const char *ease = "none") {
-  anim::glide(key(n), i, what, to, ms, ease);
+  overlay::glide(key(n), i, what, to, ms, ease);
 }
 inline void area(const std::string &n, int i, int l, int t, int r, int b, const char *ex, const char *ey) {
-  anim::area(key(n), i, l, t, r, b, ex, ey);
+  overlay::area(key(n), i, l, t, r, b, ex, ey);
 }
 inline void wander(const std::string &n, int i, float s0, float s1, int heading, int spread, int l0, int l1, int r0,
                    int r1) {
-  anim::wander(key(n), i, s0, s1, heading, spread, l0, l1, r0, r1);
+  overlay::wander(key(n), i, s0, s1, heading, spread, l0, l1, r0, r1);
 }
 // it faces the way it goes, mirrored from facing, upright
-inline void face(const std::string &n, int i, int facing = 0) { anim::face(key(n), i, facing, true, 0, 0, true); }
+inline void face(const std::string &n, int i, int facing = 0) { overlay::face(key(n), i, facing, true, 0, 0, true); }
 inline void wave(const std::string &n, int i, const char *what, int lo, int hi, int rise, int fall, int hold_high,
                  int hold_low, int jitter, bool random, const char *slow) {
-  anim::wave(key(n), i, what, lo, hi, rise, fall, hold_high, hold_low, jitter, random, slow);
+  overlay::wave(key(n), i, what, lo, hi, rise, fall, hold_high, hold_low, jitter, random, slow);
 }
 inline void map(const std::string &n, int i, const char *what, int l, int r, int t, int b) {
-  anim::map(key(n), i, what, l, r, t, b);
+  overlay::map(key(n), i, what, l, r, t, b);
 }
-inline void rounds(const std::string &n, int i, int k) { anim::rounds(key(n), i, k); }
+inline void rounds(const std::string &n, int i, int k) { overlay::rounds(key(n), i, k); }
 // degrees a second clockwise, negative the other way
-inline void spin(const std::string &n, int i, float speed) { anim::spin(key(n), i, speed); }
+inline void spin(const std::string &n, int i, float speed) { overlay::spin(key(n), i, speed); }
 
 // fn by chance, first after first ms, then about every mean ms after the last one ended, or just once with mean
 // 0. It returns the ms it takes.
@@ -258,7 +258,7 @@ inline uint32_t remove_later(uint32_t at, const char *n, int i, int fade = 300) 
 // sprite. The ms till then, for an event's.
 inline uint32_t gone_later(uint32_t at, const char *n, int fade = 300, const char *other = nullptr) {
   later(at, [=] {
-    if (const anim::Anim *a = anim::find(key(n)))
+    if (const overlay::Overlay *a = overlay::find(key(n)))
       for (size_t i = 0; i < a->copies.size(); i++)
         remove(n, (int) i, fade);
   });
@@ -296,14 +296,14 @@ inline void visitors(uint32_t mean, uint32_t first, int n, std::function<uint32_
 inline constexpr uint32_t READY_WAIT = 5000;
 inline void on_panel(const char *n, const char *other, uint32_t at, std::function<void()> fn, uint32_t waited) {
   auto state = [](const char *s) {
-    const anim::Anim *a = s ? anim::find(key(s)) : nullptr;
-    return !s ? (int) anim::SENT : a ? a->state : (int) anim::FAILED;
+    const overlay::Overlay *a = s ? overlay::find(key(s)) : nullptr;
+    return !s ? (int) overlay::SENT : a ? a->state : (int) overlay::FAILED;
   };
   int a = state(n), b = state(other);
-  if (a == anim::SENT && b == anim::SENT) {
+  if (a == overlay::SENT && b == overlay::SENT) {
     fn();
     gone_later(at, n, 0, other);
-  } else if (a == anim::FAILED || b == anim::FAILED || waited >= READY_WAIT) {
+  } else if (a == overlay::FAILED || b == overlay::FAILED || waited >= READY_WAIT) {
     clear(n);
     if (other)
       clear(other);
@@ -617,8 +617,8 @@ inline void twinkle_stars(const Scene &s, Box skip = {}) {
 // Every animation of the show goes, faded out
 inline void stop() {
   for (auto &k : R.names) {
-    anim::clear(k);
-    anim::sources.erase(k);
+    overlay::clear(k);
+    overlay::sources.erase(k);
   }
   R.names.clear();
   R.sprites.clear();
@@ -639,8 +639,8 @@ inline void loop(bool shown) {
     stop();
     return;
   }
-  if (anim::W.phase != anim::COUNT && anim::W.phase != anim::MAKE)
-    free_px();  // animation.h only reads it while it counts or makes frames
+  if (overlay::W.phase != overlay::COUNT && overlay::W.phase != overlay::MAKE)
+    free_px();  // overlay.h only reads it while it counts or makes frames
   uint32_t now = millis();
   for (size_t i = 0; i < R.timers.size(); i++) {
     if ((int32_t) (now - R.timers[i].at) < 0)

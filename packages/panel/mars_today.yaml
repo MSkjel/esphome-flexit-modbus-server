@@ -1,0 +1,50 @@
+# Mars today: the newest colour photo Perseverance has sent back as a screensaver picture, with its sol and the time
+# on Mars when it was taken over it, see code/space/mars_today.h. Needs panel.yaml. Show it with the "Panel Picture"
+# select or the panel_show_picture action.
+#   - path: packages/panel/mars_today.yaml
+# update_interval: how often NASA's list of the newest photos is read, about 110 KB
+# resize: what the photo is decoded at, the ESP keeps it whole: 160x120 takes 38 KB, 320x240 150 KB, so PSRAM
+# encoding and quality work as in picture.yaml
+# Raw images: NASA/JPL-Caltech/ASU.
+defaults:
+  name: mars_today
+  update_interval: 6h
+  resize: 160x120
+  encoding: auto
+  quality: auto
+
+packages:
+  picture: !include
+    file: online_picture.yaml
+    vars:
+      name: ${name}
+      url: https://mars.nasa.gov/  # mars_today.h sets the photo's once it has read the list
+      format: JPEG
+      resize: ${resize}
+      encoding: ${encoding}
+      quality: ${quality}
+
+# TLS takes its buffers as each record comes and goes, so the list, read beside the pictures, needs less RAM at once
+esp32:
+  framework:
+    sdkconfig_options:
+      CONFIG_MBEDTLS_DYNAMIC_BUFFER: "y"
+
+text_sensor:
+  - platform: template
+    id: panel_${name}_status
+    name: "Panel Mars Today"
+    entity_category: diagnostic
+    icon: "mdi:image-filter-hdr"
+
+esphome:
+  # Only here, so builds without the space pictures don't compile their code
+  includes:
+    - ../code/marks
+    - ../code/space
+  on_boot:
+    - priority: 590  # after online_picture.yaml's
+      then:
+        - lambda: |-
+            flexit::panel::space::mars::setup("${name}", id(panel_picture_${name}), "${update_interval}",
+                                              id(panel_${name}_status));

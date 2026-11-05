@@ -1,4 +1,4 @@
-// Raw deflate (RFC 1951) for the animation records and the pictures. pdeflate and pinflate work on a rectangle in a
+// Raw deflate (RFC 1951) for the overlay records and the pictures. pdeflate and pinflate work on a rectangle in a
 // bigger buffer: width bytes per row, rows stride bytes apart.
 // Copied into esphome-flexit-modbus-server by make -C sim esp_sync, edit it here.
 #pragma once

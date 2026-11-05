@@ -78,7 +78,7 @@ inline uint32_t squirrel_visit(const NearHill &h, int cx, int cy) {
     place("squirrel", 0, x0, h.at(x0 + 4) - 4, {.depth = D_NEAR_ON});  // behind the trees
     amble("squirrel", 0, h, x0, foot, 14, 4, 4);
     later(up, [=] {  // up onto the eaves, in front of the roof
-      depth("squirrel", 0, ANIM_NEAREST);
+      depth("squirrel", 0, OVERLAY_NEAREST);
       move("squirrel", 0, cx - 18, cy - 21, 300);
     });
     move_later(up + 300, "squirrel", 0, cx - 4, cy - 29, 1400);  // and up to the ridge
@@ -543,7 +543,7 @@ inline void leaves(const Scene &s) {
       Birch c = birches[(int) rnd(0, (float) n)];
       int x0 = c.x - 3 + (int) rnd(1 - c.rx, (float) c.rx), y0 = c.top + (int) rnd(1, c.h * 0.6f);
       int x1 = std::clamp(x0 + wdir * (int) rnd(18, 30), -2, W - 4), y1 = (int) rnd(top, bot - 6);
-      if (anim::copy_for(key("leaf"), 3).second) {  // the last one off, so there's room for the flag and a visitor
+      if (overlay::copy_for(key("leaf"), 3).second) {  // the last one off, so there's room for the flag and a visitor
         move("leaf", 3, wdir < 0 ? -10 : W + 4, top, AWAY, "in");
         remove_later(AWAY, "leaf", 3, 0);
       }

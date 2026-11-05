@@ -1,24 +1,15 @@
-// met_scene.h as a panel picture. met.yaml calls fetch() for the forecast, poll() for its answer and redraw()
-// every few minutes so the sun and moon move. Only changed rows are sent to the panel. MET Norway is asked again
-// once its last answer has expired, with If-Modified-Since, in a task of its own so the bus is still answered, soon
-// again after a server error and less often while it refuses or doesn't answer, see fetched() and unreachable(). The
-// forecast is kept through all of that until it runs out.
+// met_scene.h as a panel picture. met.yaml calls redraw() every few minutes so the sun and moon move. Only changed
+// rows are sent to the panel. MET Norway is asked for the forecast through fetch.h, again once its last answer has
+// expired, with If-Modified-Since, soon again after a server error and less often while it refuses or doesn't answer,
+// see Forecasts::got() and fetch::Schedule. The forecast is kept through all of that until it runs out.
 #pragma once
-#include <esp_crt_bundle.h>
-#include <esp_http_client.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
-#include <strings.h>
 #include <algorithm>
-#include <cctype>
-#include <cstdlib>
-#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <functional>
 #include <new>
 #include <string>
+#include "../panel/fetch.h"
 #include "../panel/items.h"
 #include "../panel/picture.h"
 #include "met_live_shows.h"
@@ -40,23 +31,8 @@ inline constexpr Kind KINDS[] = {{"Weather|Vær", "cloud"},   {"Clear|Klart", "s
                                  {"Rain|Regn", "rain"},      {"Snow|Snø", "snowy"},       {"Sleet|Sludd", "rain"},
                                  {"Thunder|Torden", "bolt"}, {"Fog|Tåke", "cloud"}};
 static_assert(std::size(KINDS) == I_FOG + 1, "a name and an icon for each of met_forecast.h's Icons");
-// MET Norway wants to know who's asking
-inline constexpr const char *USER_AGENT =
-    "esphome-flexit-modbus-server (github.com/MSkjel/esphome-flexit-modbus-server)";
-// The request's task: TLS's handshake, then the reader's 4 KB buffer in the same room. As big as ESPHome's main
-// loop's, which also does HTTPS.
-inline constexpr uint32_t STACK = 8192;
 inline int now_item = -1;
-inline std::string modified;  // Last-Modified of our forecast, for If-Modified-Since. Empty until we have one
-inline uint32_t not_before;   // no request before this (Unix time): the last answer's Expires, or a back-off
-inline uint32_t backoff_s;    // doubles with each failure in a row
-inline bool answered;         // MET Norway has answered since boot
-inline uint8_t early_tries;   // quick retries before that
-inline bool retry_soon;       // one of those is due, tick() makes it
-inline constexpr uint32_t EARLY_RETRY_S = 30;
-inline char url[128];
 inline double lat, lon;
-inline int timeout_ms;  // http_request's
 inline std::string name;
 inline bool with_forecast;    // the Panel Weather Forecast switch
 inline Options options;       // set from met.yaml
@@ -73,10 +49,21 @@ template<size_t N> int option_of(const char *const (&names)[N], const char *name
 }
 inline Ground ground_of(const char *name) { return (Ground) option_of(GROUNDS, name); }
 inline Aurora aurora_of(const char *name) { return (Aurora) option_of(AURORAS, name); }
-// Publishes to Panel Weather, set by met.yaml's on_boot
-inline std::function<void(const std::string &)> on_status = [](const std::string &) {};
 
-inline uint32_t now_s() { return (uint32_t) id(flexit_panel_time).now().timestamp; }
+// A request for the forecast, and what's read from its answer
+struct Ask : fetch::Request {
+  Forecast f;
+  bool feed(const char *p, size_t n) override { return f.feed(p, n); }
+};
+
+// MET Norway, asked through fetch.h. Panel Weather is its status.
+struct Forecasts : fetch::Asker {
+  std::string modified;  // Last-Modified of our forecast, for If-Modified-Since. Empty until we have one
+  char url[128];
+  fetch::Request *make(int) override;
+  bool got(fetch::Request &r) override;
+};
+inline Forecasts forecasts;
 
 inline void tile(Icon icon, float temp) {
   item_label(now_item, KINDS[icon].name);
@@ -89,12 +76,13 @@ inline void tile(Icon icon, float temp) {
 inline void send_now() {
   if (!weather.ok)
     return;
-  uint32_t t = now_s();
+  uint32_t t = fetch::now_s();
   if (t >= ends(weather)) {
     weather.ok = false;
-    modified.clear();  // so the next answer is all of it
+    forecasts.modified.clear();  // so the next answer is all of it
+    forecasts.have = false;
     tile(I_NONE, NAN);
-    on_status("The forecast has run out");
+    forecasts.say("The forecast has run out");
     return;
   }
   Hour h = now_of(weather, t);
@@ -266,231 +254,57 @@ inline uint32_t pixel(int x, int y) {
   return c.scene.pal[c.row[x < W ? x : W - 1]];
 }
 
-// An HTTP date like "Mon, 19 Oct 2026 11:34:38 GMT" as Unix time, 0 if it isn't one
-inline uint32_t http_date(const std::string &s) {
-  static const char MONTHS[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
-  char mon[4] = {};
-  int d, y, h, mi, sec;
-  if (sscanf(s.c_str(), "%*3s, %d %3s %d %d:%d:%d", &d, mon, &y, &h, &mi, &sec) != 6)
-    return 0;
-  const char *m = strstr(MONTHS, mon);
-  if (!m || strlen(mon) != 3 || (m - MONTHS) % 3)
-    return 0;
-  return unix_of(y, (int) (m - MONTHS) / 3 + 1, d, h, mi, sec);
-}
-
-// Whether to ask MET Norway now. They want no new request before the last answer's Expires.
-// Offline it waits for the next check, a failed request would back off.
-inline bool due() { return network::is_connected() && id(flexit_panel_time).now().is_valid() && now_s() >= not_before; }
-
-// After a failure, wait first, then twice as long each time up to most
-inline void back_off(uint32_t first, uint32_t most) {
-  backoff_s = std::clamp(2 * backoff_s, first, most);
-  not_before = now_s() + backoff_s;
-}
-
-// No answer, or one cut off: more likely our own network than MET Norway, so ten minutes and up to an hour.
-// Right after boot the network often isn't quite there yet and the ESP is busy, so the first few tries go again
-// EARLY_RETRY_S later rather than at the next check.
-inline void unreachable() {
-  if (!answered && early_tries < 3) {
-    early_tries++;
-    not_before = now_s() + EARLY_RETRY_S;
-    retry_soon = true;
-  } else {
-    back_off(600, 3600);
-    retry_soon = false;
+// With If-Modified-Since once we have a Last-Modified
+inline fetch::Request *Forecasts::make(int) {
+  auto *r = new (std::nothrow) Ask();
+  if (r) {
+    r->url = url;
+    r->header = "If-Modified-Since";
+    r->value = modified;
   }
-  on_status("Couldn't reach MET Norway");
+  return r;
 }
 
-// A request runs in a task of its own, so the main loop keeps answering the bus through the TLS handshake and the
-// 24 KB of answer. fetch() gives it a Fetch, poll() takes the answer once fetch_done is set. Until then the task has
-// the Fetch and touches nothing else.
-struct Fetch {
-  std::string since;  // If-Modified-Since, "" for none
-  int timeout_ms;
-  int status = 0;  // 0 = no answer
-  Weather w;
-  std::string last_modified, expires, retry_after;
-  unsigned stack_left = 0;
-};
-
-// Retry-After's seconds from now, given as seconds or as an HTTP date. 0 without one.
-inline uint32_t retry_after_s(const std::string &v, uint32_t now) {
-  if (v.empty())
-    return 0;
-  if (isdigit((unsigned char) v[0]))
-    return (uint32_t) strtoul(v.c_str(), nullptr, 10);
-  uint32_t t = http_date(v);
-  return t > now ? t - now : 0;
-}
-
-// api.met.no's answer, 2xx with the forecast read from it into f.w, or 304 if it hasn't changed. 203 is a product
-// that's deprecated, its data is still good. A server error, 502 or 503 when it's busy, or an answer without a
-// forecast in it is usually over soon: it asks again a minute later, then twice as long each time up to half an hour.
-// Refused, it waits an hour, then twice as long each time up to 12. Longer if Retry-After says so.
-inline void fetched(const Fetch &f) {
-  answered = true;
-  retry_soon = false;
-  bool ok = f.status >= 200 && f.status < 300 && f.w.ok;
-  uint32_t now = now_s();
-  if (ok || f.status == 304) {
-    backoff_s = 0;
-    uint32_t e = http_date(f.expires);
-    not_before = e ? std::max(e, now + 600) : now + 3600;  // at least 10 min, in case our clock is off
-  } else {
-    if (f.status >= 500 || f.status < 300) {
-      back_off(60, 1800);
-      retry_soon = true;  // tick() asks when it's time, not the next check
-    } else {
-      back_off(3600, 12 * 3600);  // 429 is too many requests, 403 refused
-    }
-    not_before = std::max(not_before, now + std::min<uint32_t>(retry_after_s(f.retry_after, now), 12 * 3600));
-  }
-  if (f.status == 304) {
+// api.met.no's answer, 2xx with the forecast read from it, or 304 if it hasn't changed. 203 is a product that's
+// deprecated, its data is still good. A 2xx without a forecast in it counts as a server error. Asked again at least
+// 10 min after Expires, in case our clock is off, or in an hour without one.
+inline bool Forecasts::got(fetch::Request &r) {
+  uint32_t now = fetch::now_s(), e = fetch::http_date(r.expires);
+  every_s = e ? std::max(e, now + 600) - now : 3600;
+  if (r.status == 304) {
     ESP_LOGI("met", "The forecast hasn't changed (HTTP 304)");
-    return;
+    return true;
   }
-  if (f.status == 203) {
+  if (r.status == 203) {  // braces, as ESP_LOGW can be nothing
     ESP_LOGW("met", "MET Norway says this product is deprecated");
   }
-  if (!ok) {
-    ESP_LOGW("met", "No forecast from MET Norway (HTTP %d), asking again in %u s", f.status,
-             (unsigned) (not_before - now));
-    on_status(std::string(weather.ok ? "Kept the last forecast" : "No forecast") + " (HTTP " +
-              std::to_string(f.status) + ")");
-    return;
-  }
-  const Weather &w = f.w;
+  const Weather &w = static_cast<Ask &>(r).f.w;
+  if (!w.ok)
+    return false;
   weather = w;
-  if (!f.last_modified.empty())
-    modified = f.last_modified;
+  if (!r.last_modified.empty())
+    modified = r.last_modified;
   char s[96];
   snprintf(s, sizeof s, "%s, %.1f °C, clouds %.0f %%, %.1f mm", w.symbol[0] ? w.symbol : "?", w.temp, w.cloud, w.rain);
   ESP_LOGI("met", "Weather: %s", s);
-  on_status(s);
+  say(s);
   redraw();
+  return true;
 }
 
-inline Fetch *fetching;
-inline std::atomic<bool> fetch_done;
-
-inline esp_err_t on_header(esp_http_client_event_t *e) {
-  Fetch &f = *(Fetch *) e->user_data;
-  if (e->event_id == HTTP_EVENT_ON_HEADER) {
-    if (!strcasecmp(e->header_key, "last-modified"))
-      f.last_modified = e->header_value;
-    else if (!strcasecmp(e->header_key, "expires"))
-      f.expires = e->header_value;
-    else if (!strcasecmp(e->header_key, "retry-after"))
-      f.retry_after = e->header_value;
-  }
-  return ESP_OK;
-}
-
-// The answer, an hour at a time until there are HOURS of them. Not inlined, so its buffer takes the stack the
-// handshake had. False if the connection failed or the answer was cut short.
-__attribute__((noinline)) inline bool read_answer(esp_http_client_handle_t c, Weather &w) {
-  char buf[Reader::SIZE + 1];
-  Reader rd(buf);
-  int r;
-  bool more;
-  do {
-    size_t room;
-    char *p = rd.space(room);
-    r = esp_http_client_read(c, p, (int) room);
-    more = r <= 0 || rd.got((size_t) r);
-  } while (r > 0 && more);
-  w = rd.w;
-  return !more || (r == 0 && esp_http_client_is_complete_data_received(c));
-}
-
-inline void request(void *arg) {
-  Fetch &f = *(Fetch *) arg;
-  esp_http_client_config_t config = {};
-  config.url = url;
-  config.user_agent = USER_AGENT;
-  config.timeout_ms = f.timeout_ms;
-  config.crt_bundle_attach = esp_crt_bundle_attach;
-  config.event_handler = on_header;
-  config.user_data = &f;
-  if (esp_http_client_handle_t c = esp_http_client_init(&config)) {
-    if (!f.since.empty())
-      esp_http_client_set_header(c, "If-Modified-Since", f.since.c_str());
-    for (int hops = 0; esp_http_client_open(c, 0) == ESP_OK && esp_http_client_fetch_headers(c) >= 0; hops++) {
-      f.status = esp_http_client_get_status_code(c);
-      bool moved = f.status == 301 || f.status == 302 || f.status == 307 || f.status == 308;
-      if (!moved || hops == 3 || esp_http_client_set_redirection(c) != ESP_OK)
-        break;
-    }
-    if (f.status >= 200 && f.status < 300 && !read_answer(c, f.w))
-      f.status = 0;              // counts as no answer, its Last-Modified isn't kept
-    esp_http_client_cleanup(c);  // TLS's buffers go with it
-  }
-  f.stack_left = uxTaskGetStackHighWaterMark(nullptr);
-  fetch_done.store(true);  // f is the loop's from here on
-  requests--;
-  vTaskDelete(nullptr);
-}
-
-// Asks for the forecast, with If-Modified-Since once we have a Last-Modified
-inline void fetch() {
-  if (fetching)
-    return;  // the last one still runs
-  RAMAllocator<Fetch> ram;
-  Fetch *f = ram.allocate(1);
-  if (f) {
-    new (f) Fetch();
-    f->since = modified;
-    f->timeout_ms = timeout_ms;
-    fetch_done.store(false);
-    fetching = f;
-    requests++;
-    if (xTaskCreate(request, "met", STACK, f, 1, nullptr) == pdPASS)
-      return;
-    requests--;
-    fetching = nullptr;
-    f->~Fetch();
-    ram.deallocate(f, 1);
-  }
-  ESP_LOGW("met", "No RAM for the forecast, %u bytes", (unsigned) (sizeof(Fetch) + STACK));
-  not_before = now_s() + 600;
-  on_status("No RAM for the forecast");
-}
-
-// The answer, once the request's task is done with it
-inline void poll() {
-  if (!fetching || !fetch_done.load())
-    return;
-  Fetch *f = fetching;
-  fetching = nullptr;
-  ESP_LOGD("met", "The request left %u bytes of its stack", f->stack_left);
-  if (f->status)
-    fetched(*f);
-  else
-    unreachable();
-  f->~Fetch();
-  RAMAllocator<Fetch>().deallocate(f, 1);
-}
-
-// Every second from met.yaml: the answer once the task has it, and an early retry when it's time
-inline void tick() {
-  poll();
-  if (retry_soon && !fetching && due()) {
-    retry_soon = false;
-    fetch();
-  }
-}
-
-// From met.yaml's on_boot, with http_request's timeout
-inline void setup(double latitude, double longitude, const char *picture, const char *encoding, const char *quality,
-                  uint32_t http_timeout_ms) {
+// From met.yaml's on_boot. status: Panel Weather.
+template<typename S>
+void setup(double latitude, double longitude, const char *picture, const char *encoding, const char *quality,
+           S &&status) {
   lat = latitude;
   lon = longitude;
-  timeout_ms = (int) http_timeout_ms;
   // MET Norway wants at most 4 decimals, more can get a 403
-  snprintf(url, sizeof url, "https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=%.4f&lon=%.4f", lat, lon);
+  snprintf(forecasts.url, sizeof forecasts.url,
+           "https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=%.4f&lon=%.4f", lat, lon);
+  forecasts.what = "forecast";
+  forecasts.server = "MET Norway";
+  forecasts.status = ptr_of(status);
+  fetch::add(forecasts);
   name = picture;
   now_item = Item("weather", ITEM_SENSOR)
                  .view(false)

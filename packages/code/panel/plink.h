@@ -12,7 +12,7 @@
 extern "C" {
 #endif
 
-#define PLINK_VERSION 4
+#define PLINK_VERSION 5
 
 // Message kinds. A newer VALUE replaces one still waiting, but every EVENT counts. BYTES are texts and pictures,
 // every one counts too.
@@ -68,25 +68,32 @@ uint32_t plink_crc32(uint32_t crc, const void *data, unsigned n);  // start with
 // PackBits for one picture row of 16-colour pixels, high nibble first. out needs n + n/128 + 1 bytes. A byte
 // c < 128 is followed by c + 1 literal bytes, c >= 128 by one byte to repeat c - 126 times.
 unsigned plink_pack_row(const uint8_t *row, unsigned n, uint8_t *out);
-// Animation frame cur as the rectangle that changed since prev, or the whole frame if prev is NULL. w x h, w even,
-// packed like picture rows. The record is ANIM_RECORD_*: delay (in ANIM_TICK_MS), x / 2, y, w / 2, h, then the
-// rectangle deflated, nothing if it's empty. out needs ANIM_RECORD_HEAD + PDEFLATE_BOUND(w / 2 x h) bytes. Returns the
-// record's length, 0 if there wasn't memory to compress it. _in deflates in work's blocks for w / 2 x h bytes,
-// so nothing is malloc'd.
-unsigned plink_anim_record(const uint8_t *prev, const uint8_t *cur, unsigned w, unsigned h, uint8_t delay,
-                           uint8_t *out);
-unsigned plink_anim_record_in(const pdeflate_work_t *work, const uint8_t *prev, const uint8_t *cur, unsigned w,
-                              unsigned h, uint8_t delay, uint8_t *out);
+// An animated overlay's frame cur as the rectangle that changed since prev, or the whole frame if prev is NULL. w x h,
+// w even, packed like picture rows. The record is OVERLAY_RECORD_*: delay (in OVERLAY_TICK_MS), x / 2, y, w / 2, h,
+// then the rectangle deflated, nothing if it's empty. out needs OVERLAY_RECORD_HEAD + PDEFLATE_BOUND(w / 2 x h) bytes.
+// Returns the record's length, 0 if there wasn't memory to compress it. _in deflates in work's blocks for w / 2 x h
+// bytes, so nothing is malloc'd.
+unsigned plink_overlay_record(const uint8_t *prev, const uint8_t *cur, unsigned w, unsigned h, uint8_t delay,
+                              uint8_t *out);
+unsigned plink_overlay_record_in(const pdeflate_work_t *work, const uint8_t *prev, const uint8_t *cur, unsigned w,
+                                 unsigned h, uint8_t delay, uint8_t *out);
+// A still overlay's pieces from its frame, w x h packed like picture rows, into out: one for each 8 rows of it with a
+// colour that isn't clear, trimmed to those, each with delay. clear has a bit for each colour that is. A frame that's
+// all clear is one empty piece. Returns their length, 0 if they might not fit in cap.
+uint32_t plink_overlay_pieces(const uint8_t *frame, unsigned w, unsigned h, uint16_t clear, uint8_t delay, uint8_t *out,
+                              uint32_t cap);
 
-// ---- The ESP's picture and animation transfers, see plink_keys.h
+// ---- The ESP's picture and overlay transfers, see plink_keys.h
 // 16 0xRRGGBB colours as PIC_PAL_LEN bytes
 void plink_put_palette(uint8_t *b, const uint32_t *pal);
-// A BEGIN, PATCH or ANIM_BEGIN in b, the palette after its head unless pal is NULL. b needs PIC_BEGIN_HEAD,
-// PIC_PATCH_HEAD or ANIM_BEGIN_HEAD + PIC_PAL_LEN bytes. Returns the message's length.
+// A BEGIN or PATCH in b, the palette after its head unless pal is NULL. b needs PIC_BEGIN_HEAD or PIC_PATCH_HEAD +
+// PIC_PAL_LEN bytes. Returns the message's length.
 int plink_pic_begin(uint8_t *b, uint8_t id, uint8_t format, uint16_t w, uint16_t h, uint32_t size, const uint32_t *pal);
 int plink_pic_patch(uint8_t *b, uint8_t id, uint16_t y, uint16_t count, uint32_t size, const uint32_t *pal);
-int plink_anim_begin(uint8_t *b, uint8_t id, uint8_t slot, uint16_t w, uint16_t h, uint8_t scale, uint8_t transp,
-                     uint32_t size, const uint32_t *pal);
+// An OVERLAY_BEGIN in b, OVERLAY_BEGIN_HEAD + OVERLAY_PAL_LEN bytes. pal is 16 0xAARRGGBB colours, each one's opacity
+// its alpha in 15ths, rounded. Returns the message's length.
+int plink_overlay_begin(uint8_t *b, uint8_t id, uint8_t slot, uint8_t kind, uint16_t w, uint16_t h, uint8_t scale,
+                        uint32_t size, const uint32_t *pal);
 
 #ifdef __cplusplus
 }

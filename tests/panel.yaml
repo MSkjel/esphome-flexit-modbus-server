@@ -57,6 +57,9 @@ packages:
   panel_weather: !include
     file: ../packages/panel/met.yaml
     vars: {latitude: "59.9139", longitude: "10.7522"}
+  panel_mars_today: !include ../packages/panel/mars_today.yaml
+  panel_earth_today: !include ../packages/panel/earth_today.yaml
+  panel_probes: !include ../packages/panel/probes.yaml
   panel_update: !include ../packages/panel/update.yaml
   panel_screen: !include ../packages/panel/screen_camera.yaml
 

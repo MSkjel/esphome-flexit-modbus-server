@@ -1,0 +1,39 @@
+# Probes: where the probes flying now are, on a chart of the inner solar system, as a screensaver picture, see
+# code/space/probes.h. Needs panel.yaml. Show it with the "Panel Picture" select or the panel_show_picture action.
+#   - path: packages/panel/probes.yaml
+# update_interval: how often JPL Horizons is asked, a question of about 4.5 KB for each of the 11 probes
+# encoding and quality work as in picture.yaml. In 16 colours the Sun's shades would take the planets' own.
+# Positions: NASA/JPL Horizons.
+defaults:
+  name: probes
+  update_interval: 1d
+  encoding: jpeg
+  quality: auto
+
+select:
+  - id: !extend panel_picture
+    options: ["${name}"]
+
+# TLS takes its buffers as each record comes and goes, so the answers, read beside the pictures, need less RAM at once
+esp32:
+  framework:
+    sdkconfig_options:
+      CONFIG_MBEDTLS_DYNAMIC_BUFFER: "y"
+
+text_sensor:
+  - platform: template
+    id: panel_${name}_status
+    name: "Panel Probes"
+    entity_category: diagnostic
+    icon: "mdi:rocket-launch"
+
+esphome:
+  # Only here, so builds without the space pictures don't compile their code
+  includes:
+    - ../code/marks
+    - ../code/space
+  on_boot:
+    - then:
+        - lambda: |-
+            flexit::panel::space::probes::setup("${name}", "${update_interval}", "${encoding}", "${quality}",
+                                                id(panel_${name}_status));

@@ -2,16 +2,11 @@
 #pragma once
 #include <cmath>
 #include <cstdint>
+#include "../panel/dates.h"
 
 namespace flexit::panel::met {
 
 // ---------------------------------------------------------------- dates
-
-uint32_t days_from_civil(int y, int m, int d);            // days since 1970-01-01
-void civil_from_days(int32_t z, int *y, int *m, int *d);  // days since 1970-01-01 to a date
-
-// Unix time of a UTC date and time
-uint32_t unix_of(int y, int m, int d, int h = 0, int mi = 0, int s = 0);
 
 // The day of the year, 1 = Jan 1
 int day_of_year(int y, int m, int d);

@@ -7,7 +7,7 @@
 namespace flexit::panel::met::live {
 
 // The pool's bytes a show here plans for, a little under the panel's
-inline constexpr int SKY_POOL = ANIM_POOL - 144;
+inline constexpr int SKY_POOL = OVERLAY_POOL - 144;
 
 // Pool bytes the sky's sprites take besides their frame, upper bounds of what the panel's encoder makes of them.
 // The firmware's sim/esp_yaml/live_sky.inc checks them.

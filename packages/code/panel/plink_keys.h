@@ -8,7 +8,7 @@
 //   0x080..0x09F  equipment, K_FEATURE + app/equipment.h's id
 //   0x0A0..0x0FF  panel settings only the panel has, app/values.h. Their keys only name them in its flash
 //   0x100..0x11F  the screensaver picture
-//   0x120..0x13F  screensaver animations
+//   0x120..0x13F  screensaver overlays
 //   0x140..0x14F  screenshots
 //   0x150..0x15F  the screensaver's lines
 //   0x160..0x16F  debugging
@@ -55,7 +55,7 @@ enum { NOTE_INFO, NOTE_WARNING, NOTE_ALARM };
 //                16, height of 8. For photos, always sent whole.
 // A transfer is BEGIN or PATCH, then DATA up to size bytes, then END. The panel answers with PIC_ACKs and centers
 // pictures smaller than the screen. Each message's field offsets follow it.
-// BEGIN, PATCH and ANIM_BEGIN start with the transfer's id, which its PIC_ACKs carry
+// BEGIN, PATCH and OVERLAY_BEGIN start with the transfer's id, which its PIC_ACKs carry
 #define PIC_MSG_ID 0
 // BEGIN, a whole picture: id, format, w (2), h (2), size (4), then at PIC_BEGIN_HEAD for PIC_PALETTE the palette
 // (16 x RGB, plink_put_palette)
@@ -76,7 +76,7 @@ enum { PIC_PATCH_Y = 1, PIC_PATCH_COUNT = 3, PIC_PATCH_SIZE = 5, PIC_PATCH_HEAD 
 // PART, a part of the picture in front of the places farther than it, like a flagpole the boats go behind: part
 // (0..PIC_PARTS - 1), x0, y0, x1, y1 (2 each, signed, x1 and y1 just past it) on the screen like a place's x and y,
 // colours (2, a bit for each of the picture's that make the part, PIC_ALL_COLOURS for all it covers, the only way
-// for a JPEG), then depth, see K_ANIM_DEPTH. An empty one drops the part, BEGIN and CLEAR all of them.
+// for a JPEG), then depth, see K_OVERLAY_DEPTH. An empty one drops the part, BEGIN and CLEAR all of them.
 #define K_PIC_PART 0x106
 enum {
   PIC_PART_X0 = 1,
@@ -91,7 +91,7 @@ enum {
 #define PIC_ALL_COLOURS 0xFFFF
 
 #define PIC_POOL 14336  // panel memory for a picture, plus room behind it for a patch while it comes in
-#define PIC_MAX_W 320   // the screen, the biggest picture or animation
+#define PIC_MAX_W 320   // the screen, the biggest picture or overlay
 #define PIC_MAX_H 240
 
 // PIC_ACK status
@@ -99,153 +99,177 @@ enum {
   PIC_PROGRESS,    // another 1 KiB received
   PIC_DONE,        // complete and CRC checked, now shown
   PIC_BAD_CRC,     // send it again
-  PIC_TOO_BIG,     // doesn't fit PIC_POOL. For an animation it's ANIM_POOL, try it at half size
+  PIC_TOO_BIG,     // doesn't fit PIC_POOL. For an overlay it's OVERLAY_POOL, try it at half size
   PIC_NO_ROOM,     // patch doesn't fit behind the picture, send smaller pieces or the whole picture
   PIC_NO_PICTURE,  // patch but no 16-colour picture to patch, the panel restarted. Send the whole picture
   PIC_BAD_SIZE,    // width, height or rows out of range
   PIC_BAD,         // header of the wrong length, data that doesn't decode to the rows, or a JPEG the panel can't draw
 };
 
-// ---- Screensaver animations
-// BEGIN, an animation: id, slot (0..ANIM_SLOTS - 1), w (2, even), h (2), scale (1 or 2), transparent colour index
-// (ANIM_OPAQUE = none), size (4), then at ANIM_BEGIN_HEAD the palette (16 x RGB). Then DATA up to size bytes and END,
-// as for a picture. The data is one plink_anim_record per frame. The first is the whole first frame, the last one
-// takes the last frame back to the first. It replaces the slot's animation and its places. The panel keeps every
-// slot's frame and records in ANIM_POOL, and answers PIC_TOO_BIG when they don't fit next to the others.
-#define K_ANIM_BEGIN 0x120
+// ---- Screensaver overlays, drawn over the picture: 16 colours, each with its own opacity, animated or still
+// BEGIN: id, slot (0..OVERLAY_SLOTS - 1), w (2, even), h (2), scale (1 or 2), OVERLAY_ANIMATED or OVERLAY_STILL, size
+// (4), then at OVERLAY_BEGIN_HEAD the palette: 16 x RGB, then their opacities from 0, clear, to 15, two a byte, the
+// first colour's in the high nibble. Then DATA up to size bytes and END, as for a picture. It replaces the slot's
+// overlay and its places. The panel keeps every slot's records, and an animated one's frame, in OVERLAY_POOL, and
+// answers PIC_TOO_BIG when they don't fit next to the others.
+#define K_OVERLAY_BEGIN 0x120
 enum {
-  ANIM_BEGIN_SLOT = 1,
-  ANIM_BEGIN_W,
-  ANIM_BEGIN_H = 4,
-  ANIM_BEGIN_SCALE = 6,
-  ANIM_BEGIN_TRANSP,
-  ANIM_BEGIN_SIZE,
-  ANIM_BEGIN_HEAD = 12,
+  OVERLAY_BEGIN_SLOT = 1,
+  OVERLAY_BEGIN_W,
+  OVERLAY_BEGIN_H = 4,
+  OVERLAY_BEGIN_SCALE = 6,
+  OVERLAY_BEGIN_KIND,
+  OVERLAY_BEGIN_SIZE,
+  OVERLAY_BEGIN_HEAD = 12,
 };
-// A record is ANIM_RECORD_HEAD bytes, delay, x / 2, y, w / 2 and h, then its deflated rectangle. The delay is in
-// ANIM_TICK_MS, up to ANIM_DELAY_MAX. Whatever its delay, a frame shows ANIM_FRAME_MIN_MS at least.
-enum { ANIM_RECORD_DELAY, ANIM_RECORD_X, ANIM_RECORD_Y, ANIM_RECORD_W, ANIM_RECORD_H, ANIM_RECORD_HEAD };
-#define ANIM_TICK_MS 10
-#define ANIM_DELAY_MAX 255
-#define ANIM_FRAME_MIN_MS 40
-#define K_ANIM_CLEAR 0x121  // a slot, ANIM_PLACE_BIT | a place, or ANIM_ALL, | ms << 8 to fade out over ms first
-// The rest up to DEPTH go to anim_msg(). FRAMES is for a slot, the others for a place, ignored without it.
-#define ANIM_MSG_PLACE 0
-#define K_ANIM_FRAMES 0x122  // slot, frame rate (2, percent of the records' times, 0..ANIM_RATE_MAX, 0 = paused)
-enum { ANIM_FRAMES_SLOT, ANIM_FRAMES_RATE, ANIM_FRAMES_LEN = 3 };
-#define ANIM_RATE_MAX 1000
-// PLACE, where an animation shows: place (0..ANIM_PLACES - 1), slot, x (2), y (2), own, start, fade (2). Replaces
-// that place, x and y signed, so it can start off the screen. Every place of a slot shows its frames in step,
-// unless own = 1 gives it a frame of its own (w x h / 2 bytes more of ANIM_POOL) that starts start frames in. It
-// fades in over fade ms, upright, full size and on the whole screen. Ignored without the animation or the room.
-#define K_ANIM_PLACE 0x123
+#define OVERLAY_PAL_LEN (PIC_PAL_LEN + 8)
+// The data is records of OVERLAY_RECORD_HEAD bytes, delay, x / 2, y, w / 2 and h, then that rectangle of the frame:
+//   OVERLAY_ANIMATED  a record a frame from plink_overlay_record, the rectangle that changed, deflated. The first is
+//                     the whole first frame, the last takes the last frame back to the first.
+//   OVERLAY_STILL     its pieces from plink_overlay_pieces, each at most OVERLAY_PIECE_MAX bytes, its rows packed as
+//                     plink_pack_row packs them. Clear where there's none. The panel keeps them packed and unpacks
+//                     them as they're drawn. The first one's delay is how long a round is, see ROUNDS.
+// The delay is in OVERLAY_TICK_MS, up to OVERLAY_DELAY_MAX. Whatever its delay, a frame shows OVERLAY_FRAME_MIN_MS at
+// least.
+enum { OVERLAY_ANIMATED, OVERLAY_STILL };
+#define OVERLAY_PIECE_MAX 1280  // 8 rows of the screen
 enum {
-  ANIM_PLACE_SLOT = 1,
-  ANIM_PLACE_X,
-  ANIM_PLACE_Y = 4,
-  ANIM_PLACE_OWN = 6,
-  ANIM_PLACE_START,
-  ANIM_PLACE_FADE,
-  ANIM_PLACE_LEN = 10,
+  OVERLAY_RECORD_DELAY,
+  OVERLAY_RECORD_X,
+  OVERLAY_RECORD_Y,
+  OVERLAY_RECORD_W,
+  OVERLAY_RECORD_H,
+  OVERLAY_RECORD_HEAD
+};
+#define OVERLAY_TICK_MS 10
+#define OVERLAY_DELAY_MAX 255
+#define OVERLAY_FRAME_MIN_MS 40
+// CLEAR: a slot, OVERLAY_PLACE_BIT | a place, or OVERLAY_ALL, | ms << 8 to fade out over ms first
+#define K_OVERLAY_CLEAR 0x121
+// The rest up to DEPTH go to overlay_msg(). FRAMES is for a slot, the others for a place, ignored without it.
+#define OVERLAY_MSG_PLACE 0
+#define K_OVERLAY_FRAMES 0x122  // slot, frame rate (2, percent of the records' times, 0..OVERLAY_RATE_MAX, 0 = paused)
+enum { OVERLAY_FRAMES_SLOT, OVERLAY_FRAMES_RATE, OVERLAY_FRAMES_LEN = 3 };
+#define OVERLAY_RATE_MAX 1000
+// PLACE, where an overlay shows: place (0..OVERLAY_PLACES - 1), slot, x (2), y (2), own, start, fade (2). Replaces
+// that place, x and y signed, so it can start off the screen. Every place of an animated slot shows its frames in
+// step, unless own = 1 gives it a frame of its own (w x h / 2 bytes more of OVERLAY_POOL) that starts start frames
+// in. A still ignores own. It fades in over fade ms, upright, full size and on the whole screen. Ignored without the
+// overlay or the room.
+#define K_OVERLAY_PLACE 0x123
+enum {
+  OVERLAY_PLACE_SLOT = 1,
+  OVERLAY_PLACE_X,
+  OVERLAY_PLACE_Y = 4,
+  OVERLAY_PLACE_OWN = 6,
+  OVERLAY_PLACE_START,
+  OVERLAY_PLACE_FADE,
+  OVERLAY_PLACE_LEN = 10,
 };
 // AREA, where a drift or wander keeps and what a MAP goes across: place, x0, y0, x1, y1 (2 each, signed, x1 and y1
-// just past it), then ANIM_EDGE_* for x and for y. The turned and sized box keeps to it.
-#define K_ANIM_AREA 0x124
+// just past it), then OVERLAY_EDGE_* for x and for y. The turned and sized box keeps to it.
+#define K_OVERLAY_AREA 0x124
 enum {
-  ANIM_AREA_X0 = 1,
-  ANIM_AREA_Y0 = 3,
-  ANIM_AREA_X1 = 5,
-  ANIM_AREA_Y1 = 7,
-  ANIM_AREA_EDGES = 9,
-  ANIM_AREA_LEN = 11,
+  OVERLAY_AREA_X0 = 1,
+  OVERLAY_AREA_Y0 = 3,
+  OVERLAY_AREA_X1 = 5,
+  OVERLAY_AREA_Y1 = 7,
+  OVERLAY_AREA_EDGES = 9,
+  OVERLAY_AREA_LEN = 11,
 };
 enum {
-  ANIM_EDGE_SCREEN,  // round the whole screen, what's over one edge shows at the other
-  ANIM_EDGE_CROSS,   // out across an edge of the area, back in at the other one
-  ANIM_EDGE_BOUNCE,  // back off the edges
+  OVERLAY_EDGE_SCREEN,  // round the whole screen, what's over one edge shows at the other
+  OVERLAY_EDGE_CROSS,   // out across an edge of the area, back in at the other one
+  OVERLAY_EDGE_BOUNCE,  // back off the edges
 };
 // A place's channels: x, y the top left of its frame at full size in px, turn degrees clockwise round its middle,
 // size, opacity and speed in percent. Speed is how fast its drifts and wander on x and y go.
-enum { ANIM_X, ANIM_Y, ANIM_TURN, ANIM_SIZE, ANIM_OPACITY, ANIM_SPEED, ANIM_CHANNELS };
-// GLIDE: place, channels (a bit per ANIM_*), ms (2, 0 = at once), ANIM_EASE_*, then at ANIM_GLIDE_HEAD a value (2,
-// signed) for each channel in order: size ANIM_SIZE_MIN..ANIM_SIZE_MAX, opacity and speed from 0 to their
-// ANIM_*_MAX. A turn goes the short way round. It stops each channel's drift, the wander on x or y, the face on turn.
-#define K_ANIM_GLIDE 0x125
-enum { ANIM_GLIDE_CHANNELS = 1, ANIM_GLIDE_MS, ANIM_GLIDE_EASE = 4, ANIM_GLIDE_HEAD };
-#define ANIM_EASE_IN 1   // starts slow
-#define ANIM_EASE_OUT 2  // ends slow
-#define ANIM_SIZE_MIN 10
-#define ANIM_SIZE_MAX 400
-#define ANIM_OPACITY_MAX 100
-#define ANIM_SPEED_MAX 1000
-// DRIFT: place, channels (bits of x, y and turn), then at ANIM_DRIFT_HEAD tenths of a px or degree per second (2,
+enum { OVERLAY_X, OVERLAY_Y, OVERLAY_TURN, OVERLAY_SIZE, OVERLAY_OPACITY, OVERLAY_SPEED, OVERLAY_CHANNELS };
+// GLIDE: place, channels (a bit per OVERLAY_*), ms (2, 0 = at once), OVERLAY_EASE_*, then at OVERLAY_GLIDE_HEAD a value
+// (2, signed) for each channel in order: size OVERLAY_SIZE_MIN..OVERLAY_SIZE_MAX, opacity and speed from 0 to their
+// OVERLAY_*_MAX. A turn goes the short way round. It stops each channel's drift, the wander on x or y, the face on
+// turn.
+#define K_OVERLAY_GLIDE 0x125
+enum { OVERLAY_GLIDE_CHANNELS = 1, OVERLAY_GLIDE_MS, OVERLAY_GLIDE_EASE = 4, OVERLAY_GLIDE_HEAD };
+#define OVERLAY_EASE_IN 1   // starts slow
+#define OVERLAY_EASE_OUT 2  // ends slow
+#define OVERLAY_SIZE_MIN 10
+#define OVERLAY_SIZE_MAX 400
+#define OVERLAY_OPACITY_MAX 100
+#define OVERLAY_SPEED_MAX 1000
+// DRIFT: place, channels (bits of x, y and turn), then at OVERLAY_DRIFT_HEAD tenths of a px or degree per second (2,
 // signed) for each channel in order, 0 = stays where it is. On x and y it keeps to the AREA. It stops each channel's
 // glide, the wander on x or y, the face on turn.
-#define K_ANIM_DRIFT 0x126
-enum { ANIM_DRIFT_CHANNELS = 1, ANIM_DRIFT_HEAD };
+#define K_OVERLAY_DRIFT 0x126
+enum { OVERLAY_DRIFT_CHANNELS = 1, OVERLAY_DRIFT_HEAD };
 // WANDER: place, legs of speed min..max tenths of a px/s (2 + 2) toward heading +- spread degrees (2 + 2, signed,
 // clockwise from right) for leg min..max ms (2 + 2, 0 0 = one leg), rests of min..max ms (2 + 2, 0 0 = none)
 // between. It keeps to the AREA, and a bounce turns the heading round. It stops the glides and drifts of x and y.
-#define K_ANIM_WANDER 0x127
+#define K_OVERLAY_WANDER 0x127
 enum {
-  ANIM_WANDER_SPEED = 1,  // min, then max
-  ANIM_WANDER_HEADING = 5,
-  ANIM_WANDER_SPREAD = 7,
-  ANIM_WANDER_LEG = 9,    // min, then max
-  ANIM_WANDER_REST = 13,  // min, then max
-  ANIM_WANDER_LEN = 17,
+  OVERLAY_WANDER_SPEED = 1,  // min, then max
+  OVERLAY_WANDER_HEADING = 5,
+  OVERLAY_WANDER_SPREAD = 7,
+  OVERLAY_WANDER_LEG = 9,    // min, then max
+  OVERLAY_WANDER_REST = 13,  // min, then max
+  OVERLAY_WANDER_LEN = 17,
 };
-// FACE: place, ANIM_FACE_*, the way the frames face (2, degrees), tilt (2, the most it turns, 0..180) and rate (2,
+// FACE: place, OVERLAY_FACE_*, the way the frames face (2, degrees), tilt (2, the most it turns, 0..180) and rate (2,
 // whole degrees per second, 0 = at once). Turns toward where it goes until a glide or drift of its turn.
-#define K_ANIM_FACE 0x128
-enum { ANIM_FACE_FLAGS = 1, ANIM_FACE_FACING, ANIM_FACE_TILT = 4, ANIM_FACE_RATE = 6, ANIM_FACE_LEN = 8 };
-#define ANIM_FACE_MIRROR 1  // flips left to right to face the other way
-#define ANIM_FACE_LEVEL 2   // turns back upright when it stops
-#define K_ANIM_FLIP 0x129   // place, ANIM_FLIP_*
-#define ANIM_FLIP_X 1       // mirrored left to right, before it turns
-#define ANIM_FLIP_Y 2       // upside down
-enum { ANIM_FLIP_FLAGS = 1, ANIM_FLIP_LEN };
+#define K_OVERLAY_FACE 0x128
+enum {
+  OVERLAY_FACE_FLAGS = 1,
+  OVERLAY_FACE_FACING,
+  OVERLAY_FACE_TILT = 4,
+  OVERLAY_FACE_RATE = 6,
+  OVERLAY_FACE_LEN = 8
+};
+#define OVERLAY_FACE_MIRROR 1  // flips left to right to face the other way
+#define OVERLAY_FACE_LEVEL 2   // turns back upright when it stops
+#define K_OVERLAY_FLIP 0x129   // place, OVERLAY_FLIP_*
+#define OVERLAY_FLIP_X 1       // mirrored left to right, before it turns
+#define OVERLAY_FLIP_Y 2       // upside down
+enum { OVERLAY_FLIP_FLAGS = 1, OVERLAY_FLIP_LEN };
 // WAVE: place, channel, low, high (2 each, signed), rise, fall (2 each, ms for the whole way up and down), hold at
-// high, hold at low (2 each, ms), jitter (percent the times vary), ANIM_WAVE_*. Goes between low and high on its
+// high, hold at low (2 each, ms), jitter (percent the times vary), OVERLAY_WAVE_*. Goes between low and high on its
 // own, an offset on x, y and turn, percent of the channel on the others. Low = high goes there and stays, and at no
 // change the wave is gone.
-#define K_ANIM_WAVE 0x12A
+#define K_OVERLAY_WAVE 0x12A
 enum {
-  ANIM_WAVE_CHANNEL = 1,
-  ANIM_WAVE_LO,
-  ANIM_WAVE_HI = 4,
-  ANIM_WAVE_MS = 6,     // rise, then fall
-  ANIM_WAVE_HOLD = 10,  // at high, then at low
-  ANIM_WAVE_JITTER = 14,
-  ANIM_WAVE_FLAGS,
-  ANIM_WAVE_LEN,
+  OVERLAY_WAVE_CHANNEL = 1,
+  OVERLAY_WAVE_LO,
+  OVERLAY_WAVE_HI = 4,
+  OVERLAY_WAVE_MS = 6,     // rise, then fall
+  OVERLAY_WAVE_HOLD = 10,  // at high, then at low
+  OVERLAY_WAVE_JITTER = 14,
+  OVERLAY_WAVE_FLAGS,
+  OVERLAY_WAVE_LEN,
 };
-#define ANIM_WAVE_SLOW_LOW 1   // eases in and out at low
-#define ANIM_WAVE_SLOW_HIGH 2  // and at high
-#define ANIM_WAVE_RANDOM 4     // each way to anywhere between low and high
+#define OVERLAY_WAVE_SLOW_LOW 1   // eases in and out at low
+#define OVERLAY_WAVE_SLOW_HIGH 2  // and at high
+#define OVERLAY_WAVE_RANDOM 4     // each way to anywhere between low and high
 // MAP: place, channel (turn, size, opacity or speed), its value at the AREA's left, right, top and bottom (2 each,
 // signed). The channel follows where its middle is across the area, an offset on turn and percent on the others,
 // the two ways added or multiplied. The places it makes bigger are nearer, and drawn in front of the others at their
 // depth.
-#define K_ANIM_MAP 0x12B
-enum { ANIM_MAP_CHANNEL = 1, ANIM_MAP_VALUES, ANIM_MAP_LEN = 10 };  // VALUES: left, right, top, bottom
+#define K_OVERLAY_MAP 0x12B
+enum { OVERLAY_MAP_CHANNEL = 1, OVERLAY_MAP_VALUES, OVERLAY_MAP_LEN = 10 };  // VALUES: left, right, top, bottom
 // ROUNDS: place, rounds (2), fade (2), tag. Plays to the end of rounds rounds, then fades out over fade ms and goes,
 // answering GONE. A frame of its own holds the last one. 0 plays on.
-#define K_ANIM_ROUNDS 0x12C
-enum { ANIM_ROUNDS_COUNT = 1, ANIM_ROUNDS_FADE = 3, ANIM_ROUNDS_TAG = 5, ANIM_ROUNDS_LEN };
-#define K_ANIM_GONE 0x12D  // panel -> ESP: place | tag << 8 of one that went after its rounds
-// DEPTH: place, depth, 0 the farthest. PLACE starts it at ANIM_NEAREST. A place is drawn in front of those at less
+#define K_OVERLAY_ROUNDS 0x12C
+enum { OVERLAY_ROUNDS_COUNT = 1, OVERLAY_ROUNDS_FADE = 3, OVERLAY_ROUNDS_TAG = 5, OVERLAY_ROUNDS_LEN };
+#define K_OVERLAY_GONE 0x12D  // panel -> ESP: place | tag << 8 of one that went after its rounds
+// DEPTH: place, depth, 0 the farthest. PLACE starts it at OVERLAY_NEAREST. A place is drawn in front of those at less
 // depth, and behind each part of the picture at more, see K_PIC_PART.
-#define K_ANIM_DEPTH 0x12E
-enum { ANIM_DEPTH_DEPTH = 1, ANIM_DEPTH_LEN };
-#define ANIM_NEAREST 255
-#define ANIM_OPAQUE 16
-#define ANIM_SLOTS 6
-#define ANIM_PLACES 8
-#define ANIM_WAVES 12  // waves the panel runs at a time, of all places together
-#define ANIM_PLACE_BIT 0x80
-#define ANIM_ALL 0xFF
-#define ANIM_POOL 8192  // panel memory for the animations, each one inflated frame of w x h / 2 bytes plus records
+#define K_OVERLAY_DEPTH 0x12E
+enum { OVERLAY_DEPTH_DEPTH = 1, OVERLAY_DEPTH_LEN };
+#define OVERLAY_NEAREST 255
+#define OVERLAY_SLOTS 6
+#define OVERLAY_PLACES 8
+#define OVERLAY_WAVES 12  // waves the panel runs at a time, of all places together
+#define OVERLAY_PLACE_BIT 0x80
+#define OVERLAY_ALL 0xFF
+#define OVERLAY_POOL 8192  // panel memory for the overlays: their records, and an animated one's frame of w x h / 2
 
 // ---- Screenshots: what the panel shows as a JPEG, which the ESP puts together from 64x8 tiles, numbered across and
 // then down. Each tile is one restart interval from pjpeg_tile() at the quality SHOT asked for. The ESP writes the
