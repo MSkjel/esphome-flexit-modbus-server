@@ -194,7 +194,6 @@ inline fetch::Request *Positions::make(int step) {
   if (h) {
     h->probe = step;
     h->day = day;
-    h->url = url_of(PROBES[step].id, day);
   }
   return h;
 }
@@ -230,11 +229,11 @@ struct Mark {
 
 // An arrow at the chart's edge toward v, its label on the inside
 inline Mark arrow(marks::Layer &l, const Vec &v, const char *name, uint32_t rgb, float alpha) {
-  float dx = (float) v.x, dy = (float) -v.y;
-  float tx = dx > 0 ? (X1 - cx) / dx : dx < 0 ? (X0 - cx) / dx : 1e9f;
-  float ty = dy > 0 ? (Y1 - cy) / dy : dy < 0 ? (Y0 - cy) / dy : 1e9f;
-  float t = std::min(tx, ty), a = atan2f(dy, dx), ca = cosf(a), sa = sinf(a);
-  float x = cx + dx * t - 3 * ca, y = cy + dy * t - 3 * sa;
+  float dx = (float) v.x, dy = (float) -v.y, x, y;
+  marks::edge({X0, Y0, X1, Y1}, cx, cy, dx, dy, x, y);
+  float a = atan2f(dy, dx), ca = cosf(a), sa = sinf(a);
+  x -= 3 * ca;
+  y -= 3 * sa;
   l.poly({x + 3.2f * ca, y + 3.2f * sa, x - 2.4f * ca - 2.4f * sa, y - 2.4f * sa + 2.4f * ca, x - 2.4f * ca + 2.4f * sa,
           y - 2.4f * sa - 2.4f * ca},
          rgb, alpha);
