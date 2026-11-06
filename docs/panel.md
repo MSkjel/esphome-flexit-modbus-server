@@ -327,6 +327,11 @@ in the gaps on the bus: a 320x240 drawing takes a few seconds, a photo half a mi
 when a picture is updated. `Panel Picture Status` and `Panel Animation Status` show how it's going. Names are
 letters, digits and `_`.
 
+An ESP32 with PSRAM, like a WROVER or an S3 with R in its name, can decode online pictures at `resize: 320x240` and
+take bigger JPEGs. Add `psram:` to your config: their download buffer and decoded pixels go there, and the rest stays
+in the ESP's own RAM, which is faster. The weather's scene only goes there when that's short. An ESP32-C3 can't have
+PSRAM.
+
 | Package | Vars |
 |---|---|
 | `picture.yaml` | `name`, `file` (PNG or JPEG next to your config). `encoding`: `auto`, `palette` (16 colours) or `jpeg`; a palette picture that doesn't fit the panel's 14 KB goes as a JPEG anyway. `quality`: the JPEG quality, or `auto` for the best that fits |

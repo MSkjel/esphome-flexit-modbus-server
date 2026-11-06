@@ -125,14 +125,16 @@ inline void free_drawing() {
 
 inline bool new_drawing() {
   size_t ov_bytes = with_forecast ? OV_H * W / 4 : 0;
-  if (!picture::has_ram(sizeof(Drawing) + sizeof(Stamps) + ov_bytes + (land ? 0 : sizeof(Land)), sizeof(Drawing)))
+  uint8_t at = picture::room_for(sizeof(Drawing) + sizeof(Stamps) + ov_bytes + (land ? 0 : sizeof(Land)),
+                                 sizeof(Drawing));  // internal RAM, PSRAM when that's short
+  if (!at)
     return false;
   bool new_land = !land;
-  if (new_land && (land = RAMAllocator<Land>().allocate(1)))
+  if (new_land && (land = RAMAllocator<Land>(at).allocate(1)))
     land->made = false;
-  Drawing *c = RAMAllocator<Drawing>().allocate(1);
-  Stamps *stamps = RAMAllocator<Stamps>().allocate(1);
-  uint8_t *ov = ov_bytes ? RAMAllocator<uint8_t>().allocate(ov_bytes) : nullptr;
+  Drawing *c = RAMAllocator<Drawing>(at).allocate(1);
+  Stamps *stamps = RAMAllocator<Stamps>(at).allocate(1);
+  uint8_t *ov = ov_bytes ? RAMAllocator<uint8_t>(at).allocate(ov_bytes) : nullptr;
   if (!land || !c || !stamps || (ov_bytes && !ov)) {
     RAMAllocator<Drawing>().deallocate(c, 1);
     RAMAllocator<Stamps>().deallocate(stamps, 1);

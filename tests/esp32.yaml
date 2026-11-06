@@ -1,4 +1,4 @@
-# Classic ESP32 with a DE pin, the TCP bridge, the panel packages, an online picture and a rover
+# Classic ESP32 with a DE pin, the TCP bridge, the panel packages, an online picture, a rover and PSRAM
 esphome:
   name: flexit-ci-esp32
 
@@ -8,6 +8,8 @@ esp32:
     type: esp-idf
     sdkconfig_options:
       CONFIG_UART_ISR_IN_IRAM: "y"
+
+psram:  # boots without the chip too
 
 logger:
 

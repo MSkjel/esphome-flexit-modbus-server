@@ -330,7 +330,7 @@ static void stage(const Download &r, uint8_t *buf) {
 }
 
 void stage(const Download &d) {
-  RAMAllocator<uint8_t> ram;
+  RAMAllocator<uint8_t> ram(RAMAllocator<uint8_t>::PREFER_INTERNAL);  // flash is written from PSRAM 32 bytes at a time
   uint8_t *buf = ram.allocate(BLK);
   if (!buf) {
     staged_len = 0;

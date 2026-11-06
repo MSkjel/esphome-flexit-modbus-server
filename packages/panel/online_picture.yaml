@@ -8,8 +8,9 @@
 # RAM: online_image keeps a 4 KB download buffer from boot. A JPEG has to fit in it whole, so the server has to
 # send its size, and the buffer grows to it and stays. PNG and BMP go through 4 KB at a time. The decoder stays
 # too, 17 KB for JPEG, 44 KB for PNG. The picture takes width x height x 2 bytes until it's converted, 38 KB at the
-# default 160x120, plus up to 36 KB to convert it. With PSRAM you can use resize: 320x240, 150 KB. A file the ESP
-# doesn't have the RAM for is skipped, with the reason in "Panel Picture Status".
+# default 160x120, plus up to 36 KB to convert it. With PSRAM and psram: in your config the buffer, the picture and
+# the PNG decoder go there, so resize: 320x240, 150 KB, works. A file the ESP doesn't have the RAM for is skipped,
+# with the reason in "Panel Picture Status".
 # update_interval: like 30s, 10min, 1.5h or 1d, or never to only download it when it's shown
 # format: PNG, JPEG, BMP or AUTO, which goes by the server's Content-Type
 # encoding and quality work as in picture.yaml.
