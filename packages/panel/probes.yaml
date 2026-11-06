@@ -17,6 +17,8 @@ select:
 # TLS takes its buffers as each record comes and goes, so the answers, read beside the pictures, need less RAM at once
 esp32:
   framework:
+    advanced:
+      include_builtin_idf_components: [esp_http_client]  # for fetch.h, ESPHome leaves it out unless asked
     sdkconfig_options:
       CONFIG_MBEDTLS_DYNAMIC_BUFFER: "y"
 

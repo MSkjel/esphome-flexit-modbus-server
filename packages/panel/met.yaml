@@ -21,6 +21,7 @@ esp32:
   framework:
     advanced:
       use_full_certificate_bundle: true
+      include_builtin_idf_components: [esp_http_client]  # for fetch.h, ESPHome leaves it out unless asked
     sdkconfig_options:
       # TLS takes its buffers for each record as it comes and goes instead of 20 KB for the whole request, so the
       # request, which runs beside the pictures, needs less RAM at once. Closing a connection frees them either way.
