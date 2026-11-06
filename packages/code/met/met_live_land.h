@@ -55,8 +55,7 @@ inline uint32_t crow_visit(int x, int y) {
   preload("crow");
   int along = 4300, down = 2200, stay = ms_of("crow") - STEP, off = 5000;
   place("crowfly", 0, -11, y - 31);
-  move("crowfly", 0, x - 60, y - 31, along);
-  move_later(along, "crowfly", 0, x, y, down);
+  path("crowfly", 0, {{x - 60, y - 31, along}, {x, y, down}});
   later(along + down, [=] { swap("crowfly", 0, "crow", x, y, true); });
   later(along + down + stay, [=] {
     swap_flipped("crow", 0, "crowfly", x, y + 1, true, true, 3);
@@ -264,9 +263,7 @@ inline uint32_t hike(const Herd &h, int y) {
   later(3000, [=] {
     in_light("hiker");
     place("hiker", 0, -14, y);
-    move("hiker", 0, 190, y, along);
-    move_later(along, "hiker", 0, 205, bottom, down);
-    move_later(along + down, "hiker", 0, W + 2, bottom, on);
+    path("hiker", 0, {{190, y, along}, {205, bottom, down}, {W + 2, bottom, on}});
   });
   uint32_t t = 3000 + along + down + on;
   later(t, [h] {
@@ -309,18 +306,15 @@ inline uint32_t kick_sled(int y) {
   in_light("kicksled");
   bool left = chance(0.5f);
   int bottom = TEMPS_BOT + 3, along = (150 + 14) * 1000 / 14, down = 3600, on = (W + 2 - 200) * 1000 / 14;
+  uint32_t t;
   if (left) {
     place_flipped("kicksled", 0, W + 2, bottom, true);
-    move("kicksled", 0, 200, bottom, on);
-    move_later(on, "kicksled", 0, 150, y, down);
-    move_later(on + down, "kicksled", 0, -14, y, along);
+    t = path("kicksled", 0, {{200, bottom, on}, {150, y, down}, {-14, y, along}});
   } else {
     place("kicksled", 0, -14, y);
-    move("kicksled", 0, 150, y, along);
-    move_later(along, "kicksled", 0, 200, bottom, down);
-    move_later(along + down, "kicksled", 0, W + 2, bottom, on);
+    t = path("kicksled", 0, {{150, y, along}, {200, bottom, down}, {W + 2, bottom, on}});
   }
-  return gone_later(along + down + on, "kicksled");
+  return gone_later(t, "kicksled");
 }
 
 // Two children on a sledge down the near hill from its top left of the cabin to the meadow in front of it, quicker
@@ -329,9 +323,7 @@ inline uint32_t sledge(const NearHill &h) {
   in_light("sledge");
   int x = GAP_L, y = h.at(x + 5) - 8;
   place("sledge", 0, x, y);
-  move("sledge", 0, x + 41, y + 21, 2600, "in");
-  move_later(2600, "sledge", 0, x + 61, y + 30, 900);
-  move_later(3500, "sledge", 0, x + 73, y + 33, 1800, "out");
+  path("sledge", 0, {{x + 41, y + 21, 2600, "in"}, {x + 61, y + 30, 900}, {x + 73, y + 33, 1800, "out"}});
   return gone_later(8000, "sledge", 1500);
 }
 

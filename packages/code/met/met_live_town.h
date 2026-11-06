@@ -33,21 +33,25 @@ inline Cols water(const Scene &s, int y0, int y1, bool pass) {
   }
   return c;
 }
+// The longest run of them in columns from to to as its first and last, and its length, 0 if there's none
+inline int longest(const Cols &c, int from, int to, int &l, int &r) {
+  int n = 0;
+  for (int a = from, b; a <= to; a = b + 1) {
+    for (b = a; b <= to && c[b]; b++) {
+    }
+    if (b - a > n) {
+      n = b - a;
+      l = a;
+      r = b - 1;
+    }
+  }
+  return n;
+}
+
 // The run of them around column x as its first and last, or the longest run with x < 0. False if there's none.
 inline bool stretch(const Cols &c, int x, int &l, int &r) {
-  if (x < 0) {
-    int n = 0;
-    for (int a = 0, b; a < W; a = b + 1) {
-      for (b = a; b < W && c[b]; b++) {
-      }
-      if (b - a > n) {
-        n = b - a;
-        l = a;
-        r = b - 1;
-      }
-    }
-    return n > 0;
-  }
+  if (x < 0)
+    return longest(c, 0, W - 1, l, r) > 0;
   if (x >= W || !c[x])
     return false;
   for (l = x; l > 0 && c[l - 1]; l--) {
@@ -66,19 +70,7 @@ inline void in_gap(int &l, int &r, int least = 40) {
   }
 }
 // The run of c with the most columns in the gap, cut to it, if that's least or more. False if none has.
-inline bool gap_stretch(const Cols &c, int &l, int &r, int least) {
-  int best = 0;
-  for (int a = GAP_L, b; a <= GAP_R; a = b + 1) {
-    for (b = a; b <= GAP_R && c[b]; b++) {
-    }
-    if (b - a > best) {
-      best = b - a;
-      l = a;
-      r = b - 1;
-    }
-  }
-  return best >= least;
-}
+inline bool gap_stretch(const Cols &c, int &l, int &r, int least) { return longest(c, GAP_L, GAP_R, l, r) >= least; }
 
 // The boat's turning points and row, as the sprite's left and top, and which way the wind blows it
 struct Course {

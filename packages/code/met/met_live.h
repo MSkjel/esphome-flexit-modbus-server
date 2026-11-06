@@ -272,6 +272,23 @@ inline uint32_t gone_later(uint32_t at, const char *n, int fade = 300, const cha
   });
   return at + fade + 100;
 }
+// A leg of a path: to x, y in ms
+struct Leg {
+  int x, y, ms;
+  const char *ease = "none";
+};
+// Copy i of n along legs one after another, the first from now. The ms they take.
+inline uint32_t path(const char *n, int i, std::initializer_list<Leg> legs) {
+  uint32_t t = 0;
+  for (const Leg &l : legs) {
+    if (t)
+      move_later(t, n, i, l.x, l.y, l.ms, l.ease);
+    else
+      move(n, i, l.x, l.y, l.ms, l.ease);
+    t += (uint32_t) l.ms;
+  }
+  return t;
+}
 // Copy 0 of n, drawn facing right, from x0, y0 off one edge across to x1, y1 off the other in ms, facing the way it
 // goes, then it's gone. The ms.
 inline uint32_t across(const char *n, int x0, int y0, int x1, int y1, uint32_t ms) {

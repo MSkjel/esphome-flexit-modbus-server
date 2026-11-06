@@ -252,9 +252,7 @@ inline void saucer() {
   when_on("ufo", [=] {
     glide("ufo", 0, "size", 30, 0);
     glide("ufo", 0, "size", 100, come, "out");
-    move("ufo", 0, x, y, come, "out");
-    move_later(come, "ufo", 0, x, y - 2, 1000, "both");
-    move_later(come + 1000, "ufo", 0, x, y, 1000, "both");
+    path("ufo", 0, {{x, y, come, "out"}, {x, y - 2, 1000, "both"}, {x, y, 1000, "both"}});
     later(ms_of("ufo", 0, 15) + 200, [=] {  // the beam's off
       move("ufo", 0, left ? W + 30 : -50, -50, 700, "in");
       glide("ufo", 0, "size", 40, 700, "in");

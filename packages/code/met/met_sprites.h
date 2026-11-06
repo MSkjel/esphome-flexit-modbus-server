@@ -20,16 +20,8 @@ struct Colours {
   // c's number, a new one while there's room, else the nearest there is
   uint8_t of(uint32_t c) {
     c &= 0xFFFFFF;
-    int best = 1, d = INT_MAX;
-    for (int i = 1; i < n; i++) {
-      int dr = (int) (c >> 16) - (int) (rgb[i] >> 16), dg = (int) (c >> 8 & 255) - (int) (rgb[i] >> 8 & 255),
-          db = (int) (c & 255) - (int) (rgb[i] & 255), di = dr * dr + dg * dg + db * db;
-      if (di < d) {
-        d = di;
-        best = i;
-      }
-    }
-    if (d && n < MAX) {
+    int best = n > 1 ? 1 + nearest(c, rgb + 1, n - 1) : 0;
+    if ((!best || rgb[best] != c) && n < MAX) {
       rgb[n] = c;
       return (uint8_t) n++;
     }
