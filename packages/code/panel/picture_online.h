@@ -12,7 +12,6 @@
 #include <functional>
 #include <map>
 #include <memory>
-#include <new>
 #include <string>
 #include "dates.h"
 #include "fetch.h"
@@ -87,10 +86,8 @@ inline std::string again(const Online &o) {
 // in a buffer it only grows, PNG and BMP stream through it. A new decoder: JPEG 17 KB, PNG 44 KB in one piece.
 inline bool fits(const std::string &name, Online &o) {
   size_t n = o.answer.size;
-  std::string type = o.answer.type, why, ram;  // ram: what the ESP has, for the log
+  std::string type = lower(o.answer.type), why, ram;  // ram: what the ESP has, for the log
   int code = o.answer.code;
-  for (auto &c : type)
-    c = (char) tolower((unsigned char) c);
   auto is = [&](const char *f, const char *t) {
     return o.format == f || (o.format == "AUTO" && type.find(t) != std::string::npos);
   };
@@ -143,13 +140,12 @@ inline void download(const std::string &name, Online &o) {
   if (name == S.want)
     S.waiting = "asking the server about it";
   o.asking = Online::ASKING;
-  auto *r = new (std::nothrow) fetch::Request();
+  auto *r = fetch::request<fetch::Request>(o.url);
   if (!r) {
     o.answer.code = -1;
     o.asking = Online::ANSWERED;
     return;
   }
-  r->url = o.url;
   r->body = false;
   r->by = &o;
   ask_server(r);
@@ -189,8 +185,7 @@ void add_online_image(const std::string &name, Img &&image, const char *url, con
   online[name] = o;
   Source s;
   s.size = [img, o, name](int &w, int &h) {  // starts the download if there's nothing yet, we get asked again
-    w = img->get_width();
-    h = img->get_height();
+    dims_of(img, w, h);
     if (img->is_decoding())
       return false;
     if (w > 0 && h > 0) {
@@ -215,8 +210,7 @@ void add_online_image(const std::string &name, Img &&image, const char *url, con
     if (!img->is_decoding())  // a new download keeps its buffer
       img->release();
   };
-  s.encoding = encoding_of(encoding);
-  s.quality = quality_of(quality);
+  s.coding(encoding, quality);
   add(name, s);
 }
 

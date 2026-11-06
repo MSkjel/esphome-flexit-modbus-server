@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <new>
 #include <string>
 #include <vector>
 #include "dates.h"
@@ -55,6 +56,14 @@ struct Request {
   unsigned stack_left = 0;
   std::atomic<bool> done{false};
 };
+
+// A new T asking url, nullptr without the RAM
+template<typename T> T *request(const std::string &url) {
+  T *r = new (std::nothrow) T();
+  if (r)
+    r->url = url;
+  return r;
+}
 
 inline esp_err_t on_header(esp_http_client_event_t *e) {
   Request &r = *(Request *) e->user_data;

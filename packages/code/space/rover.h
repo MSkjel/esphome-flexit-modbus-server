@@ -9,7 +9,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
-#include <new>
 #include <string>
 #include <vector>
 #include "rover_maps.h"
@@ -90,12 +89,11 @@ struct Map : fetch::Asker {
   Waypoint first, last;
 
   fetch::Request *make(int) override {
-    auto *q = new (std::nothrow) List();
-    if (q) {
-      std::string code = r->code;
+    std::string code = r->code;
+    auto *q =
+        fetch::request<List>("https://mars.nasa.gov/mmgis-maps/" + code + "/Layers/json/" + code + "_waypoints.json");
+    if (q)
       q->r = r;
-      q->url = "https://mars.nasa.gov/mmgis-maps/" + code + "/Layers/json/" + code + "_waypoints.json";
-    }
     return q;
   }
   bool got(fetch::Request &q) override;
@@ -346,8 +344,7 @@ void setup(const char *rover, const Mosaic &map, const char *every, const char *
     uint8_t two = map.px[(y * marks::W + x) / 2];
     return map.rgb[x & 1 ? two & 15 : two >> 4];
   };
-  s.encoding = picture::encoding_of(encoding);
-  s.quality = picture::quality_of(quality);
+  s.coding(encoding, quality);
   picture::add(rover, s);
   marks::on(rover);
 }

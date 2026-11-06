@@ -7,7 +7,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <new>
 #include <string>
 #include "../panel/fetch.h"
 #include "../panel/items.h"
@@ -257,9 +256,8 @@ inline uint32_t pixel(int x, int y) {
 
 // With If-Modified-Since once we have a Last-Modified
 inline fetch::Request *Forecasts::make(int) {
-  auto *r = new (std::nothrow) Ask();
+  auto *r = fetch::request<Ask>(url);
   if (r) {
-    r->url = url;
     r->header = "If-Modified-Since";
     r->value = modified;
   }
@@ -331,8 +329,7 @@ void setup(double latitude, double longitude, const char *picture, const char *e
   };
   s.parts = [] { return parts; };
   s.done = free_drawing;
-  s.encoding = picture::encoding_of(encoding);
-  s.quality = picture::quality_of(quality);
+  s.coding(encoding, quality);
   picture::add(name, s);
 }
 

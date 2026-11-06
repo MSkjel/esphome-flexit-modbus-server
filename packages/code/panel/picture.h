@@ -28,6 +28,17 @@ inline constexpr uint32_t JPEG_RAM = POOL + PIC_MAX_W * 8 * 3, MAKE_RAM = POOL +
 static_assert(Transfer::CHUNK <= Zip::MAX, "a chunk of pieces fits Zip's buffer");
 
 enum Encoding { AUTO, PALETTE, JPEG };
+inline constexpr const char *ENCODINGS[] = {"auto", "palette", "jpeg"};
+
+// encoding and quality as written in picture.yaml
+inline Encoding encoding_of(const std::string &s) {
+  int i = find(ENCODINGS, s);
+  return i < 0 ? AUTO : (Encoding) i;
+}
+inline int quality_of(const std::string &s) {
+  int q = atoi(s.c_str());
+  return q < 1 ? 0 : std::min(q, 100);
+}
 
 // A picture as the packages register it
 struct Source {
@@ -45,22 +56,21 @@ struct Source {
   std::function<void(int y, uint8_t *idx)> row;
   std::function<Parts()> parts;  // optional, with row: its parts in front of the animations farther than them
   Encoding encoding = AUTO;
-  int quality = 0;  // highest JPEG quality 1..100, 0 = the best that fits
+  int quality = 0;                                           // highest JPEG quality 1..100, 0 = the best that fits
+  void coding(const std::string &e, const std::string &q) {  // as the package's vars have them
+    encoding = encoding_of(e);
+    quality = quality_of(q);
+  }
 };
 inline std::map<std::string, Source> sources;
 
 inline void add(const std::string &name, Source s) { sources[name] = std::move(s); }
-// encoding and quality as written in picture.yaml
-inline Encoding encoding_of(std::string s) {
-  for (auto &c : s)
-    c = (char) tolower((unsigned char) c);
-  return s == "palette" ? PALETTE : s == "jpeg" ? JPEG : AUTO;
-}
-inline int quality_of(const std::string &s) {
-  int q = atoi(s.c_str());
-  return q < 1 ? 0 : std::min(q, 100);
-}
 
+// An ESPHome image's size, 0 x 0 while it has none
+template<typename Img> void dims_of(Img *img, int &w, int &h) {
+  w = img->get_width();
+  h = img->get_height();
+}
 // An ESPHome image's pixels as 0xRRGGBB
 template<typename Img> std::function<uint32_t(int, int)> pixels_of(Img *img) {
   return [img](int x, int y) -> uint32_t {
@@ -74,13 +84,11 @@ template<typename Img> void add_image(const std::string &name, Img &&image, cons
   auto *img = ptr_of(image);
   Source s;
   s.size = [img](int &w, int &h) {
-    w = img->get_width();
-    h = img->get_height();
+    dims_of(img, w, h);
     return true;
   };
   s.pixel = pixels_of(img);
-  s.encoding = encoding_of(encoding);
-  s.quality = quality_of(quality);
+  s.coding(encoding, quality);
   add(name, s);
 }
 
@@ -379,10 +387,7 @@ inline void map(uint32_t deadline_us) {
       S.src->row(S.y, idx);
     for (int x = 0; x < w && !mine; x++) {
       uint32_t c = px(x, S.y), r = c >> 16, g = c >> 8 & 255, b = c & 255;
-      uint8_t &i = S.lut[bin(c)];
-      if (i == 0xFF)
-        i = (uint8_t) nearest(bin_rgb(bin(c)), S.made.pal, 16);
-      idx[x] = i;
+      uint8_t i = idx[x] = lut_index(S.lut.data(), c, S.made.pal, 16);
       uint32_t *s = S.sums.sum[i];
       s[0] += r;
       s[1] += g;

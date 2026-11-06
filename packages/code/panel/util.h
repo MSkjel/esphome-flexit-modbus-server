@@ -1,7 +1,10 @@
 // What the panel's headers share: entities from id(), RAM, the loop's time slice and status texts
 #pragma once
+#include <strings.h>
 #include <algorithm>
 #include <atomic>
+#include <cctype>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -49,6 +52,20 @@ template<typename T> T *ptr_of(T *p) { return p; }
 template<typename T> T *ptr_of(T &r) { return &r; }
 
 template<typename T> void drop(std::vector<T> &v) { std::vector<T>().swap(v); }  // empty, with its RAM freed
+
+inline std::string lower(std::string s) {
+  for (auto &c : s)
+    c = (char) tolower((unsigned char) c);
+  return s;
+}
+
+// Index of name in names, in any case, or -1
+template<size_t N> int find(const char *const (&names)[N], const std::string &name) {
+  for (size_t i = 0; i < N; i++)
+    if (!strcasecmp(names[i], name.c_str()))
+      return (int) i;
+  return -1;
+}
 
 // fetch.h's requests in tasks of their own, whose TLS buffers come and go meanwhile
 inline std::atomic<int> requests{0};

@@ -1,9 +1,7 @@
 // Items are the ESP's own entities on the panel. packages/panel/ adds them at boot and the panel gets them all
 // after each hello, as the link has room. Messages are K_ITEM_* in plink_keys.h.
 #pragma once
-#include <strings.h>
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <functional>
@@ -15,21 +13,6 @@
 #include "util.h"
 
 namespace flexit::panel {
-
-inline std::string lower(const char *s) {
-  std::string r(s);
-  for (auto &c : r)
-    c = (char) tolower((unsigned char) c);
-  return r;
-}
-
-// Index of name in ids, in any case, or -1
-template<size_t N> int find(const char *const (&ids)[N], const std::string &name) {
-  for (size_t i = 0; i < N; i++)
-    if (!strcasecmp(ids[i], name.c_str()))
-      return (int) i;
-  return -1;
-}
 
 #define ID_NAME(id, ...) #id,
 inline constexpr const char *ICON_IDS[] = {PLINK_ICONS(ID_NAME)};

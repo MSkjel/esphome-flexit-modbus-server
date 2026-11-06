@@ -12,7 +12,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
-#include <new>
 #include <string>
 #include <vector>
 #include "../panel/picture_online.h"
@@ -191,7 +190,7 @@ inline fetch::Request *Positions::make(int step) {
   uint32_t now = fetch::now_s();
   if (!step)
     day = now - now % 86400;
-  auto *h = new (std::nothrow) Horizons();
+  auto *h = fetch::request<Horizons>(url_of(PROBES[step].id, day));
   if (h) {
     h->probe = step;
     h->day = day;
@@ -408,8 +407,7 @@ void setup(const std::string &title, const char *every, const char *encoding, co
   horizons.steps = N;
   ask_every(horizons, every, status, 3600);
   picture::Source s;
-  s.encoding = picture::encoding_of(encoding);
-  s.quality = picture::quality_of(quality);
+  s.coding(encoding, quality);
   s.size = [](int &w, int &h) {
     if (!horizons.have) {
       if (picture::S.want == name)

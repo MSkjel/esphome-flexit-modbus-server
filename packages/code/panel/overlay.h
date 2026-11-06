@@ -583,14 +583,6 @@ inline void made(bool ok, size_t left, size_t need) {
   status("Sending " + a.name);
 }
 
-// The palette index of colour c, found the first time it comes up
-inline uint8_t index_of(uint32_t c) {
-  uint8_t &i = W.lut[bin(c)];
-  if (i == 0xFF)
-    i = (uint8_t) nearest(bin_rgb(bin(c)), W.a->pal, W.colours);
-  return i;
-}
-
 // Maps a row of the frame or a few to the palette. Once the frame is in, adds its record, and after the last frame
 // the one back to the first. A still's pieces instead. A record goes in one go, so it waits for the next slice
 // unless this one is fresh or has the time the last record took. False when it waits.
@@ -598,11 +590,12 @@ inline bool make(uint32_t deadline_us, bool fresh) {
   Overlay &a = *W.a;
   if (W.y < a.h) {
     bool own = !a.src->colours.empty();
+    uint8_t *lut = W.lut.data();
     for (int n = 0; n < ROWS_PX && W.y < a.h; n += a.w, W.y++) {
       uint8_t *row = W.frame.data() + (size_t) W.y * (a.w / 2);
       for (int x = 0; x < a.w; x++) {
         uint32_t c = px(W.f, x, W.y);
-        uint8_t i = own ? nearest_own(c, a.pal, W.colours) : opaque(c) ? index_of(c) : 15;
+        uint8_t i = own ? nearest_own(c, a.pal, W.colours) : opaque(c) ? lut_index(lut, c, a.pal, W.colours) : 15;
         row[x / 2] = (uint8_t) (x & 1 ? row[x / 2] | i : i << 4);
       }
     }
@@ -937,14 +930,14 @@ inline void swap(const std::string &from, int i, const std::string &to, int x, i
 
 // Which of names s is, in any case, or -1 with a warning from panel_<what>_animation
 template<size_t N> int option(const char *const (&names)[N], const std::string &s, const char *what) {
-  std::string all;
-  for (size_t i = 0; i < N; i++) {
-    if (!strcasecmp(s.c_str(), names[i]))
-      return (int) i;
-    all += (i ? ", " : "") + std::string(names[i]);
+  int i = panel::find(names, s);
+  if (i < 0) {
+    std::string all;
+    for (size_t k = 0; k < N; k++)
+      all += (k ? ", " : "") + std::string(names[k]);
+    ESP_LOGW("panel", "panel_%s_animation: '%s' isn't one of %s", what, s.c_str(), all.c_str());
   }
-  ESP_LOGW("panel", "panel_%s_animation: '%s' isn't one of %s", what, s.c_str(), all.c_str());
-  return -1;
+  return i;
 }
 
 inline constexpr const char *CHANNELS[] = {"x", "y", "turn", "size", "opacity", "speed"};

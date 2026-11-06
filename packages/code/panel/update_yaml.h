@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <cstring>
 #include <functional>
-#include <new>
 #include <string>
 #include <utility>
 #include "panel.h"
@@ -63,9 +62,8 @@ struct Head : fetch::Request {
 struct Check : fetch::Asker {
   const std::string *url = nullptr;  // the text's state
   fetch::Request *make(int) override {
-    auto *r = new (std::nothrow) Head();
+    auto *r = fetch::request<Head>(*url);
     if (r) {
-      r->url = *url;
       r->header = "Range";
       r->value = "bytes=0-" + std::to_string(HEAD_LEN - 1);
       r->tx_buffer = 4096;  // GitHub's releases redirect to a URL about 1.7 KB long
