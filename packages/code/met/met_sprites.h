@@ -12,13 +12,39 @@
 
 namespace flexit::panel::met::live {
 
-// One frame being drawn: 0xFFRRGGBB per pixel, 0 = nothing there
+// A frame's colours, 0xRRGGBB from 1 on. The aurora has the most, 17.
+struct Colours {
+  static constexpr int MAX = 32;
+  uint32_t rgb[MAX];
+  int n = 1;
+  // c's number, a new one while there's room, else the nearest there is
+  uint8_t of(uint32_t c) {
+    c &= 0xFFFFFF;
+    int best = 1, d = INT_MAX;
+    for (int i = 1; i < n; i++) {
+      int dr = (int) (c >> 16) - (int) (rgb[i] >> 16), dg = (int) (c >> 8 & 255) - (int) (rgb[i] >> 8 & 255),
+          db = (int) (c & 255) - (int) (rgb[i] & 255), di = dr * dr + dg * dg + db * db;
+      if (di < d) {
+        d = di;
+        best = i;
+      }
+    }
+    if (d && n < MAX) {
+      rgb[n] = c;
+      return (uint8_t) n++;
+    }
+    return (uint8_t) best;
+  }
+};
+
+// One frame being drawn: a byte per pixel, its colour's number in cols, 0 = nothing there
 struct Canvas {
   int w, h;
-  uint32_t *px;
+  uint8_t *px;
+  Colours *cols;
   void put(int x, int y, uint32_t rgb) const {
     if (x >= 0 && y >= 0 && x < w && y < h)
-      px[y * w + x] = 0xFF000000u | rgb;
+      px[y * w + x] = cols->of(rgb);
   }
 };
 // A colour that glows, which dimmed() leaves as it is: a troll's eyes

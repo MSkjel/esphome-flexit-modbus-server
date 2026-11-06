@@ -31,10 +31,10 @@ static void disc(uint8_t *row, int y, int cx, int cy, int r, uint8_t c) {
     wrap_span(row, cx - h, cx + h, c);
 }
 
-// The sprites of a layer, but those left out for the animations
-static void sprites(const Scene &s, int y, uint8_t *out, int layer) {
-  for (int i = 0; i < s.nsprites; i++) {
-    const Sprite &p = s.sprite[i];
+// The stamps of a layer, but those left out for the animations
+static void stamps(const Scene &s, int y, uint8_t *out, StampLayer layer) {
+  for (int i = 0; i < s.nstamps; i++) {
+    const Stamp &p = s.stamps->at[i];
     if (p.layer != layer || (p.tag & s.live) || y < p.y || y >= p.y + p.h)
       continue;
     uint64_t bits = p.rows[y - p.y];
@@ -329,11 +329,11 @@ void row(const Scene &s, int y, uint8_t *out) {
   sky_row(s, y, out);
   clouds_row(s, y, out);
   rainbow_row(s, y, out);
-  sprites(s, y, out, 0);
+  stamps(s, y, out, IN_SKY);
   hill_row(s, y, out, 0);
   sea_row(s, y, out);
   fog_row(s, y, out, 0);
-  sprites(s, y, out, ON_WATER);
+  stamps(s, y, out, ON_WATER);
   hill_row(s, y, out, 1);
   bolt_row(s, y, out);  // behind the town and the land it strikes
   city_row(s, y, out);
@@ -346,9 +346,9 @@ void row(const Scene &s, int y, uint8_t *out) {
   cabin_row(s, y, out);
   if (s.pole_x >= 0 && y >= s.pole_top && y <= s.pole_base)  // the flagpole, dark against the town's green
     span(out, s.pole_x, s.pole_x + 1, s.ix[s.ground == G_CITY ? C_BLD_EDGE : C_DARK]);
-  sprites(s, y, out, 1);
+  stamps(s, y, out, ON_LAND);
   prec_row(s, y, out);
-  sprites(s, y, out, 2);
+  stamps(s, y, out, ON_TOP);
   if (s.overlay && y < OV_H)  // the forecast
     for (int x = 0; x < W; x++) {
       int v = ov_get(s, x, y);
@@ -524,9 +524,9 @@ picture::Parts parts_of(const Scene &s) {
   picture::Parts p{};
   auto part = [&](int k, int x0, int y0, int x1, int y1, uint16_t colours, uint8_t depth) {
     colours &= (uint16_t) ~sky(y0, y1);
-    for (int i = 0; i < s.nsprites; i++) {  // the sky's sprites in it, like birds, are behind it too
-      const Sprite &q = s.sprite[i];
-      if (q.layer == 0 && !(q.tag & s.live) && q.x < x1 && q.x + q.w > x0 && q.y < y1 && q.y + q.h > y0)
+    for (int i = 0; i < s.nstamps; i++) {  // the sky's stamps in it, like birds, are behind it too
+      const Stamp &q = s.stamps->at[i];
+      if (q.layer == IN_SKY && !(q.tag & s.live) && q.x < x1 && q.x + q.w > x0 && q.y < y1 && q.y + q.h > y0)
         colours &= (uint16_t) ~(1u << q.ix);
     }
     if (colours && x0 < x1 && y0 < y1)
@@ -559,8 +559,8 @@ picture::Parts parts_of(const Scene &s) {
   // and the flag or pennant when it's in the picture, in the colours it borrows from the rest: those only it has
   // where it flies
   int x0 = W, y0 = H, x1 = 0, y1 = 0;
-  for (int i = 0; i < s.nsprites; i++) {
-    const Sprite &q = s.sprite[i];
+  for (int i = 0; i < s.nstamps; i++) {
+    const Stamp &q = s.stamps->at[i];
     if (q.tag == L_FLAG && !(s.live & L_FLAG)) {
       x0 = std::min<int>(x0, std::max<int>(q.x, 0));
       y0 = std::min<int>(y0, std::max<int>(q.y, 0));
@@ -574,8 +574,8 @@ picture::Parts parts_of(const Scene &s) {
     row(s, y, px);
     for (int x = x0; x < x1; x++) {
       bool flag = false;
-      for (int i = 0; i < s.nsprites && !flag; i++) {
-        const Sprite &q = s.sprite[i];
+      for (int i = 0; i < s.nstamps && !flag; i++) {
+        const Stamp &q = s.stamps->at[i];
         flag = q.tag == L_FLAG && px[x] == q.ix && y >= q.y && y < q.y + q.h && x >= q.x && x < q.x + q.w &&
                (q.rows[y - q.y] >> (q.w - 1 - (x - q.x)) & 1);
       }
@@ -587,12 +587,12 @@ picture::Parts parts_of(const Scene &s) {
   return p;
 }
 
-// Each colour slot and sprite to its nearest of pal's k colours
+// Each colour slot and stamp to its nearest of pal's k colours
 static void place(Scene &s, const uint32_t *pal, int k) {
   for (int i = 0; i < COLOURS; i++)
     s.ix[i] = (uint8_t) nearest(s.rgb[i], pal, k);
-  for (int i = 0; i < s.nsprites; i++)
-    s.sprite[i].ix = (uint8_t) nearest(s.sprite[i].c, pal, k);
+  for (int i = 0; i < s.nstamps; i++)
+    s.stamps->at[i].ix = (uint8_t) nearest(s.stamps->at[i].c, pal, k);
 }
 
 void Palette::start(Scene &s) {
@@ -612,9 +612,9 @@ void Palette::start(Scene &s) {
   for (int i = 0; i < COLOURS; i++)
     if (u >> i & 1)
       add(s.rgb[i], KEY_COLOURS >> i & 1);
-  for (int i = 0; i < s.nsprites; i++)
-    if (!(s.sprite[i].tag & s.live))
-      add(s.sprite[i].c, true);
+  for (int i = 0; i < s.nstamps; i++)
+    if (!(s.stamps->at[i].tag & s.live))
+      add(s.stamps->at[i].c, true);
   y = H;
   if (n > 16) {  // count the pixels of each, to leave out what's hidden and fold what's least missed
     place(s, c, n);

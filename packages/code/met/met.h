@@ -95,7 +95,7 @@ inline int utc_offset(uint32_t t) {
   return (int) (unix_of(l.year, l.month, l.day_of_month, l.hour, l.minute, l.second) - t);
 }
 
-// The scene, only while picture.h makes the picture. Its sprites and overlay are blocks of their own, the land is
+// The scene, only while picture.h makes the picture. Its stamps and overlay are blocks of their own, the land is
 // kept while it's the panel's picture.
 struct Drawing {
   Scene scene;
@@ -110,7 +110,7 @@ inline bool counting;  // drawing has it but its colours, see prepare()
 
 inline void free_drawing() {
   if (drawing) {
-    RAMAllocator<Sprite>().deallocate(drawing->scene.sprite, SPRITES);
+    RAMAllocator<Stamps>().deallocate(drawing->scene.stamps, 1);
     if (drawing->scene.ov)
       RAMAllocator<uint8_t>().deallocate(drawing->scene.ov[0], OV_H * W / 4);
     RAMAllocator<Drawing>().deallocate(drawing, 1);
@@ -125,18 +125,17 @@ inline void free_drawing() {
 
 inline bool new_drawing() {
   size_t ov_bytes = with_forecast ? OV_H * W / 4 : 0;
-  if (!picture::has_ram(sizeof(Drawing) + SPRITES * sizeof(Sprite) + ov_bytes + (land ? 0 : sizeof(Land)),
-                        sizeof(Drawing)))
+  if (!picture::has_ram(sizeof(Drawing) + sizeof(Stamps) + ov_bytes + (land ? 0 : sizeof(Land)), sizeof(Drawing)))
     return false;
   bool new_land = !land;
   if (new_land && (land = RAMAllocator<Land>().allocate(1)))
     land->made = false;
   Drawing *c = RAMAllocator<Drawing>().allocate(1);
-  Sprite *sprite = RAMAllocator<Sprite>().allocate(SPRITES);
+  Stamps *stamps = RAMAllocator<Stamps>().allocate(1);
   uint8_t *ov = ov_bytes ? RAMAllocator<uint8_t>().allocate(ov_bytes) : nullptr;
-  if (!land || !c || !sprite || (ov_bytes && !ov)) {
+  if (!land || !c || !stamps || (ov_bytes && !ov)) {
     RAMAllocator<Drawing>().deallocate(c, 1);
-    RAMAllocator<Sprite>().deallocate(sprite, SPRITES);
+    RAMAllocator<Stamps>().deallocate(stamps, 1);
     RAMAllocator<uint8_t>().deallocate(ov, ov_bytes);
     if (new_land) {
       RAMAllocator<Land>().deallocate(land, 1);
@@ -144,7 +143,7 @@ inline bool new_drawing() {
     }
     return false;
   }
-  c->scene.sprite = sprite;
+  c->scene.stamps = stamps;
   c->scene.ov = (uint8_t (*)[W / 4]) ov;
   c->scene.land = land;
   drawing = c;

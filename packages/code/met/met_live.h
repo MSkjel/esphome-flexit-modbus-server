@@ -41,7 +41,8 @@ struct Running {
   std::map<std::string, Frames> sprites;  // the show's, by name
   std::vector<std::string> names;         // the panel animations it made
   Rng rng{1};
-  std::vector<uint32_t> px;  // the frame frame_pixel() drew last, empty without the RAM for it
+  std::vector<uint8_t> px;  // the frame frame_pixel() drew last, empty without the RAM for it
+  Colours cols;             // its colours
   const Frames *drawn;
   int drawn_f;
   int8_t flag_light;                   // the light the flag was dimmed to, in tenths
@@ -63,12 +64,12 @@ constexpr uint32_t minutes(float m) { return (uint32_t) (m * 60000); }
 inline std::string key(const std::string &name) { return "w_" + name; }
 
 inline void free_px() {
-  std::vector<uint32_t>().swap(R.px);
+  std::vector<uint8_t>().swap(R.px);
   R.drawn = nullptr;
 }
 
-// Pixel x, y of sp's frame f, for overlay.h. The frame is drawn whole and kept, 4 bytes a pixel, up to 28 KB
-// for the rain. Without the RAM it stays empty: a failed allocation would restart the ESP.
+// Pixel x, y of sp's frame f as 0xAARRGGBB, for overlay.h. The frame is drawn whole and kept, a byte a pixel, up
+// to 7 KB for the rain. Without the RAM it stays empty: a failed allocation would restart the ESP.
 inline uint32_t frame_pixel(const Frames *sp, int f, int x, int y) {
   if (R.drawn != sp || R.drawn_f != f) {
     size_t n = (size_t) sp->w * sp->h;
@@ -76,16 +77,18 @@ inline uint32_t frame_pixel(const Frames *sp, int f, int x, int y) {
       free_px();  // before the bigger one is taken
     R.drawn = sp;
     R.drawn_f = f;
-    if (R.px.empty() && !picture::has_ram(n * sizeof(uint32_t), n * sizeof(uint32_t))) {
+    if (R.px.empty() && !picture::has_ram(n, n)) {
       if (!f) {
         ESP_LOGW("met", "No RAM to draw the frames of a %dx%d weather animation", sp->w, sp->h);
       }
       return 0;
     }
     R.px.assign(n, 0);
-    sp->draw(f, Canvas{sp->w, sp->h, R.px.data()});
+    R.cols = Colours();
+    sp->draw(f, Canvas{sp->w, sp->h, R.px.data(), &R.cols});
   }
-  return R.px.empty() ? 0 : R.px[(size_t) y * sp->w + x];
+  uint8_t i = R.px.empty() ? 0 : R.px[(size_t) y * sp->w + x];
+  return i ? 0xFF000000u | R.cols.rgb[i] : 0;
 }
 
 // A sprite the show made itself, like a cloud from the picture's. Before it's placed.
@@ -146,9 +149,9 @@ inline void unload(const std::string &name) {
 inline Frames dimmed(Frames sp, float light) {
   sp.draw = [draw = sp.draw, light](int f, const Canvas &c) {
     draw(f, c);
-    for (int i = 0; i < c.w * c.h; i++)
-      if (c.px[i] && (c.px[i] & 0xFFFFFF) != LAMP)
-        c.px[i] = 0xFF000000u | met::mix(0x223344, c.px[i] & 0xFFFFFF, light);
+    for (int i = 1; i < c.cols->n; i++)
+      if (c.cols->rgb[i] != LAMP)
+        c.cols->rgb[i] = met::mix(0x223344, c.cols->rgb[i], light);
   };
   return sp;
 }

@@ -6,9 +6,6 @@
 
 namespace flexit::panel::met {
 
-// The lamps' and windows' warm light, the same so they share one of the 16 colours. rgb4(255, 210, 122)
-static constexpr uint32_t WARM_LIGHT = 0xFFCC77;
-
 static bool has(const Weather &w, const char *s) { return strstr(w.symbol, s) != nullptr; }
 
 // ---------------------------------------------------------------- the forecast over the picture
@@ -219,101 +216,97 @@ static void forecast(Scene &s, const Weather &w, uint32_t t, Offset offset) {
   }
 }
 
-// ---------------------------------------------------------------- sprites
+// ---------------------------------------------------------------- stamps
 
-// A sprite tagged with s.tag
-static Sprite *sprite(Scene &s, int x, int y, int w, int h, int layer, uint32_t c) {
-  if (s.nsprites >= SPRITES)
+// A blank stamp tagged with s.tag, null once there's no room for it
+static Stamp *stamp(Scene &s, int x, int y, int w, int h, StampLayer layer, uint32_t c) {
+  if (s.nstamps == STAMPS || s.nrows + h > STAMP_ROWS)
     return nullptr;
-  Sprite &p = s.sprite[s.nsprites++];
-  p = Sprite{};
+  Stamp &p = s.stamps->at[s.nstamps++];
+  p = Stamp{};
   p.x = (int16_t) x;
   p.y = (int16_t) y;
-  p.w = (uint8_t) (w > 64 ? 64 : w);
-  p.h = (uint8_t) (h > 24 ? 24 : h);
-  p.layer = (uint16_t) layer;
+  p.w = (uint8_t) std::min(w, 64);
+  p.h = (uint8_t) h;
+  p.layer = layer;
   p.tag = s.tag;
   p.c = c;
+  p.rows = s.stamps->rows + s.nrows;
+  std::fill(p.rows, p.rows + h, 0);
+  s.nrows += h;
   return &p;
 }
 
-static void sprite_rows(Sprite *p, const uint32_t *rows) {
+static void stamp_rows(Stamp *p, const uint32_t *rows) {
   if (p)
     for (int r = 0; r < p->h; r++)
       p->rows[r] = rows[r];
 }
 
-static void sprite_set(Sprite *p, int x, int y) {
+static void stamp_set(Stamp *p, int x, int y) {
   if (p && x >= 0 && x < p->w && y >= 0 && y < p->h)
     p->rows[y] |= 1ull << (p->w - 1 - x);
 }
 
-// a filled disc as a sprite
-static Sprite *blob(Scene &s, int cx, int cy, int rx, int ry, int layer, uint32_t c) {
-  if (rx > 15 || ry > 11)
-    return nullptr;
-  Sprite *p = sprite(s, cx - rx, cy - ry, 2 * rx + 1, 2 * ry + 1, layer, c);
-  if (!p)
-    return nullptr;
-  for (int dy = -ry; dy <= ry; dy++) {
+// a filled disc
+static void blob(Scene &s, int cx, int cy, int rx, int ry, StampLayer layer, uint32_t c) {
+  Stamp *p = stamp(s, cx - rx, cy - ry, 2 * rx + 1, 2 * ry + 1, layer, c);
+  for (int dy = -ry; p && dy <= ry; dy++) {
     int h = half(dy, rx, ry);
     for (int dx = -h; dx <= h; dx++)
-      sprite_set(p, dx + rx, dy + ry);
+      stamp_set(p, dx + rx, dy + ry);
   }
-  return p;
 }
 
-static Sprite *box(Scene &s, int x, int y, int w, int h, int layer, uint32_t c) {
-  Sprite *p = sprite(s, x, y, w, h, layer, c);
-  if (p)
+static void box(Scene &s, int x, int y, int w, int h, StampLayer layer, uint32_t c) {
+  if (Stamp *p = stamp(s, x, y, w, h, layer, c))
     for (int r = 0; r < p->h; r++)
       p->rows[r] = p->w == 64 ? ~0ull : (1ull << p->w) - 1;
-  return p;
 }
 
 // a firework of rays around a bright middle
 static void burst(Scene &s, int cx, int cy, int r, uint32_t c, uint32_t heart) {
-  Sprite *p = sprite(s, cx - r, cy - r, 2 * r + 1, 2 * r + 1, 1, c);
+  Stamp *p = stamp(s, cx - r, cy - r, 2 * r + 1, 2 * r + 1, ON_LAND, c);
   for (int k = 0; k < 12; k++) {
     float a = k * 2 * kPiF / 12;
     for (int d = 3; d <= r; d++)
       if ((d + k) % 3 != 2)  // gaps so the rays look like they're burning out
-        sprite_set(p, r + iround(d * cosf(a)), r + iround(d * sinf(a)));
+        stamp_set(p, r + iround(d * cosf(a)), r + iround(d * sinf(a)));
   }
-  Sprite *in = sprite(s, cx - 2, cy - 2, 5, 5, 1, heart);
+  Stamp *in = stamp(s, cx - 2, cy - 2, 5, 5, ON_LAND, heart);
   for (int d = -2; d <= 2; d++) {
-    sprite_set(in, 2 + d, 2);
-    sprite_set(in, 2, 2 + d);
+    stamp_set(in, 2 + d, 2);
+    stamp_set(in, 2, 2 + d);
   }
 }
 
-// The Norwegian flag, 22 by 16 in the official 6-1-2-1-12 by 6-1-2-1-6 proportions, on layer 2. Flies to the
-// left of its pole when dir < 0, the cross still nearest the pole.
+// The Norwegian flag, 22 by 16 in the official 6-1-2-1-12 by 6-1-2-1-6 proportions, on top. Flies to the left of
+// its pole when dir < 0, the cross still nearest the pole.
 static void flag_norway(Scene &s, int x, int y, int dir, uint32_t red, uint32_t white, uint32_t blue) {
-  Sprite *r = sprite(s, x, y, 22, 16, 2, red), *w = sprite(s, x, y, 22, 16, 2, white),
-         *b = sprite(s, x, y, 22, 16, 2, blue);
+  Stamp *r = stamp(s, x, y, 22, 16, ON_TOP, red), *w = stamp(s, x, y, 22, 16, ON_TOP, white),
+        *b = stamp(s, x, y, 22, 16, ON_TOP, blue);
   for (int row = 0; row < 16; row++)
     for (int col = 0; col < 22; col++) {
       bool vb = col == 7 || col == 8, vw = col == 6 || col == 9, hb = row == 7 || row == 8, hw = row == 6 || row == 9;
-      sprite_set(vb || hb ? b : vw || hw ? w : r, dir < 0 ? 21 - col : col, row);
+      stamp_set(vb || hb ? b : vw || hw ? w : r, dir < 0 ? 21 - col : col, row);
     }
 }
 
 // The vimpel, a red pennant 9 rows tall at the pole and len long, with a white-blue-white stripe. It narrows to 5
 // rows, then the stripe ends and the red comes to a point. Points left when dir < 0.
 static void pennant(Scene &s, int x, int y, int len, int dir, uint32_t red, uint32_t white, uint32_t blue) {
-  Sprite *r = sprite(s, x, y, len, 9, 2, red), *w = sprite(s, x, y, len, 9, 2, white),
-         *b = sprite(s, x, y, len, 9, 2, blue);
+  Stamp *r = stamp(s, x, y, len, 9, ON_TOP, red), *w = stamp(s, x, y, len, 9, ON_TOP, white),
+        *b = stamp(s, x, y, len, 9, ON_TOP, blue);
   for (int col = 0; col < len; col++) {
     int hi = col == len - 1 ? 0 : col == len - 2 ? 1 : (int) (4 - 2.0f * col / (len - 3) + 0.5f);  // half height
     for (int row = 4 - hi; row <= 4 + hi; row++) {
       int d = abs(row - 4);
-      sprite_set(hi < 2 || d > 1 ? r : d ? w : b, dir < 0 ? len - 1 - col : col, row);
+      stamp_set(hi < 2 || d > 1 ? r : d ? w : b, dir < 0 ? len - 1 - col : col, row);
     }
   }
 }
 
-// The sprites' bitmaps
+// The stamps' bitmaps
 static constexpr Bitmap<3> BIRD = bitmap<3>(7, "x.....x|"
                                                ".xx.xx.|"
                                                "...x...");
@@ -787,7 +780,7 @@ static void coast(Scene &s, const Now &n, Rng &h, Skerry *sk) {
   s.rgb[C_LH] = mix(s.rgb[C_SKY + 4], 0xFFFFFF, n.light * 0.5f + 0.3f);
   s.rgb[C_LH_BAND] = mix(mix(0x2A1418, 0x9A3426, n.light), s.rgb[C_SKY + 4], n.fog / 200);
   if (n.dark && n.o.frame % 2 == 0)  // the lamp, lit every other redraw
-    box(s, LH_X - 1, s.lh_y - 29, 3, 3, 2, WARM_LIGHT);
+    box(s, LH_X - 1, s.lh_y - 29, 3, 3, ON_TOP, WARM_LIGHT);
   for (int k = 0; k < 2; k++) {  // skerries, see skerries()
     int x = k ? h.in(140, 215) : h.in(20, 90);
     sk[k] = {x, h.in(170, 178), h.in(4, 7), h.in(1, 2)};
@@ -798,10 +791,10 @@ static void coast(Scene &s, const Now &n, Rng &h, Skerry *sk) {
     s.tag = L_BOAT;
     box(s, bx - 5, by - 2, 11, 3, ON_WATER, s.rgb[C_HILL + 1]);
     box(s, bx, by - 16, 1, 14, ON_WATER, s.rgb[C_HILL + 1]);
-    Sprite *sail = sprite(s, bx + 1, by - 15, 8, 12, ON_WATER, s.rgb[C_LH]);  // white as the lighthouse and the waves
+    Stamp *sail = stamp(s, bx + 1, by - 15, 8, 12, ON_WATER, s.rgb[C_LH]);  // white as the lighthouse and the waves
     for (int r = 0; r < 12; r++)
       for (int c = 0; c < r * 8 / 12; c++)
-        sprite_set(sail, c, r);
+        stamp_set(sail, c, r);
     s.tag = 0;
   }
 }
@@ -866,7 +859,7 @@ static void city(Scene &s, const Now &n, Rng &h) {
     s.antenna = {(int16_t) (b.x + b.w / 2 - 1), 86 - 14};
     if (n.dark && n.o.frame % 2 == 0) {  // red light, every other redraw
       s.tag = L_ANTENNA;
-      box(s, s.antenna.x, s.antenna.y, 3, 2, 2, rgb4(255, 48, 48));
+      box(s, s.antenna.x, s.antenna.y, 3, 2, ON_TOP, rgb4(255, 48, 48));
       s.tag = 0;
     }
   }
@@ -1030,8 +1023,8 @@ static void ground(Scene &s, const Now &n) {
   s.home_x = (int16_t) (s.cabin ? s.cabin_x : park - 24);
   if (n.o.ground == G_CITY && n.dark) {  // a street lamp on its post by the road
     int lx = park - 14, ly = ROAD_FAR - 10;
-    box(s, lx + 2, ly, 1, 10, 2, s.rgb[C_BLD_EDGE]);
-    Sprite *lamp = sprite(s, lx, ly - 3, 5, 3, 2, WARM_LIGHT);
+    box(s, lx + 2, ly, 1, 10, ON_TOP, s.rgb[C_BLD_EDGE]);
+    Stamp *lamp = stamp(s, lx, ly - 3, 5, 3, ON_TOP, WARM_LIGHT);
     if (lamp) {
       lamp->rows[0] = 0x0E;
       lamp->rows[1] = 0x1F;
@@ -1055,7 +1048,7 @@ static void life(Scene &s, const Now &n, Rng &rng) {
     int count = rng.in(2, 5), bx = rng.in(20, W - 60), by = rng.in(40, 100);
     for (int i = 0; i < count; i++) {
       int x = bx + i * 11 + rng.in(-2, 2), y = by + (i % 2 ? 4 : 0) + rng.in(-1, 1);
-      sprite_rows(sprite(s, x, y, 7, 3, 0, s.rgb[C_TREE]), BIRD.row);
+      stamp_rows(stamp(s, x, y, 7, 3, IN_SKY, s.rgb[C_TREE]), BIRD.row);
     }
   }
   if (n.halloween && n.dark) {  // bats, around the moon if it's up, else low where the sky is lighter
@@ -1063,11 +1056,11 @@ static void life(Scene &s, const Now &n, Rng &rng) {
     int bx = s.moon ? s.moon_x - 40 : rng.in(40, W - 100), by = s.moon ? s.moon_y - 16 : rng.in(70, 110);
     for (int i = 0; i < 7; i++) {
       int x = bx + rng.in(-10, 90), y = by + rng.in(-20, 36);
-      sprite_rows(sprite(s, x, y, 9, 4, 1, rgb4(0, 0, 0)), BAT.row);
+      stamp_rows(stamp(s, x, y, 9, 4, ON_LAND, rgb4(0, 0, 0)), BAT.row);
     }
   }
   uint32_t white = s.rgb[C_WHITE];
-  // Chimney smoke while the heater's on, more in fireplace mode, and hearts on Valentine's day. Layer 1, since
+  // Chimney smoke while the heater's on, more in fireplace mode, and hearts on Valentine's day. ON_LAND, since
   // the cabin stands on the near hill.
   int puffs = s.cabin ? n.o.fireplace ? 5 : n.o.heater_pct > 0 ? 2 + std::min(3, n.o.heater_pct / 30) : 0 : 0;
   if (n.valentine && !puffs)
@@ -1086,9 +1079,9 @@ static void life(Scene &s, const Now &n, Rng &rng) {
     int r = 3 + i, px = cx + n.wdir * (i * i + 1) * (1 + (int) w.wind / 4) + (int) (rng.in(-1, 1)),
         py = cy - 6 - i * 10;
     if (n.valentine && (i >= puffs - 2 || !s.cabin))
-      sprite_rows(sprite(s, px - 6, py - 5, 13, 11, 1, mix(0xE04070, 0xFF80B0, n.light)), HEART.row);
+      stamp_rows(stamp(s, px - 6, py - 5, 13, 11, ON_LAND, mix(0xE04070, 0xFF80B0, n.light)), HEART.row);
     else
-      blob(s, px, py, r, std::max(2, r - 1), 1, white);
+      blob(s, px, py, r, std::max(2, r - 1), ON_LAND, white);
   }
   // The pennant, or the flag on flag days. Blue from the top of the sky and white, colours we have anyway.
   // Only the flag's red is extra.
@@ -1123,11 +1116,11 @@ static void xmas_lights(Scene &s) {
     int d = 7 + (t.base - t.top - 9) * k / count, hw = spruce_hw(d);
     int out = lt.in(hw / 3, hw), lx = k % 2 ? t.x + out - 1 : t.x - out;
     s.light[k] = {(int16_t) lx, (int16_t) (t.top + d), (uint8_t) (k % 3)};
-    box(s, lx, t.top + d, 2, 2, 2, cols[k % 3]);
+    box(s, lx, t.top + d, 2, 2, ON_TOP, cols[k % 3]);
   }
   s.nlights = (uint8_t) count;
   s.star = {(int16_t) (t.x - 3), (int16_t) (t.top - 5)};
-  sprite_rows(sprite(s, s.star.x, s.star.y, 7, 7, 2, window), STAR7.row);
+  stamp_rows(stamp(s, s.star.x, s.star.y, 7, 7, ON_TOP, window), STAR7.row);
   s.tag = 0;
 }
 
@@ -1137,7 +1130,7 @@ static void fireworks(Scene &s, const Now &n) {
   uint32_t cols[3] = {rgb4(255, 100, 170), rgb4(100, 220, 255), rgb4(255, 230, 120)};
   s.tag = L_FIREWORKS;
   for (int i = 0; i < 4; i++)
-    burst(s, fw.in(30, W - 30), fw.in(24, 100), fw.in(9, 11), cols[(i + fw.in(0, 1)) % 3],  // 23 rows, a sprite's 24
+    burst(s, fw.in(30, W - 30), fw.in(24, 100), fw.in(9, 11), cols[(i + fw.in(0, 1)) % 3],
           s.nstars ? s.rgb[C_STAR] : 0xFFFFFF);
   s.tag = 0;
 }
@@ -1149,8 +1142,8 @@ static void eggs(Scene &s, const Now &n) {
   for (int i = 0; i < (int) std::size(s.egg); i++) {
     int x = GAP_L + 30 + i * 14 + eg.in(-3, 3), y = s.land->hill[2][x] + 12 + eg.in(0, 8);
     s.egg[s.neggs++] = {(int16_t) x, (int16_t) y};
-    blob(s, x, y, 4, 5, 1, cols[i % 3]);
-    Sprite *stripes = sprite(s, x - 3, y - 2, 7, 4, 1, s.rgb[C_WHITE]);  // both in one, sprites are scarce at Easter
+    blob(s, x, y, 4, 5, ON_LAND, cols[i % 3]);
+    Stamp *stripes = stamp(s, x - 3, y - 2, 7, 4, ON_LAND, s.rgb[C_WHITE]);  // both in one, stamps are scarce at Easter
     if (stripes)
       stripes->rows[0] = stripes->rows[3] = 0x7F;
   }
@@ -1162,16 +1155,16 @@ static void bonfire(Scene &s, const Now &n, Rng &rng) {
   int bx = s.cabin ? s.cabin_x - 2 : (GAP_L + GAP_R) / 2;
   int by = s.cabin ? std::min<int>(s.land->hill[2][bx] + 30, H - 8) : s.land->hill[2][bx] + 14;
   s.fire = {(int16_t) bx, (int16_t) by};
-  box(s, bx - 9, by - 2, 19, 3, 2, s.rgb[C_DARK]);
+  box(s, bx - 9, by - 2, 19, 3, ON_TOP, s.rgb[C_DARK]);
   s.tag = L_BONFIRE;
-  sprite_rows(sprite(s, bx - 7, by - 21, 15, 20, 2, rgb4(255, 130, 30)), FLAME.row);
-  sprite_rows(sprite(s, bx - 7, by - 21, 15, 20, 2, rgb4(255, 220, 90)), FLAME_IN.row);
+  stamp_rows(stamp(s, bx - 7, by - 21, 15, 20, ON_TOP, rgb4(255, 130, 30)), FLAME.row);
+  stamp_rows(stamp(s, bx - 7, by - 21, 15, 20, ON_TOP, rgb4(255, 220, 90)), FLAME_IN.row);
   for (int i = 0; i < 10; i++) {
     int x = bx + rng.in(-12, 12), y = by - 24 - rng.in(0, 26);
-    box(s, x, y, 1, 1, 2, rgb4(255, 220, 90));
+    box(s, x, y, 1, 1, ON_TOP, rgb4(255, 220, 90));
   }
-  blob(s, bx + n.wdir * 10, by - 36, 6, 4, 1, s.rgb[C_HILL]);  // smoke in the far hills' blue-grey
-  blob(s, bx + n.wdir * 18, by - 46, 8, 5, 1, s.rgb[C_HILL]);
+  blob(s, bx + n.wdir * 10, by - 36, 6, 4, ON_LAND, s.rgb[C_HILL]);  // smoke in the far hills' blue-grey
+  blob(s, bx + n.wdir * 18, by - 46, 8, 5, ON_LAND, s.rgb[C_HILL]);
   s.tag = 0;
 }
 
@@ -1179,9 +1172,9 @@ static void bonfire(Scene &s, const Now &n, Rng &rng) {
 static void pumpkin(Scene &s) {
   int px = s.cabin ? s.cabin_x - 22 : s.home_x + 36, py = (s.cabin ? s.cabin_y : s.land->hill[2][px] + 4) - 5;
   s.pumpkin = {(int16_t) px, (int16_t) py};
-  blob(s, px, py, 7, 6, 1, rgb4(255, 130, 40));
-  box(s, px - 1, py - 8, 3, 3, 1, s.rgb[C_DARK]);  // its stalk
-  sprite_rows(sprite(s, px - 5, py - 3, 11, 7, 2, rgb4(17, 17, 34)), FACE.row);
+  blob(s, px, py, 7, 6, ON_LAND, rgb4(255, 130, 40));
+  box(s, px - 1, py - 8, 3, 3, ON_LAND, s.rgb[C_DARK]);  // its stalk
+  stamp_rows(stamp(s, px - 5, py - 3, 11, 7, ON_TOP, rgb4(17, 17, 34)), FACE.row);
 }
 
 // What the days bring to the picture
@@ -1217,11 +1210,11 @@ static void overlay(Scene &s, const Now &n, Offset offset) {
 
 void build(Scene &s, const Weather &w, double lat, double lon, uint32_t t, bool with_forecast, Offset offset,
            const Options &o) {
-  Sprite *sprite = s.sprite;
+  Stamps *stamps = s.stamps;
   uint8_t (*ov)[W / 4] = s.ov;
   Land *land = s.land;
   memset(&s, 0, sizeof s);
-  s.sprite = sprite;
+  s.stamps = stamps;
   s.ov = ov;
   s.land = land;
   s.ground = o.ground;
