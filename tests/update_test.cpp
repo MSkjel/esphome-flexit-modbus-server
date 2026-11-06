@@ -93,42 +93,30 @@ static bool probe_reply_in(const uint8_t *t, size_t n, uint8_t addr, uint16_t *i
   return probe_reply(addr, ir);
 }
 
-// http_request's response on an ESP32, 1000 bytes a read. On silence read() blocks for its 4.5 s timeout.
-struct Http {
-  size_t content_length = 0;  // 0 = not given, like a chunked one
-  int status_code = 200;
+// The download as fetch.h has it: a 2xx answer in pieces of up to 512 bytes until the server stops, then the
+// status, 0 when it stopped before stage_feed() had enough
+struct Answer {
+  int code = 200;
+  size_t length = 0;  // Content-Length, 0 = not given, like a chunked one
   std::vector<uint8_t> body;
-  size_t pos = 0, stop = SIZE_MAX;  // the server sends `stop` bytes of the body, then
-  int then = 0;                     // read() gives this, 0 = closed, READ_AGAIN = silent
-  size_t pause_at = SIZE_MAX;       // it goes quiet here for `pauses` timeouts
-  int pauses = 0;
-  int read(uint8_t *buf, size_t max) {
-    if (pos == pause_at && pauses > 0) {
-      pauses--;
-      now_ms += 4500;
-      return READ_AGAIN;
-    }
-    size_t n = std::min({max, (size_t) 1000, body.size() - pos, stop > pos ? stop - pos : 0});
-    if (!n) {
-      if (then == READ_AGAIN)
-        now_ms += 4500;
-      return then;
-    }
-    memcpy(buf, body.data() + pos, n);
-    pos += n;
-    now_ms += 10;
-    return (int) n;
-  }
-  bool is_read_complete() const { return pos == body.size(); }
+  size_t stop = SIZE_MAX;  // the server sends this much of the body, then hangs up
+  uint32_t ms = 10;        // each piece takes
 };
 
-static void get(Http h) {
+static void get(const Answer &a) {
   F.phase = IDLE;
   staged.clear();
   writes.clear();
-  Http *r = &h;
-  if (can_start())
-    download(r);
+  if (!stage_begin())
+    return;
+  size_t pos = 0, end = std::min(a.body.size(), a.stop);
+  bool more = a.code >= 200 && a.code < 300;
+  for (; more && pos < end; now_ms += a.ms) {
+    size_t n = std::min<size_t>(512, end - pos);
+    more = stage_feed(a.body.data() + pos, n, a.length);
+    pos += n;
+  }
+  stage_end(!more || pos == a.body.size() ? a.code : 0);
 }
 
 // Starts an update with the stream staged and runs the probe, feeding the replies (empty = silence)
@@ -156,40 +144,62 @@ int main() {
   hooks = &server;
   on_status = [](const std::string &s) { last_status = s; };
 
-  // the download: a block, then a tail padded to 16, with two read timeouts in the middle
-  Http h;
+  // the download: a block, then a tail padded to 16
+  Answer h;
   h.body = stream("ci600 0.2.0");
   h.body.resize(5000, 0x55);
-  h.content_length = h.body.size();
-  h.pause_at = 2000;
-  h.pauses = 2;
+  h.length = h.body.size();
   get(h);
-  CHECK(F.phase == SAVE && staged_len == 5000 && (writes == std::vector<size_t>{4096, 912}));
+  CHECK(F.phase == SAVE && staged_len == 5000 && (writes == std::vector<size_t>{4096, 912}) && !downloading);
   CHECK(staged.size() >= h.body.size() && std::equal(h.body.begin(), h.body.end(), staged.begin()));
-  // four timeouts are too many
-  h.pauses = 4;
-  get(h);
-  CHECK(F.phase == IDLE && last_status == "The download stopped at 2000 of 5000 bytes");
-  h.pauses = 0;
-  // the server stops answering, or hangs up
+  // not while it flashes, or while it downloads
+  CHECK(!stage_begin() && last_status == "Already flashing");
+  F.phase = IDLE;
+  CHECK(stage_begin() && downloading && !stage_begin() && last_status == "Already downloading");
+  // its progress, from the bus callbacks
+  int pct = -1;
+  on_progress = [&pct](int p) { pct = p; };
+  CHECK(stage_feed(h.body.data(), 4096, h.length));
+  pump();
+  CHECK(pct == 81);
+  on_progress = nullptr;
+  // no RAM for the request's task
+  stage_end(0, true);
+  CHECK(F.phase == IDLE && !downloading && last_status == "Download failed, the ESP is out of RAM");
+  // the server hangs up, with or without its size
   h.stop = 3000;
-  h.then = READ_AGAIN;
   get(h);
-  CHECK(last_status == "The download stopped at 3000 of 5000 bytes");
-  h.then = 0;
+  CHECK(F.phase == IDLE && last_status == "The download stopped at 3000 of 5000 bytes");
+  h.length = 0;
   get(h);
-  CHECK(last_status == "The download stopped at 3000 of 5000 bytes");
+  CHECK(last_status == "The download stopped at 3000 bytes");
   h.stop = SIZE_MAX;
-  // no RAM for the buffer
+  // chunked, no size
+  get(h);
+  CHECK(F.phase == SAVE && staged_len == 5000);
+  // too slow, five minutes at most
+  h.ms = 40000;
+  get(h);
+  CHECK(F.phase == IDLE && last_status == "The download timed out");
+  h.ms = 10;
+  // no RAM for the block
   no_ram = true;
   get(h);
   CHECK(F.phase == IDLE && staged.empty() && last_status == "Download failed, the ESP is out of RAM");
   no_ram = false;
-  // chunked, no size
-  h.content_length = 0;
+  // too big for the slot
+  h.length = slots[1].size + 1;
   get(h);
-  CHECK(F.phase == SAVE && staged_len == 5000);
-  // not a firmware file
+  CHECK(F.phase == IDLE && staged.empty() && last_status == "Download failed, the file's too big");
+  h.length = 0;
+  // no answer, an error, not a firmware file
+  h.code = 0;
+  get(h);
+  CHECK(last_status == "Couldn't connect to download it");
+  h.code = 404;
+  get(h);
+  CHECK(last_status == "Download failed (HTTP 404)");
+  h.code = 200;
   h.body[0] = '<';
   get(h);
   CHECK(last_status == "That's not a panel firmware file");

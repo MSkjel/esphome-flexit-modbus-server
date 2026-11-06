@@ -12,9 +12,9 @@
 # is newer than the panel, with its own install button. check_interval: how often it looks. Each look reads only the
 # start of the file.
 #
-# The ESP downloads the file a few KB at a time into its spare app slot, where its own next OTA update goes, and
-# streams it to the panel's ROM bootloader. What it checks and how the flash goes: docs/flashing.md in the firmware
-# repo.
+# The ESP downloads the file a few KB at a time into its spare app slot, where its own next OTA update goes, beside
+# the main loop, and streams it to the panel's ROM bootloader. What it checks and how the flash goes:
+# docs/flashing.md in the firmware repo.
 defaults:
   url: "https://github.com/MSkjel/flexit-ci600-firmware/releases/latest/download/ci600.fxup"
   check_interval: 6h
@@ -24,16 +24,11 @@ update:
     id: panel_firmware_entity
     name: "Panel Firmware"
 
-http_request:
-  # The download. GitHub's release download redirects to a URL about 1.7 KB long, longer than the default 512-byte
-  # buffers.
-  buffer_size_tx: 4096
-  buffer_size_rx: 2048
-
 esp32:
   framework:
     advanced:
       use_full_certificate_bundle: true  # for https, the full set so GitHub's CA is in it
+      include_builtin_idf_components: [esp_http_client]  # for fetch.h, ESPHome leaves it out unless asked
     sdkconfig_options:
       # TLS buffers only as big as each record, not 20 KB for the whole download, see met.yaml
       CONFIG_MBEDTLS_DYNAMIC_BUFFER: "y"
@@ -55,19 +50,7 @@ button:
     entity_category: config
     icon: "mdi:cellphone-arrow-down"
     on_press:
-      - if:
-          condition:
-            lambda: return flexit::panel::update::can_start();
-          then:
-            # the download follows GitHub's redirects
-            - http_request.get:
-                url: !lambda return id(panel_firmware_url).state;
-                on_response:
-                  then:
-                    - lambda: flexit::panel::update::download(response);
-                on_error:
-                  then:
-                    - lambda: flexit::panel::update::status("Couldn't connect to download it");
+      - lambda: flexit::panel::update::download(id(panel_firmware_url).state);
 
 switch:
   - platform: template
@@ -105,5 +88,4 @@ esphome:
         - lambda: |-
             flexit::panel::update::setup([](const std::string &s) { id(panel_firmware_update).publish_state(s); },
                                          [](int pct) { id(panel_firmware_progress).publish_state(pct); });
-            flexit::panel::update::attach(id(panel_firmware_entity), id(panel_firmware_url), "${check_interval}",
-                                          []() { id(panel_firmware_flash).press(); });
+            flexit::panel::update::attach(id(panel_firmware_entity), id(panel_firmware_url), "${check_interval}");

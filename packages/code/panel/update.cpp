@@ -1,10 +1,10 @@
 #include "update.h"
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
 #include "esp_ota_ops.h"
-#include "esphome/core/application.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
@@ -13,7 +13,6 @@
 
 namespace flexit::panel::update {
 
-using esphome::App;
 using esphome::millis;
 using esphome::RAMAllocator;
 
@@ -250,95 +249,116 @@ void begin() {
   status("Saving the panel's settings...");
 }
 
-bool can_start() {
-  if (running()) {
-    status("Already flashing");
-    return false;
-  }
-  return (staging = spare_slot()) != nullptr;
-}
-
 static constexpr size_t BLK = 4096;  // one erase block at a time, esp_partition_write needs it erased first
 
-static void stage(const Download &r, uint8_t *buf) {
-  const esp_partition_t *part = staging;
-  size_t total = r.content_length;
-  auto fits = [part](size_t len) {
-    if (len <= part->size)
-      return true;
-    status("Download failed, the file's too big");
+// The download as it goes, the task's until stage_end()
+static struct {
+  uint8_t *buf;             // BLK
+  size_t fill, off, total;  // bytes in buf, in the slot, and the answer's length
+  uint32_t t0;
+  std::string why;       // it stopped early, with this status
+  std::atomic<int> pct;  // in the slot, -1 while the server doesn't say how much
+} D;
+
+// Internal RAM first, flash is written from PSRAM 32 bytes at a time
+static RAMAllocator<uint8_t> block_ram() { return RAMAllocator<uint8_t>(RAMAllocator<uint8_t>::PREFER_INTERNAL); }
+
+bool stage_begin() {
+  if (running() || downloading) {
+    status(downloading ? "Already downloading" : "Already flashing");
     return false;
-  };
+  }
+  if (!(staging = spare_slot()))
+    return false;
+  if (!(D.buf = block_ram().allocate(BLK))) {
+    status("Download failed, the ESP is out of RAM");
+    return false;
+  }
+  D.fill = D.off = D.total = 0;
+  D.t0 = millis();
+  D.why.clear();
+  D.pct = -1;
   staged_len = 0;
-  if (r.status_code != 200) {
-    status("Download failed (HTTP " + std::to_string(r.status_code) + ")");
-    return;
-  }
-  if (!fits(total))
-    return;
-  status("Downloading...");
-  size_t fill = 0, off = 0;
-  uint32_t t0 = millis(), heard = t0;
-  bool end = false;
   last_pct = -1;
-  while (!end && millis() - t0 < DOWNLOAD_TIMEOUT_MS) {
-    int n = r.read(buf + fill, total ? std::min(BLK - fill, total - off - fill) : BLK - fill);
-    App.feed_wdt();
-    if (n == READ_AGAIN && millis() - heard < STALL_MS)
-      continue;  // a slow server, give it until STALL_MS
-    if (n < 0 || (n == 0 && !r.read_complete()))
-      break;  // gone, or closed early
-    if (n > 0) {
-      heard = millis();
-      if (!off && !fill && buf[0] != 0x0a) {  // a firmware stream starts with protobuf field 1
-        end = true;                           // so it's none, like an empty one
-        break;
-      }
-      fill += n;
-    }
-    end = n == 0 || off + fill == total;
-    if (fill < BLK && !(end && fill))
-      continue;
-    size_t wlen = (fill + 15) & ~(size_t) 15;  // pad the tail to 16, encrypted flash writes 16-byte blocks
-    if (!fits(off + wlen))
-      return;
-    std::fill(buf + fill, buf + wlen, 0xFF);
-    if ((off % part->erase_size == 0 && esp_partition_erase_range(part, off, part->erase_size) != ESP_OK) ||
-        esp_partition_write(part, off, buf, wlen) != ESP_OK) {
-      status("Couldn't save the download on the ESP");
-      return;
-    }
-    off += fill;
-    fill = 0;
-    if (total)
-      progress((int) (100ull * off / total));
-  }
-  if (!end) {
-    std::string of = total ? " of " + std::to_string(total) : "";
-    status(millis() - t0 >= DOWNLOAD_TIMEOUT_MS
-               ? "The download timed out"
-               : "The download stopped at " + std::to_string(off + fill) + of + " bytes");
-    return;
-  }
-  if (!off) {
-    status("That's not a panel firmware file");
-    return;
-  }
-  staged_len = off;
-  ESP_LOGI(TAG, "Staged %u bytes", (unsigned) staged_len);
-  begin();
+  downloading = true;
+  status("Downloading...");
+  return true;
 }
 
-void stage(const Download &d) {
-  RAMAllocator<uint8_t> ram(RAMAllocator<uint8_t>::PREFER_INTERNAL);  // flash is written from PSRAM 32 bytes at a time
-  uint8_t *buf = ram.allocate(BLK);
-  if (!buf) {
-    staged_len = 0;
-    status("Download failed, the ESP is out of RAM");
-    return;
+// buf into the slot, the tail padded to 16, since encrypted flash writes 16-byte blocks
+static bool write_block() {
+  size_t len = (D.fill + 15) & ~(size_t) 15;
+  if (D.off + len > staging->size) {
+    D.why = "Download failed, the file's too big";
+    return false;
   }
-  stage(d, buf);
-  ram.deallocate(buf, BLK);
+  std::fill(D.buf + D.fill, D.buf + len, 0xFF);
+  if ((D.off % staging->erase_size == 0 && esp_partition_erase_range(staging, D.off, staging->erase_size) != ESP_OK) ||
+      esp_partition_write(staging, D.off, D.buf, len) != ESP_OK) {
+    D.why = "Couldn't save the download on the ESP";
+    return false;
+  }
+  D.off += D.fill;
+  D.fill = 0;
+  if (D.total)
+    D.pct = (int) (100ull * D.off / D.total);
+  return true;
+}
+
+bool stage_feed(const uint8_t *p, size_t n, size_t total) {
+  if (!D.off && !D.fill) {
+    D.total = total;
+    if (total > staging->size) {
+      D.why = "Download failed, the file's too big";
+      return false;
+    }
+    if (p[0] != 0x0a)  // a firmware stream starts with protobuf field 1
+      return false;
+  }
+  if (millis() - D.t0 >= DOWNLOAD_TIMEOUT_MS) {
+    D.why = "The download timed out";
+    return false;
+  }
+  while (n) {
+    size_t k = std::min(n, BLK - D.fill);
+    memcpy(D.buf + D.fill, p, k);
+    D.fill += k;
+    p += k;
+    n -= k;
+    if (D.fill == BLK && !write_block())
+      return false;
+  }
+  return true;
+}
+
+void stage_end(int code, bool no_ram) {
+  downloading = false;
+  size_t got = D.off + D.fill;
+  bool ok = false;
+  if (no_ram)
+    status("Download failed, the ESP is out of RAM");
+  else if (!code && !got)
+    status("Couldn't connect to download it");
+  else if (!code)
+    status("The download stopped at " + std::to_string(got) + (D.total ? " of " + std::to_string(D.total) : "") +
+           " bytes");
+  else if (code != 200)
+    status("Download failed (HTTP " + std::to_string(code) + ")");
+  else if (!D.why.empty())
+    status(D.why);
+  else if (!got)
+    status("That's not a panel firmware file");
+  else if (D.fill && !write_block())
+    status(D.why);
+  else
+    ok = true;
+  block_ram().deallocate(D.buf, BLK);
+  D.buf = nullptr;
+  if (!ok)
+    return;
+  staged_len = D.off;
+  ESP_LOGI(TAG, "Staged %u bytes", (unsigned) staged_len);
+  begin();
 }
 
 bool check_head(const uint8_t *head, size_t n) {
@@ -764,6 +784,8 @@ static void request(uint32_t now) {
 }
 
 void pump() {
+  if (downloading && D.pct >= 0)
+    progress(D.pct);
   if (!running())
     return;
   uint32_t now = millis();
