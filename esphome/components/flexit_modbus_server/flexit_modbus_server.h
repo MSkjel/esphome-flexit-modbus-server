@@ -220,6 +220,9 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
 
   /// Max time since the frame ended. Only from inside the frame callback.
   uint32_t frame_age_us();
+  /// The micros() when the frame ended: ours once the UART had sent it, one we read at the latest. Only from inside
+  /// the frame callback.
+  uint32_t frame_end_us() const { return frame_end_us_; }
   /// Min time since the last frame we read ended
   uint32_t quiet_min_us() { return micros() - last_frame_us_; }
   /// Nothing waiting, no bytes in the UART and no part of a frame read
@@ -308,6 +311,7 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
   size_t tx_frame_len_{0};
   bool own_frame_{false};
   uint32_t last_frame_us_{0};
+  uint32_t frame_end_us_{0};  // see frame_end_us()
 
   /// For status_age_us(), when the last loops read the UART and how much of a status frame they had
   uint32_t loop_us_{0}, prev_loop_us_{0}, status_from_us_{0}, status_seen_us_{0};
@@ -484,6 +488,7 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
   // The bridge must never hold up the bus or eat the heap, so both buffers
   // have a fixed limit and a client that reads too slowly misses data.
   static constexpr size_t TCP_BUFFER_MAX = 2048;
+  static constexpr size_t TCP_HEAD = 7;  // a block's direction, time and length
 
   struct TcpClient {
     std::unique_ptr<socket::Socket> sock;
@@ -497,7 +502,7 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
   /// Blocks collected since the last loop, with their headers, in bus order
   std::vector<uint8_t> tcp_out_;
 
-  /// Adds a frame from the frame callback as a block, 'T' for ours, else 'R'
+  /// Adds a frame from the frame callback as a block, 'T' for ours, else 'R', with when it ended
   void tcp_mirror_(const uint8_t *data, size_t len);
   /// Listens, once the network is up
   void setup_tcp_bridge_();
