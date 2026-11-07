@@ -146,6 +146,13 @@ size_t FlexitModbusServer::split_frames_(uint8_t *data, size_t length) {
   size_t passed = 0;  // how far the frame callback has been given
   if (length != rx_left_)
     rx_grew_us_ = micros();
+  // To the frame callback, the bytes up to `to`. Each byte read after them came a byte time later, so they ended
+  // that long before the read at the latest.
+  auto pass = [&](size_t to) {
+    frame_end_us_ = rx_grew_us_ - (uint32_t) (length - to) * PBUS_BYTE_US;
+    frame_callback_.call(data + passed, to - passed);
+    passed = to;
+  };
 
   while (length - offset >= MIN_FRAME_LENGTH) {
     size_t avail = length - offset;
@@ -197,9 +204,8 @@ size_t FlexitModbusServer::split_frames_(uint8_t *data, size_t length) {
       answered_ = true;
     // The bytes we skipped and then the frame, each on its own, before a reply to it is written
     if (offset > passed)
-      frame_callback_.call(data + passed, offset - passed);
-    frame_callback_.call(data + offset, len);
-    passed = offset + len;
+      pass(offset);
+    pass(offset + len);
     last_frame_us_ = micros();
     if (!as_reply && len == 8 && function >= 0x01 && function <= 0x04 && data[offset] != 0 &&
         data[offset] != server_address_) {
@@ -225,7 +231,7 @@ size_t FlexitModbusServer::split_frames_(uint8_t *data, size_t length) {
   }
 
   if (offset > passed) {
-    frame_callback_.call(data + passed, offset - passed);
+    pass(offset);
     last_frame_us_ = micros();
   }
   if (offset < length)  // something after the status broadcast
@@ -660,7 +666,7 @@ void FlexitModbusServer::UartPort::flush() {
   server_->uart::UARTDevice::flush();
 
   // frame is out, the frame callback gets it too
-  server_->last_frame_us_ = micros();
+  server_->last_frame_us_ = server_->frame_end_us_ = micros();
   server_->own_frame_ = true;
   server_->frame_callback_.call(server_->tx_frame_, server_->tx_frame_len_);
   server_->own_frame_ = false;
@@ -706,10 +712,12 @@ void FlexitModbusServer::setup_tcp_bridge_() {
 }
 
 void FlexitModbusServer::tcp_mirror_(const uint8_t *data, size_t len) {
-  if (tcp_clients_.empty() || tcp_out_.size() + 3 + len > TCP_BUFFER_MAX)
+  if (tcp_clients_.empty() || tcp_out_.size() + TCP_HEAD + len > TCP_BUFFER_MAX)
     return;
   uint8_t dir = own_frame_ ? FRAME_DIR_TX : FRAME_DIR_RX;
-  tcp_out_.insert(tcp_out_.end(), {dir, static_cast<uint8_t>(len >> 8), static_cast<uint8_t>(len & 0xFF)});
+  uint32_t t = frame_end_us_;
+  tcp_out_.insert(tcp_out_.end(), {dir, (uint8_t) (t >> 24), (uint8_t) (t >> 16), (uint8_t) (t >> 8), (uint8_t) t,
+                                   (uint8_t) (len >> 8), (uint8_t) len});
   tcp_out_.insert(tcp_out_.end(), data, data + len);
 }
 

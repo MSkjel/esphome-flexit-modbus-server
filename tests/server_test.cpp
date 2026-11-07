@@ -30,6 +30,7 @@ struct Esp {
   FlexitModbusServer server;
   std::vector<size_t> frames;  // what the frame callback got
   std::vector<uint8_t> heard;  // and the bytes of it that weren't ours
+  std::vector<uint32_t> ends;  // and frame_end_us() for each
 
   explicit Esp(uint32_t preference_hash = 0) {
     server.set_uart_parent(&bus);
@@ -38,6 +39,7 @@ struct Esp {
     server.setup();
     server.add_on_frame_callback([this](const uint8_t *data, size_t len) {
       frames.push_back(len);
+      ends.push_back(server.frame_end_us());
       if (!server.is_own_frame())
         heard.insert(heard.end(), data, data + len);
     });
@@ -230,6 +232,16 @@ int main() {
     esp->hear(poll);
     CHECK(esp->bus.tx.size() == 6 && !(esp->bus.tx[3] & 1 << REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX));
     CHECK(esp->server.real_value(REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX) == 90);
+  }
+
+  // When each frame ended: one we read at the latest, when we read it less a byte time for each byte read after it,
+  // our reply once it was sent
+  {
+    auto esp = std::make_unique<Esp>();
+    esp->hear(std::vector<uint8_t>{0x55} + our_read + counters_read);
+    const uint32_t read = now_us;
+    CHECK((esp->frames == std::vector<size_t>{1, 8, 8, 8}));
+    CHECK((esp->ends == std::vector<uint32_t>{read - 16 * PBUS_BYTE_US, read - 8 * PBUS_BYTE_US, read, read}));
   }
 
   // A junk byte before a frame. The frame callback gets each on its own, and the frame is handled.
