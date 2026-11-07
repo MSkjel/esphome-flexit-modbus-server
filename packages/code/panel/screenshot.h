@@ -29,7 +29,8 @@ struct State {
   std::function<void(std::vector<Part> &&)> publish;
   int quality = 0;                                     // 0 until attach()
   std::vector<Part> tiles;                             // SHOT_TILES while someone looks, none for a black one
-  std::vector<Part> marks;                             // the headers, a black tile, RST0..RST7 and EOI
+  std::vector<Part> marks;                             // the headers after SOI, a black tile, RST0..RST7 and EOI
+  uint16_t images = 0;                                 // made, each with its number in it
   std::vector<uint8_t> in;                             // the tile coming in, which goes in its place once it's whole
   uint8_t head[SHOT_TILE_HEAD];                        // its head
   int head_n = 0, in_left = 0;                         // head bytes so far, then the bytes it still needs
@@ -45,12 +46,15 @@ inline uint32_t black(void *, int, int) { return 0; }
 
 inline Part part(const uint8_t *b, size_t n) { return std::make_shared<std::vector<uint8_t>>(b, b + n); }
 
-// The tiles as a JPEG, a black one for each we don't have. Only the parts are new, the bytes are shared.
+// The tiles as a JPEG, a black one for each we don't have. Only the parts are new, the bytes are shared. Its number
+// in a comment, so no two are the same: Home Assistant's stream passes an image on only if it differs from the last,
+// and Chrome shows the one before the last it has, so without the next the screen's last change wouldn't show.
 inline std::vector<Part> jpeg() {
   enum { HEAD, NONE, RST, EOI = RST + 8 };
   if (S.marks.empty()) {
     uint8_t head[1024], none[128];
-    S.marks.push_back(part(head, pjpeg_head(head, sizeof head, PIC_MAX_W, PIC_MAX_H, S.quality, SHOT_TILE_W / 16)));
+    size_t n = pjpeg_head(head, sizeof head, PIC_MAX_W, PIC_MAX_H, S.quality, SHOT_TILE_W / 16);
+    S.marks.push_back(part(head + 2, n - 2));
     S.marks.push_back(part(none, pjpeg_tile(none, sizeof none, S.quality, 0, black, nullptr, 0, 0, SHOT_TILE_W / 16)));
     for (int i = 0; i < 8; i++) {
       uint8_t rst[2] = {0xFF, (uint8_t) (0xD0 + i)};
@@ -60,7 +64,10 @@ inline std::vector<Part> jpeg() {
     S.marks.push_back(part(eoi, 2));
   }
   std::vector<Part> j;
-  j.reserve(2 * SHOT_TILES + 1);
+  j.reserve(2 * SHOT_TILES + 2);
+  uint16_t k = ++S.images;
+  const uint8_t soi[] = {0xFF, 0xD8, 0xFF, 0xFE, 0, 4, (uint8_t) (k >> 8), (uint8_t) k};  // SOI, COM: length, number
+  j.push_back(part(soi, sizeof soi));
   j.push_back(S.marks[HEAD]);
   for (int t = 0; t < SHOT_TILES; t++) {
     if (t)
