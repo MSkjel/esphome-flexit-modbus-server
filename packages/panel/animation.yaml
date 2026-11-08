@@ -11,6 +11,15 @@
 # drift_x, drift_y: pixels per second it drifts across the screen, wrapping round the edges. 0 stays put. The
 #   panel_move_animation and panel_drift_animation actions change the motion while it's shown.
 # fade_ms: how long copies fade in and out, 0 for at once
+# clips: parts of its frames by name for its scripts, like "sail 0-3, tack 4-8"
+# script: what it does on the panel, played there without the ESP, see docs/panel.md#animation-scripts:
+#     script: |
+#       sail:
+#         clip sail
+#         wait 5000 to 9000
+#         clip tack at end
+#         wait rounds 1
+#         goto sail
 defaults:
   resize: 64x64
   x: "16"
@@ -20,6 +29,8 @@ defaults:
   drift_x: "0"
   drift_y: "0"
   fade_ms: "300"
+  clips: ""
+  script: ""
 
 # the image component wants a display: section, an empty one will do
 display: []
@@ -49,4 +60,6 @@ esphome:
     - priority: -100
       then:
         - lambda: |-
-            flexit::panel::overlay::add_gif("${name}", id(panel_animation_${name}), id(panel_anim_${name}), ${frame_ms}, ${x}, ${y}, ${scale}, ${drift_x}, ${drift_y}, ${fade_ms});
+            flexit::panel::overlay::add_gif("${name}", id(panel_animation_${name}), id(panel_anim_${name}), ${frame_ms},
+                                            ${x}, ${y}, ${scale}, ${drift_x}, ${drift_y}, ${fade_ms},
+                                            R"CLIPS(${clips})CLIPS", R"SCRIPT(${script})SCRIPT");

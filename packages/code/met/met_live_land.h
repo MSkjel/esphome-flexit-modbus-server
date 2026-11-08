@@ -23,45 +23,46 @@ inline constexpr int GLIDE_IN = 21000, FLY_OFF = 17000;  // a visiting gull's gl
 // The top row of what a show sets about the meadow in front of the cabin, below its floor
 inline int meadow(const Scene &s) { return std::min(s.cabin_y + 10, H - 16); }
 
-// A gull's visit to the ridge a step at a time: it glides in, lands and swaps to the visit, which ends on the flat
-// beat it takes off on, then it's gone. x, y are the visit's, its feet on the ridge.
-inline void gull_visit(int step, int x, int y, bool from_right) {
-  int ms = GLIDE_IN;
-  if (step == 0) {
-    preload("gullvisit");
-    place_flipped("gull", 2, from_right ? W + 2 : -21, y - 43, from_right,
-                  {true, 7});  // gliding by the time it's there
-    move("gull", 2, flip_x("gull", x + 1, from_right), y, GLIDE_IN);
-  } else if (step == 1) {
-    swap_flipped("gull", 2, "gullvisit", x, y, from_right, true);
-    ms = ms_of("gullvisit") - STEP;
-  } else if (step == 2) {
-    swap_flipped("gullvisit", 2, "gull", x + 1, y + 4, from_right, true, 2);
-    move("gull", 2, from_right ? -21 : W + 2, 96, FLY_OFF, "in");
-    ms = FLY_OFF;
-  } else {
-    remove("gull", 2);
-    clear("gullvisit");
-    return;
-  }
-  later(ms, [=] { gull_visit(step + 1, x, y, from_right); });
+// A gull's visit to the ridge: it glides in, lands, looks about, preens and takes off again on a flat beat. x, y
+// are where it stands, its feet on the ridge. The ms it takes.
+inline uint32_t gull_visit(int x, int y, bool from_right) {
+  place("gullvisit", 0, from_right ? W + 2 : -21, y - 43, R"(
+    clip fly
+    frame 7                # gliding by the time it's there
+    move gx, y over glide
+    wait glide
+    clip stay
+    move sx, y
+    wait rounds 1
+    clip fly
+    frame 2
+    move gx, y + 4
+    move away, 96 over off ease in
+    wait off
+    end
+  )",
+        {{"gx", x + 1}, {"sx", x}, {"y", y}, {"glide", GLIDE_IN}, {"away", from_right ? -21 : W + 2}, {"off", FLY_OFF}},
+        {.left = from_right});
+  return (uint32_t) (GLIDE_IN + ms_of("gullvisit", "stay") + FLY_OFF);
 }
 
 // A hooded crow's visit to the ridge: it flies in from the left over the trees and down onto it, caws and looks
-// about, and flies back off the way it came. x, y are the visit's, its feet on the ridge. The ms it takes.
+// about, and flies back off the way it came. x, y are where it stands, its feet on the ridge. The ms it takes.
 inline uint32_t crow_visit(int x, int y) {
-  in_light("crowfly");
   in_light("crow");
-  preload("crow");
-  int along = 4300, down = 2200, stay = ms_of("crow") - STEP, off = 5000;
-  place("crowfly", 0, -11, y - 31);
-  path("crowfly", 0, {{x - 60, y - 31, along}, {x, y, down}});
-  later(along + down, [=] { swap("crowfly", 0, "crow", x, y, true); });
-  later(along + down + stay, [=] {
-    swap_flipped("crow", 0, "crowfly", x, y + 1, true, true, 3);
-    move("crowfly", 0, -20, y - 56, off, "in");
-  });
-  return gone_later(along + down + stay + off, "crowfly", 300, "crow");
+  place("crow", 0, -11, y - 31, "clip fly\n" + path({{x - 60, y - 31, 4300}, {x, y, 2200}}) + R"(
+    clip sit
+    wait rounds 1
+    flip x
+    clip fly
+    frame 3
+    move fx, y + 1
+    move -20, y - 56 over 5000 ease in
+    wait 5000
+    end
+  )",
+        {{"fx", x}, {"y", y}});
+  return (uint32_t) (4300 + 2200 + ms_of("crow", "sit") + 5000);
 }
 
 // A red squirrel's visit to the roof: it bounds along the hill from off the left through the forest, up the roof's
@@ -69,29 +70,45 @@ inline uint32_t crow_visit(int x, int y) {
 // on the right. cx, cy are the cabin's. The ms it takes.
 inline uint32_t squirrel_visit(const NearHill &h, int cx, int cy) {
   in_light("squirrel");
-  in_light("squirrelnut");
   const Frames *f = frames_of("squirrel");
   int x0 = -(f ? f->w : 0) - 2, foot = cx - 24, run = (foot - x0) * 1000 / 14;
-  uint32_t up = amble_ms(h, x0, foot, 14, 4, 4), down = up + 1700 + ms_of("squirrelnut") - STEP;
-  return set_off("squirrel", "squirrelnut", down + 1700 + run, [=] {
-    place("squirrel", 0, x0, h.at(x0 + 4) - 4, {.depth = D_NEAR_ON});  // behind the trees
-    amble("squirrel", 0, h, x0, foot, 14, 4, 4);
-    later(up, [=] {  // up onto the eaves, in front of the roof
-      depth("squirrel", 0, OVERLAY_NEAREST);
-      move("squirrel", 0, cx - 18, cy - 21, 300);
-    });
-    move_later(up + 300, "squirrel", 0, cx - 4, cy - 29, 1400);  // and up to the ridge
-    later(up + 1700, [=] { swap("squirrel", 0, "squirrelnut", cx - 2, cy - 32, true); });
-    later(down, [=] {
-      swap_flipped("squirrelnut", 0, "squirrel", cx - 4, cy - 29, true);
-      move("squirrel", 0, cx - 18, cy - 21, 1400);
-    });
-    move_later(down + 1400, "squirrel", 0, foot, h.at(foot + 4) - 4, 300);
-    later(down + 1700, [=] {
-      depth("squirrel", 0, D_NEAR_ON);
-      move("squirrel", 0, x0, h.at(x0 + 4) - 4, run);
-    });
-  });
+  Walk up = walk(h, x0, foot, 14, 4, 4);
+  place("squirrel", 0, x0, up.y[0], R"(
+    clip run
+    b = n; d = 1; t = leg
+  )" + up.loop("up") + R"(
+    depth 255              # up onto the eaves, in front of the roof
+    move cx - 18, cy - 21 over 300
+    wait 300
+    move cx - 4, cy - 29 over 1400
+    wait 1400
+    clip nut
+    move cx - 2, cy - 32
+    wait rounds 1
+    flip x
+    clip run
+    move cx - 5, cy - 29
+    move cx - 18, cy - 21 over 1400
+    wait 1400
+    move foot, fy over 300
+    wait 300
+    depth behind           # behind the trees
+    move x0, y0 over run
+    wait run
+    end
+  )",
+        {{"n", up.n},
+         {"leg", up.leg(14)},
+         {"cx", cx},
+         {"cy", cy},
+         {"foot", foot},
+         {"fy", up.y[up.n]},
+         {"behind", D_NEAR_ON},
+         {"x0", x0},
+         {"y0", up.y[0]},
+         {"run", run}},
+        {.depth = D_NEAR_ON});
+  return (uint32_t) (up.n * up.leg(14) + 1700 + ms_of("squirrel", "nut") + 1700 + run);
 }
 
 // Gulls, and about every 7 minutes a visitor on the cabin's ridge: a gull glides in against the wind, lands, looks
@@ -107,8 +124,7 @@ inline void gulls(const Scene &s) {
       return crow_visit(cx - 5, cy - 34);
     if (k == 2)
       return squirrel_visit(h, cx, cy);
-    gull_visit(0, x, y, from_right);
-    return (uint32_t) (GLIDE_IN + ms_of("gullvisit") - STEP + FLY_OFF);
+    return gull_visit(x, y, from_right);
   });
 }
 
@@ -121,12 +137,17 @@ inline void stove_smoke(const Scene &s, const char *name) {
 // from row top, its hops in step with its frames. The ms it's there.
 inline uint32_t magpie(int top) {
   in_light("magpie");
-  int hop = ms_of("magpie", 0, 5), rest = ms_of("magpie", 5), l = DATE_R + 2, r = GAP_R;
-  place("magpie", 0, (int) rnd((float) l, (float) (r - 10)), (int) rnd((float) (top - 2), (float) (top + 8)), {true});
-  area("magpie", 0, l, top - 2, r, top + 15, "bounce", "bounce");
-  face("magpie", 0);
-  wander("magpie", 0, 8, 8, 0, 180, hop, hop, rest, rest);
-  return gone_later(60000, "magpie");
+  int l = DATE_R + 2, r = GAP_R;
+  place("magpie", 0, (int) rnd((float) l, (float) (r - 10)), (int) rnd((float) (top - 2), (float) (top + 8)), R"(
+    area l, top - 2, r, top + 15 bounce
+    face 0 mirror level
+    wander 8, 8, 0, 180, hop, hop, rest, rest
+    frame 0
+    wait 60000
+    end
+  )",
+        {{"l", l}, {"r", r}, {"top", top}, {"hop", ms_of("magpie", 0, 5)}, {"rest", ms_of("magpie", 5)}});
+  return 60000;
 }
 
 // Smoke from the stove, by the heat, in December a paper star in the window, and by day now and then a magpie
@@ -139,74 +160,107 @@ inline void smoke(const Scene &s) {
     visitors(minutes(6), minutes(1, 4), 1, [top](int) { return magpie(top); });
 }
 
+// Copy 0 of n walks in from off one side along row y at speed px/s to stop, its walk clip's frames, where it's a
+// round of its stay clip's dy rows higher, then on off the other side or back the way it came, facing the way it
+// goes. The ms it takes.
+inline uint32_t stop_by(const char *n, const char *walk, const char *stay, int stop, int y, int dy, float speed) {
+  const Frames *f = frames_of(n);
+  int w = f ? f->w : 0;
+  bool left = chance(0.5f), back = chance(0.5f), on = back ? !left : left;  // the way it comes and goes on
+  int x0 = left ? W + 2 : -w - 2, x1 = on ? -w - 2 : W + 2;
+  int in = (int) ((float) abs(stop - x0) * 1000 / speed), out = (int) ((float) abs(x1 - stop) * 1000 / speed);
+  place(n, 0, x0, y,
+        std::string("clip ") + walk + R"(
+    move sx, y over in
+    wait in
+    clip )" +
+            stay + R"(
+    move sx, y - dy
+    wait rounds 1
+    flip )" +
+            (on ? "x" : "none") + "\nclip " + walk + R"(
+    move sx, y
+    move ex, y over out
+    wait out
+    end
+  )",
+        {{"sx", stop}, {"ex", x1}, {"y", y}, {"dy", dy}, {"in", in}, {"out", out}}, {.left = left});
+  return (uint32_t) (in + ms_of(n, stay) + out);
+}
+
 // A fox trots in front of the cabin from off one side, stops under the window to look at you, and trots on or back
 // the way it came. y its top, stop where it stops. The ms it takes.
 inline uint32_t fox_by(int y, int stop) {
   in_light("fox");
-  in_light("foxlook");
-  return stop_by("fox", "foxlook", stop, y, 0, 10);
+  return stop_by("fox", "trot", "look", stop, y, 0, 10);
 }
 
 // Firelight in the window and smoke dark against the night. Now and then the cat sits on the sill a while, or a fox
 // trots by.
 inline void cosy(const Scene &s) {
   int x = window_x(s), y = window_y(s), fox = std::min(s.cabin_y + 6, H - 9);
-  place("firewin", 0, x, y);
+  place("firewin", 0, x, y, "clip fire");
   stove_smoke(s, "puffnight");
   visitors(minutes(6), minutes(1, 4), 2, [=](int k) {
     if (k)
       return fox_by(fox, x - 2);
-    preload("firewincat");                                               // on the panel before it's swapped in
-    uint32_t sits = (uint32_t) (ms_of("firewincat") * (int) rnd(2, 5));  // whole rounds of its frames
-    later(8000, [x, y] { swap("firewin", 0, "firewincat", x, y, true); });
-    later(8000 + sits - STEP, [x, y] {
-      swap("firewincat", 0, "firewin", x, y);
-      clear("firewincat");
-    });
-    return 8000 + sits;
+    int sits = (int) rnd(2, 5);  // whole rounds of it
+    script("firewin", 0, "clip fire; wait 8000; clip cat; wait rounds sits; clip fire", {{"sits", sits}});
+    return (uint32_t) (8000 + sits * ms_of("firewin", "cat"));
   });
 }
 
-// A moose's visit a step at a time: in along the meadow from x0 to x1, grazing there, and back. MOOSE_DY puts it
-// in the meadow in front of the cabin, its back a little under the cabin's floor.
+// A moose comes in along the meadow from x0 to x1, grazes there and goes back. MOOSE_DY puts it in the meadow in
+// front of the cabin, its back a little under the cabin's floor. The ms it takes.
 inline constexpr int MOOSE_DY = -6;
-inline void moose_visit(int step, const NearHill &h, int x0, int x1) {
+inline uint32_t moose_visit(const NearHill &h, int x0, int x1) {
   bool right = x1 < x0;  // it came from the right
-  uint32_t ms = 24000;
-  if (step == 0) {
-    in_light("moose");
-    in_light("moosegraze");
-    preload("moosegraze");
-    place_flipped("moose", 0, x0, h.at(x0 + 10) - MOOSE_DY, right);
-    ms = amble("moose", 0, h, x0, x1, 3, 10, MOOSE_DY);
-  } else if (step == 1) {
-    swap_flipped("moose", 0, "moosegraze", x1, h.at(x1 + 10) - MOOSE_DY, right);
-  } else if (step == 2) {
-    swap_flipped("moosegraze", 0, "moose", x1, h.at(x1 + 10) - MOOSE_DY, !right);
-    ms = amble("moose", 0, h, x1, right ? x0 + 2 : x0 - 2, 2.9f, 10, MOOSE_DY);
-  } else {
-    remove("moose", 0);
-    return;
-  }
-  later(ms, [=] { moose_visit(step + 1, h, x0, x1); });
+  in_light("moose");
+  Walk w = walk(h, x0, x1, 3, 10, MOOSE_DY);
+  place("moose", 0, x0, w.y[0],
+        R"(
+    clip walk
+    b = n; d = 1; t = in
+  )" + w.loop("go") +
+            R"(
+    if k == 0 goto gone
+    clip graze
+    move x1, v
+    wait 24000
+    flip )" +
+            (right ? "none" : "x") + R"(
+    clip walk
+    b = 0; d = -1; t = back
+    goto go
+  gone:
+    end
+  )",
+        {{"n", w.n}, {"in", w.leg(3)}, {"back", w.leg(2.9f)}, {"x1", x1}}, {.left = right});
+  return (uint32_t) (w.n * (w.leg(3) + w.leg(2.9f)) + 24000);
 }
 
 // A roe deer bounds out of the forest at its edge, e, and grazes, lifting its head to look about, then bounds back
 // into the trees. The ms it takes.
 inline uint32_t roe_deer(Edge e) {
   in_light("roedeer");
-  in_light("roedeerrun");
-  int x = e.x + 11, y = e.y - 6, graze = 2 * ms_of("roedeer") - STEP;   // two rounds of grazing and looking
-  int in = out_of(e, "roedeerrun", y - 1), run = (x - in) * 1000 / 29;  // its bounds at 29 px/s
-  return set_off("roedeerrun", "roedeer", 2 * run + graze, [=] {
-    place("roedeerrun", 0, in, y - 1, {.own = true, .depth = D_NEAR_ON});
-    move("roedeerrun", 0, x - 1, y - 1, run);
-    later(run, [=] { swap("roedeerrun", 0, "roedeer", x, y, true); });
-    later(run + graze, [=] {
-      swap_flipped("roedeer", 0, "roedeerrun", x - 1, y - 1, true, true);
-      move("roedeerrun", 0, flip_x("roedeerrun", in, true), y - 1, run);
-    });
-  });
+  int x = e.x + 11, y = e.y - 6;
+  int in = out_of(e, "roedeer", y - 1), run = (x - in) * 1000 / 29;  // its bounds at 29 px/s
+  place("roedeer", 0, in, y - 1, R"(
+    clip run
+    move x - 1, y - 1 over run
+    wait run
+    clip graze
+    move x, y
+    wait rounds 2
+    flip x
+    clip run
+    move x - 1, y - 1
+    move in, y - 1 over run
+    wait run
+    end
+  )",
+        {{"x", x}, {"y", y}, {"run", run}, {"in", in}}, {.depth = D_NEAR_ON});
+  return (uint32_t) (2 * run + 2 * ms_of("roedeer", "graze"));
 }
 
 // Now and then at dusk a moose comes along the meadow from off one side, grazes a while in front of the cabin, in the
@@ -217,11 +271,8 @@ inline void moose(const Scene &s) {
     visitors(minutes(9), minutes(1, 6), 1, [e](int) { return roe_deer(e); });
   int graze = std::clamp<int>(s.cabin_x - 51, DATE_R, GAP_R - 62);  // the 62 px it takes, centred on the cabin
   NearHill h(s);
-  sometimes(minutes(12), (uint32_t) rnd(20000, 240000), [=] {
-    int x0 = chance(0.5f) ? W + 2 : -26;
-    moose_visit(0, h, x0, graze);
-    return (uint32_t) (abs(graze - x0) * 2000 / 3 + 24000);  // its walks and the grazing, about
-  });
+  sometimes(minutes(12), (uint32_t) rnd(20000, 240000),
+            [=] { return moose_visit(h, chance(0.5f) ? W + 2 : -26, graze); });
 }
 
 // Three reindeer, each in its own patch of the meadow along the bottom, in front of everything and under the
@@ -243,50 +294,49 @@ inline Herd herd(const Scene &s) {
   }
   return h;
 }
-// They graze their way about their patches, faded in over fade ms
-inline void graze(const Herd &h, int fade = -1) {
+// Each grazes its way about its patch, in frames of its own
+inline void graze(const Herd &h) {
   in_light("reindeer");
-  for (int i = 0; i < 3; i++) {
-    place("reindeer", i, h.a[i] + (h.w - 15) / 2 + (int) rnd(-8, 8), h.y[i], {true, i * 2, fade});
-    area("reindeer", i, h.a[i], h.y[i] - 3, h.a[i] + h.w, h.y[i] + 15, "bounce", "bounce");
-    face("reindeer", i);
-    wander("reindeer", i, 1, 2.5f, 0, 180, 2000, 6000, 3000, 9000);
-  }
+  for (int i = 0; i < 3; i++)
+    place("reindeer", i, h.a[i] + (h.w - 15) / 2 + (int) rnd(-8, 8), h.y[i], R"(
+      area l, y - 3, l + w, y + 15 bounce
+      face 0 mirror level
+      wander 1, 2.5, 0, 180, 2000, 6000, 3000, 9000
+      frame f
+    )",
+          {{"l", h.a[i]}, {"y", h.y[i]}, {"w", h.w}, {"f", i * 2}});
 }
 
 // A hiker walks the meadow from the left while the reindeer are away, along row y in front of the cabin, down to
 // the bottom of the picture before the spruces and on under the temperatures, and the reindeer come back. The ms.
-inline uint32_t hike(const Herd &h, int y) {
-  for (int i = 0; i < 3; i++)
-    remove("reindeer", i, 3000);
+inline uint32_t hike(int y) {
   int bottom = TEMPS_BOT + 3, along = (190 + 14) * 1000 / 8, down = 2700, on = (W + 2 - 205) * 1000 / 8;
-  later(3000, [=] {
-    in_light("hiker");
-    place("hiker", 0, -14, y);
-    path("hiker", 0, {{190, y, along}, {205, bottom, down}, {W + 2, bottom, on}});
-  });
-  uint32_t t = 3000 + along + down + on;
-  later(t, [h] {
-    clear("hiker");
-    graze(h, 3000);
-  });
-  return t + 3000;
+  int walks = along + down + on;
+  for (int i = 0; i < 3; i++)
+    script("reindeer", i, "glide opacity 0 over 3000; frame f; wait 3000 + walks; glide opacity 100 over 3000",
+           {{"f", i * 2}, {"walks", walks}});
+  in_light("hiker");
+  place("hiker", 0, -14, y, "wait 3000\n" + path({{190, y, along}, {205, bottom, down}, {W + 2, bottom, on}}) + "end");
+  return (uint32_t) (3000 + walks + 3000);
 }
 
 // A pair of ptarmigan, n for winter or summer, walk and peck about the meadow a while from row top, their walks in
-// step with their frames. The ms they're there.
+// step with their frames, the second a little after the first. The ms they're there.
 inline uint32_t ptarmigan(const char *n, int top) {
   in_light(n);
-  int walk = ms_of(n, 0, 8), peck = ms_of(n, 8), l = DATE_R + 2, r = 206;
+  int l = DATE_R + 2, r = 206;
   for (int i = 0; i < 2; i++)
-    later(i * 600, [=] {
-      place(n, i, (int) rnd((float) l, (float) (r - 7)), (int) rnd((float) (top - 2), (float) (top + 4)),
-            {true, 0, 1500});
-      area(n, i, l, top - 2, r, top + 10, "bounce", "bounce");
-      face(n, i);
-      wander(n, i, 2.8f, 2.8f, 0, 180, walk, walk, peck, peck);
-    });
-  return gone_later(90000, n, 1500);
+    place(n, i, (int) rnd((float) l, (float) (r - 7)),
+          (int) rnd((float) (top - 2), (float) (top + 4)), std::string(i ? "glide opacity 0\n" : "") + R"(
+            area l, top - 2, r, top + 10 bounce
+            face 0 mirror level
+            wait after
+            frame 0
+            wander 2.8, 2.8, 0, 180, walk, walk, peck, peck
+          )" + (i ? "glide opacity 100 over 1500\n" : "") + "wait 90000 - after\nend",
+          {{"l", l}, {"r", r}, {"top", top}, {"after", 600 * i}, {"walk", ms_of(n, 0, 8)}, {"peck", ms_of(n, 8)}},
+          {.fade = 1500});
+  return 90000;
 }
 
 // Three reindeer grazing their way about, now and then away while a hiker walks by, a pair of ptarmigan in front
@@ -296,7 +346,7 @@ inline void reindeer(const Scene &s) {
   graze(h);
   int y = s.cabin_y + 2, top = std::min(s.cabin_y + 20, H - 12);
   visitors(minutes(8), minutes(1, 6), 2,
-           [=](int k) { return k ? ptarmigan(s.at.white ? "ptarmiganw" : "ptarmigan", top) : hike(h, y); });
+           [=](int k) { return k ? ptarmigan(s.at.white ? "ptarmiganw" : "ptarmigan", top) : hike(y); });
   sometimes(minutes(10), minutes(1, 8), [] { return soar("eagle", 42, 40, 10); });
 }
 
@@ -306,15 +356,12 @@ inline uint32_t kick_sled(int y) {
   in_light("kicksled");
   bool left = chance(0.5f);
   int bottom = TEMPS_BOT + 3, along = (150 + 14) * 1000 / 14, down = 3600, on = (W + 2 - 200) * 1000 / 14;
-  uint32_t t;
-  if (left) {
-    place_flipped("kicksled", 0, W + 2, bottom, true);
-    t = path("kicksled", 0, {{200, bottom, on}, {150, y, down}, {-14, y, along}});
-  } else {
-    place("kicksled", 0, -14, y);
-    t = path("kicksled", 0, {{150, y, along}, {200, bottom, down}, {W + 2, bottom, on}});
-  }
-  return gone_later(t, "kicksled");
+  if (left)
+    place("kicksled", 0, W + 2, bottom, path({{200, bottom, on}, {150, y, down}, {-14, y, along}}) + "end", {},
+          {.left = true});
+  else
+    place("kicksled", 0, -14, y, path({{150, y, along}, {200, bottom, down}, {W + 2, bottom, on}}) + "end");
+  return (uint32_t) (along + down + on);
 }
 
 // Two children on a sledge down the near hill from its top left of the cabin to the meadow in front of it, quicker
@@ -322,26 +369,35 @@ inline uint32_t kick_sled(int y) {
 inline uint32_t sledge(const NearHill &h) {
   in_light("sledge");
   int x = GAP_L, y = h.at(x + 5) - 8;
-  place("sledge", 0, x, y);
-  path("sledge", 0, {{x + 41, y + 21, 2600, "in"}, {x + 61, y + 30, 900}, {x + 73, y + 33, 1800, "out"}});
-  return gone_later(8000, "sledge", 1500);
+  place("sledge", 0, x, y,
+        path({{x + 41, y + 21, 2600, "in"}, {x + 61, y + 30, 900}, {x + 73, y + 33, 1800, "out"}}) +
+            "wait 2700\nend fade 1500");
+  return 9500;
 }
 
 // A mountain hare hops out of the forest at its edge e, sits up a while, ears up, and hops back in. The ms it takes.
 inline uint32_t hare_out(const NearHill &h, Edge e) {
   in_light("harew");
-  in_light("haresitw");
-  int x0 = out_of(e, "harew", h.at(e.tx) - 4), x1 = e.x + 19, sit = 2 * ms_of("haresitw") - STEP;
-  uint32_t t = amble_ms(h, x0, x1, 7, 5, 4, 0, 16);
-  return set_off("harew", "haresitw", 2 * t + sit, [=] {
-    place("harew", 0, x0, h.at(x0 + 5) - 4, {.depth = D_NEAR_ON});
-    amble("harew", 0, h, x0, x1, 7, 5, 4, 0, 16);
-    later(t, [=] { swap("harew", 0, "haresitw", x1, h.at(x1 + 3) - 7, true); });
-    later(t + sit, [=] {
-      swap_flipped("haresitw", 0, "harew", x1, h.at(x1 + 5) - 4, true);
-      amble("harew", 0, h, flip_x("harew", x1, true), flip_x("harew", x0, true), 7, 5, 4, 0, 16);
-    });
-  });
+  int x0 = out_of(e, "harew", h.at(e.tx) - 4), x1 = e.x + 19;
+  Walk w = walk(h, x0, x1, 7, 5, 4, 0, 16);
+  place("harew", 0, x0, w.y[0], R"(
+    clip hop
+    b = n; d = 1; t = leg
+  )" + w.loop("go") + R"(
+    if k == 0 goto gone
+    clip sit
+    move x1, sy
+    wait rounds 2
+    flip x
+    clip hop
+    move x1, v
+    b = 0; d = -1
+    goto go
+  gone:
+    end
+  )",
+        {{"n", w.n}, {"leg", w.leg(7)}, {"x1", x1}, {"sy", h.at(x1 + 3) - 7}}, {.depth = D_NEAR_ON});
+  return (uint32_t) (2 * w.n * w.leg(7) + 2 * ms_of("harew", "sit"));
 }
 
 // Now and then a skier along the near hill, quicker downhill, more often at weekends. And snow slips off the
@@ -353,9 +409,9 @@ inline void skier(const Scene &s) {
   bool weekend = s.at.weekday == 0 || s.at.weekday == 6;
   sometimes(minutes(weekend ? 10 : 30), minutes(0.5f, 4), [=] {
     bool from_right = chance(0.5f);
-    int x0 = from_right ? W + 2 : -16;
-    place_flipped("skier", 0, x0, h.at(x0 + 7) - 6, from_right);
-    return remove_later(amble("skier", 0, h, x0, from_right ? -16 : W + 2, 8, 7, 6, 2), "skier", 0);
+    Walk w = walk(h, from_right ? W + 2 : -16, from_right ? -16 : W + 2, 8, 7, 6, 2);
+    place("skier", 0, w.x0, w.y[0], "b = n; d = 1\n" + w.loop("go") + "end", {{"n", w.n}}, {.left = from_right});
+    return (uint32_t) w.all();
   });
   struct End {
     int16_t x, y;
@@ -391,8 +447,8 @@ inline void skier(const Scene &s) {
   if (n)
     sometimes(minutes(2), (uint32_t) rnd(10000, 60000), [=] {
       End e = ends[(int) rnd(0, (float) n)];
-      place_flipped("snowdrop", 0, e.x, e.y, e.left, {true});
-      return remove_later(30000, "snowdrop", 0, 4000);
+      place("snowdrop", 0, e.x, e.y, "frame 0; wait 30000; end fade 4000", {}, {.left = e.left});
+      return 30000u;
     });
   if (!s.cabin)
     return;
@@ -413,14 +469,15 @@ inline void skier(const Scene &s) {
 // Two swallows swoop low over the meadow from row top, quick and in curves, a while. The ms they're about.
 inline uint32_t swallows(int top) {
   in_light("swallow");
-  for (int i = 0; i < 2; i++) {
-    place("swallow", i, i ? W + 2 : -15, top + 4 + 4 * i, {i > 0, 7 * i});
-    area("swallow", i, -16, top + 4, W + 16, top + 15, "bounce", "bounce");
-    face("swallow", i);
-    wander("swallow", i, 50, 70, i ? 180 : 0, 30, 1500, 3000, 0, 0);
-    wave("swallow", i, "y", -6, 6, 800, 900, 0, 0, 30, true, "both");
-  }
-  return gone_later(40000, "swallow");
+  for (int i = 0; i < 2; i++)
+    place("swallow", i, i ? W + 2 : -15, top + 4 + 4 * i, std::string(R"(
+      area -16, top + 4, 336, top + 15 bounce
+      face 0 mirror level
+      wander 50, 70, heading, 30, 1500, 3000, 0, 0
+      wave y -6, 6, 800, 900 jitter 30 random slow both
+    )") + (i ? "frame 7\n" : "") + "wait 40000\nend",
+          {{"top", top}, {"heading", i ? 180 : 0}});
+  return 40000;
 }
 
 // Someone mows the lawn in front of the cabin from row y, in strips to and fro across the gap between the clock and
@@ -429,14 +486,13 @@ inline uint32_t mow(int y) {
   in_light("mower");
   int l = GAP_L, r = GAP_R - 23, strips = 4, step = std::clamp((H - 14 - y) / strips, 0, 3);
   int leg = (r - l) * 1000 / 6;
-  place("mower", 0, l, y, {true, 0, 1000});
-  for (int k = 0; k < strips; k++)
-    later(k * leg, [=] {
-      bool back = k % 2;
-      flip("mower", 0, back, false);
-      move("mower", 0, flip_x("mower", back ? l : r, back), y + (k + 1) * step, leg);
-    });
-  return gone_later(strips * leg, "mower", 1000);
+  std::string t = "frame 0\n";
+  for (int k = 0; k < strips; k++) {
+    bool back = k % 2;
+    t += std::string("flip ") + (back ? "x" : "none") + "\n" + path({{back ? l : r, y + (k + 1) * step, leg}});
+  }
+  place("mower", 0, l, y, t + "end", {}, {.fade = 1000});
+  return (uint32_t) (strips * leg);
 }
 
 // Three sheep grazing on the middle hill's face for the while the show's on, shifting a little now and then, but
@@ -447,9 +503,8 @@ inline void sheep(const Scene &s) {
     return;
   int y = (mid + near) / 2 - 3;
   in_light("sheep");
-  place("sheep", 0, x, y, {false, 0, 2000, D_MID_ON});
-  area("sheep", 0, x - 4, y, x + 33, y + 6, "bounce", "bounce");
-  wander("sheep", 0, 0.3f, 0.3f, 0, 180, 3000, 3000, 6000, 12000);
+  place("sheep", 0, x, y, "area x - 4, y, x + 33, y + 6 bounce; wander 0.3, 0.3, 0, 180, 3000, 3000, 6000, 12000",
+        {{"x", x}, {"y", y}}, {.fade = 2000, .depth = D_MID_ON});
 }
 
 // Two small tortoiseshells and a brimstone over the meadow in front of home, under the near hill's top and between
@@ -458,15 +513,22 @@ inline void sheep(const Scene &s) {
 inline void butterflies(const Scene &s) {
   int l = DATE_R + 2, r = GAP_R - 2;
   int top = std::max(s.cabin_y + 1, hill_low(s, l, r) + 3), bot = std::min(H - 2, top + 28);
-  for (int k = 0; k < 3; k++) {
+  for (int k = 0; k < 3; k++) {  // a little after one another
     const char *n = k < 2 ? "butterfly" : "brimstone";
-    int i = k & 1, x = l + (r - l) * (2 * k + 1) / 6, y = (int) rnd(top, bot - 6);
-    later(k * 2300, [=] {
-      int fly = ms_of(n, 0, 24), sit = ms_of(n, 24);  // its 24 fluttering frames, then sitting
-      place(n, i, x, y, {true});
-      area(n, i, l, top, r, bot, "bounce", "bounce");
-      wander(n, i, 4, 8, 0, 180, fly, fly, sit, sit);
-    });
+    place(n, k & 1, l + (r - l) * (2 * k + 1) / 6, (int) rnd(top, bot - 6),
+          std::string(k ? "glide opacity 0\n" : "") + R"(
+      area l, top, r, bot bounce
+      wait after
+      frame 0
+      wander 4, 8, 0, 180, fly, fly, sit, sit
+    )" + (k ? "glide opacity 100 over 300" : ""),
+          {{"l", l},
+           {"top", top},
+           {"r", r},
+           {"bot", bot},
+           {"after", k * 2300},
+           {"fly", ms_of(n, 0, 24)},
+           {"sit", ms_of(n, 24)}});  // its 24 fluttering frames, then sitting
   }
   sheep(s);
   bool lawn = s.cabin;
@@ -474,41 +536,33 @@ inline void butterflies(const Scene &s) {
   visitors(minutes(6), minutes(1, 5), 2, [=](int k) -> uint32_t { return k ? (lawn ? mow(y) : 0) : swallows(low); });
 }
 
-// Leaf i lies on the grass at x, y, and a gust now and then tumbles it along, low, in rows top to bot. 3 fell, and
-// takes the falling one's place.
-inline void leaf_lies(int i, int x, int y, int top, int bot, int heading) {
-  if (i == 3)
-    swap("leaffall", i, "leaf", x, y, true);
-  else
-    place("leaf", i, x, y, {true});
-  int roll = ms_of("leaf", 0, 8), lie = ms_of("leaf", 8);  // its 8 tumbling frames, then lying
-  area("leaf", i, -6, top, W + 6, bot, "cross", "bounce");
-  wander("leaf", i, 2, 4, heading, 25, roll, roll, lie, lie);
-}
+// A leaf lies on the grass and a gust now and then tumbles it along, low, in rows top to bot, its tumbles in step
+// with its 8 tumbling frames
+inline const char *const LEAF = R"(
+  area -6, top, 326, bot cross bounce
+  wander 2, 4, heading, 25, roll, roll, lie, lie
+)";
 
 // Someone out picking mushrooms along the near hill's top from x0 behind the spruce at the forest's edge toward the
 // cabin: two strides and a chanterelle picked, twice, then back into the trees. The ms it takes.
 inline uint32_t mushrooms(const NearHill &h, int x0) {
   in_light("mushroomer");
-  int walk = ms_of("mushroomer", 0, 16), round = ms_of("mushroomer");
-  return set_off("mushroomer", nullptr, 3 * round + walk, [=] {
-    place("mushroomer", 0, x0, h.at(x0 + 6) - 8, {.own = true, .depth = D_NEAR_ON});
-    for (int k = 0; k < 4; k++)
-      later(k * round, [=] {
-        bool back = k >= 2;
-        int to = back ? x0 + 13 * (3 - k) : x0 + 13 * (k + 1);
-        flip("mushroomer", 0, back, false);
-        move("mushroomer", 0, flip_x("mushroomer", to, back), h.at(to + 6) - 8, walk);
-      });
-  });
+  std::string t = "frame 0\n";
+  for (int k = 0; k < 4; k++) {
+    bool back = k >= 2;
+    int to = back ? x0 + 13 * (3 - k) : x0 + 13 * (k + 1);
+    t += std::string(k == 2 ? "flip x\n" : "") + "move " + num(to) + ", " + num(h.at(to + 6) - 8) + " over walk\n" +
+         (k < 3 ? "wait rounds 1\n" : "wait walk\nend");
+  }
+  place("mushroomer", 0, x0, h.at(x0 + 6) - 8, t, {{"walk", ms_of("mushroomer", 0, 16)}}, {.depth = D_NEAR_ON});
+  return (uint32_t) (3 * ms_of("mushroomer") + ms_of("mushroomer", 0, 16));
 }
 
 // A red squirrel bounds along the meadow at row y from off one side, sits up a while in the gap nibbling a nut, and
 // bounds on or back the way it came. The ms it takes.
 inline uint32_t squirrel_by(int y) {
   in_light("squirrel");
-  in_light("squirrelnut");
-  return stop_by("squirrel", "squirrelnut", (DATE_R + GAP_R) / 2 + (int) rnd(-15, 15), y, 3, 14);
+  return stop_by("squirrel", "run", "nut", (DATE_R + GAP_R) / 2 + (int) rnd(-15, 15), y, 3, 14);
 }
 
 // Birch leaves lie on the grass and now and then a gust tumbles them along, low, a few px/s. About every minute
@@ -517,9 +571,19 @@ inline uint32_t squirrel_by(int y) {
 inline void leaves(const Scene &s) {
   int top = hill_low(s, 0, W) + 2;  // under the near hill's top all the way across
   int bot = std::min(H - 2, top + 26), heading = s.at.wdir < 0 ? 180 : 0, wdir = s.at.wdir;
-  auto lie = [=](uint32_t at, int i, int x, int y) { later(at, [=] { leaf_lies(i, x, y, top, bot, heading); }); };
-  for (int i = 0; i < 3; i++)
-    lie(i * 2700, i, 50 + i * 100 + (int) rnd(-12, 12), (int) rnd(top, bot - 6));
+  overlay::Consts leaf = {{"top", top},
+                          {"bot", bot},
+                          {"heading", heading},
+                          {"roll", ms_of("leaf", 0, 8)},
+                          {"lie", ms_of("leaf", 8)}};  // its 8 tumbling frames, then lying
+  for (int i = 0; i < 3; i++) {                        // a little after one another
+    overlay::Consts k = leaf;
+    k["after"] = i * 2700;
+    place("leaf", i, 50 + i * 100 + (int) rnd(-12, 12), (int) rnd(top, bot - 6),
+          std::string(i ? "glide opacity 0\n" : "") + "wait after\nframe 0\n" + LEAF +
+              (i ? "glide opacity 100 over 300" : ""),
+          k);
+  }
   struct Birch {
     int16_t x, top, h, rx;
   } birches[6];
@@ -529,28 +593,37 @@ inline void leaves(const Scene &s) {
       Crown c = crown_of(s, i);
       birches[n++] = {s.tree[i].x, s.tree[i].top, (int16_t) c.rows, (int16_t) c.rx};
     }
+  // Copies 3 and 4 take turns: one falls while the gust takes the last one off, so there's room for the flag and
+  // a visitor
   if (n)
-    sometimes(minutes(1), (uint32_t) rnd(5000, 30000), [=] {
+    sometimes(minutes(1), (uint32_t) rnd(5000, 30000), [=, falls = 3]() mutable {
       static constexpr int FALL = 9000, AWAY = 6000;
       Birch c = birches[(int) rnd(0, (float) n)];
       int x0 = c.x - 3 + (int) rnd(1 - c.rx, (float) c.rx), y0 = c.top + (int) rnd(1, c.h * 0.6f);
       int x1 = std::clamp(x0 + wdir * (int) rnd(18, 30), -2, W - 4), y1 = (int) rnd(top, bot - 6);
-      if (overlay::copy_for(key("leaf"), 3).second) {  // the last one off, so there's room for the flag and a visitor
-        move("leaf", 3, wdir < 0 ? -10 : W + 4, top, AWAY, "in");
-        remove_later(AWAY, "leaf", 3, 0);
-      }
-      place("leaffall", 3, x0, y0, {true});
-      move("leaffall", 3, x1, y1, FALL);
-      lie(FALL, 3, x1, y1);
+      script("leaf", falls, "move off, top over away ease in; wait away; end fade 0",
+             {{"off", wdir < 0 ? -10 : W + 4}, {"top", top}, {"away", AWAY}});
+      falls = 7 - falls;
+      overlay::Consts k = leaf;
+      k.insert({{"x1", x1}, {"y1", y1}, {"fall", FALL}});
+      place("leaf", falls, x0, y0, std::string(R"(
+        clip 0 to 7
+        rate 125
+        move x1, y1 over fall
+        wait fall
+        rate 100
+        clip 0 to 8
+      )") + LEAF,
+            k);
       return (uint32_t) FALL;
     });
   sometimes(minutes(15), minutes(1, 10), [] {
-    place("geese", 0, -30, 30);
-    glide("geese", 0, "opacity", 70, 0);
-    wave("geese", 0, "y", -2, 2, 6000, 6000, 0, 0, 20, false, "both");
-    for (int k = 1; k <= 4; k++)  // a move takes 65 s at most
-      move_later((k - 1) * 35000, "geese", 0, -30 + (W + 40) * k / 4, 30 - 2 * k, 35000);
-    return remove_later(140000, "geese", 0);
+    std::initializer_list<Leg> legs = {{-30 + (W + 40) / 4, 28, 35000},
+                                       {-30 + (W + 40) / 2, 26, 35000},
+                                       {-30 + (W + 40) * 3 / 4, 24, 35000},
+                                       {W + 10, 22, 35000}};
+    place("geese", 0, -30, 30, "glide opacity 70\nwave y -2, 2, 6000, 6000 jitter 20 slow both\n" + path(legs) + "end");
+    return (uint32_t) path_ms(legs);
   });
   NearHill h(s);
   Edge edge = forest_edge(s);

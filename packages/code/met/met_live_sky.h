@@ -41,13 +41,11 @@ struct Sky {
 inline Sky SKY;
 
 // Drifts copy 0 of name, w wide, from x at vx px/s round the scene's field of clouds, so it goes out at one edge
-// and comes back at the other the way row() wraps them
-inline void field_drift(const std::string &name, int x, int y, int w, float vx) {
+// and comes back at the other the way row() wraps them, doing what also says too
+inline void field_drift(const std::string &name, int x, int y, int w, float vx, const std::string &also = "") {
   int lo = (w - (FIELD - W)) / 2, hi = lo + FIELD - w;  // off the screen at both edges, FIELD apart
   int at = lo - w + ((x - lo + w) % FIELD + FIELD) % FIELD;
-  place(name, 0, at, y);
-  area(name, 0, lo, 0, hi, H, "cross", "screen");
-  drift(name, 0, vx, 0);
+  place(name, 0, at, y, also + "\narea lo, 0, hi, 240 cross screen; drift vx, 0", {{"lo", lo}, {"hi", hi}, {"vx", vx}});
 }
 
 // ---- rain and snow
@@ -106,13 +104,10 @@ inline Frames prec_tile(const Scene &s, int room) {
 // moved: they're there, and go to where the clouds are now.
 inline void prec_place(const Scene &s, bool moved) {
   for (int i = 0; i < SKY.tiles; i++) {
-    if (moved) {
-      move("prec", i, i * SKY.tw, tile_top(s, i), 0);
-      continue;
-    }
-    place("prec", i, i * SKY.tw, tile_top(s, i));
-    if (i % 2 && !SKY.slant)
-      flip("prec", i, true, false);
+    if (moved)
+      script("prec", i, "move " + num(i * SKY.tw) + ", " + num(tile_top(s, i)));
+    else
+      place("prec", i, i * SKY.tw, tile_top(s, i), "", {}, {.left = i % 2 && !SKY.slant});
   }
 }
 
@@ -143,24 +138,26 @@ inline int bolt_bytes(const Scene &s) {
 }
 
 // The bolt flashes out of the cloud and goes. It's made again each time, so its frames start from the first, and
-// the pool has its room only while it flashes. The ms it takes.
+// the pool has its room only while it flashes, see come(). The ms it takes.
 inline uint32_t flash() {
-  int x, y;
-  unload("bolt");
-  Frames b = bolt(SKY.bolt_x, SKY.bolt_y, (int) std::size(SKY.bolt_x), &x, &y);
-  auto whole = b.draw;
-  b.draw = [whole, x, y, w = b.w, h = b.h](int f, const Canvas &c) {  // behind the town and the land, like the scene's
-    whole(f, c);
-    for (int yy = 0; yy < h; yy++)
-      for (int xx = 0; xx < w; xx++)
-        if (y + yy >= SKY.top[std::clamp(x + xx, 0, W - 1)])
-          c.px[yy * c.w + xx] = 0;
-  };
-  add("bolt", std::move(b));
-  place("bolt", 0, x, y, {false, 0, 0});
-  rounds("bolt", 0, 1);
-  later(15000, [] { unload("bolt"); });
-  return (uint32_t) ms_of("bolt");
+  return come(
+      [] {
+        int x, y;
+        unload("bolt");
+        Frames b = bolt(SKY.bolt_x, SKY.bolt_y, (int) std::size(SKY.bolt_x), &x, &y);
+        auto whole = b.draw;
+        b.draw = [whole, x, y, w = b.w, h = b.h](int f, const Canvas &c) {  // behind the town and the land
+          whole(f, c);
+          for (int yy = 0; yy < h; yy++)
+            for (int xx = 0; xx < w; xx++)
+              if (y + yy >= SKY.top[std::clamp(x + xx, 0, W - 1)])
+                c.px[yy * c.w + xx] = 0;
+        };
+        add("bolt", std::move(b));
+        place("bolt", 0, x, y, "wait rounds 1; end", {}, {.fade = 0});
+        return (uint32_t) ms_of("bolt");
+      },
+      ON_PANEL);
 }
 
 // The pool's bytes for the tiles: less the bolt's in thunder, and in a gale RARE_BYTES for something blowing by
@@ -318,9 +315,8 @@ inline void northern_lights(const Scene &s) {
       ahead += o.w && o.x < b[k].x;
     std::string name = "aur" + std::to_string(n++);
     add(name, aur_patch(s, k == 3, b[k]));
-    place(name, 0, b[k].x, b[k].y);
-    later((uint32_t) (ahead * 1400 + 300),
-          [name] { wave(name, 0, "opacity", 15, 100, 7000, 7000, 1500, 1500, 0, false, "both"); });
+    place(name, 0, b[k].x, b[k].y, "wait after; wave opacity 15, 100, 7000, 7000 hold 1500, 1500 slow both",
+          {{"after", ahead * 1400 + 300}});
   }
 }
 
@@ -335,9 +331,8 @@ inline uint32_t shoot() {
   if (!c[0])
     return 0;
   int x = c[2] > 0 ? c[0] : c[0] + 40;  // the box from its start to where it goes out
-  place_flipped("shooting", 0, x, c[1], c[2] < 0, {true, 0, 0});
-  rounds("shooting", 0, 1);
-  move("shooting", 0, x + c[2] * 40, c[1] + 15, 490);
+  place("shooting", 0, x, c[1], "frame 0; move x, y over 490; wait rounds 1; end",
+        {{"x", x + c[2] * 40}, {"y", c[1] + 15}}, {.left = c[2] < 0, .fade = 0});
   return 490;
 }
 
@@ -366,10 +361,9 @@ inline uint32_t satellite() {
   if (SKY.sat < 0)
     return 0;
   uint32_t ms = (W + 6) * 1000 / 4;
-  place("satellite", 0, -3, SKY.sat, {true});
-  rounds("satellite", 0, 1);
-  move("satellite", 0, W + 3, SKY.sat - SKY.sat_dy, (int) ms);
-  return gone_later(ms, "satellite");
+  place("satellite", 0, -3, SKY.sat, "frame 0; move 323, y over ms; wait rounds 1; end",
+        {{"y", SKY.sat - SKY.sat_dy}, {"ms", ms}});
+  return ms;
 }
 
 // The sky turns: the stars sparkle where they are now, and shooting stars and satellites go where it's clear now
@@ -450,9 +444,8 @@ inline void drift_clouds(const Scene &s, bool high) {
     std::string name = "cloud" + std::to_string(k++);
     add(name, std::move(sp));
     float v = l == 1 ? 0.5f : l == 2 ? 0.9f : std::clamp(1 + (s.cloud[i].base - 24) / 44.0f, 1.0f, 2.0f);
-    field_drift(name, x, y, w, s.at.wdir * v);
-    if (high)
-      wave(name, 0, "opacity", 55, 100, 9000, 11000, 5000, 3000, 40, true, "both");
+    field_drift(name, x, y, w, s.at.wdir * v,
+                high ? "wave opacity 55, 100, 9000, 11000 hold 5000, 3000 jitter 40 random slow both" : "");
   }
 }
 
@@ -482,12 +475,12 @@ inline void valley_fog(const Scene &s) {
   for (int i = 0; i < 4; i++) {
     std::string name = i < 2 ? "fog0" : "fog1";
     int k = i % 2, h = i < 2 ? 12 : 9, y = (i < 2 && thick ? edge[1] : edge[0] + (i < 2) * 3) - h + 4;
-    place(name, k, AT[i] * W / 8 - (i < 2 ? 55 : 38), y, {.depth = i < 2 && thick ? D_MID_ON : D_SEA});
-    if (k)
-      flip(name, k, true, false);
-    area(name, k, -130, 0, 450, H, "cross", "screen");
-    drift(name, k, s.at.wdir * V[i], 0);
-    wave(name, k, "opacity", 50, 90, 14000, 16000, 6000, 8000, 40, true, "both");
+    place(name, k, AT[i] * W / 8 - (i < 2 ? 55 : 38), y, R"(
+      area -130, 0, 450, 240 cross screen
+      drift vx, 0
+      wave opacity 50, 90, 14000, 16000 hold 6000, 8000 jitter 40 random slow both
+    )",
+          {{"vx", s.at.wdir * V[i]}}, {.left = k == 1, .depth = (uint8_t) (i < 2 && thick ? D_MID_ON : D_SEA)});
   }
 }
 

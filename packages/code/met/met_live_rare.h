@@ -133,7 +133,6 @@ inline void rare_seen(const Scene &s) {
 inline void rare_off() {
   if (!R.rare.empty())
     unload(R.rare);
-  R.rare.clear();
 }
 
 // Whether the panel has room for one more animation for ms: a slot and a place, RARE_BYTES of the pool, nothing
@@ -161,27 +160,12 @@ inline bool rare_room(uint32_t ms) {
   return true;
 }
 
-// fn once n is on the panel, its copy placed and its frames started, so what it does starts from there. It's
-// called off if that takes RARE_WAIT.
-inline void when_on(const std::string &n, std::function<void()> fn, uint32_t waited = 0) {
-  if (R.rare != n)
-    return;  // gone meanwhile
-  const overlay::Overlay *a = overlay::find(key(n));
-  if (a && a->state == overlay::SENT) {
-    fn();
-  } else if (!a || a->state == overlay::FAILED || waited >= RARE_WAIT) {
-    rare_off();
-  } else {
-    later(STEP, [=] { when_on(n, fn, waited + STEP); });
-  }
-}
-
-// The encounter's sprite n, in the light there is, placed where it starts, facing left if left
-inline void rare_on(const char *n, float light, int x, int y, How o = {}, bool left = false) {
-  Frames sp;
-  make_sprite(n, sp);
-  add(n, dimmed(std::move(sp), light));
-  place_flipped(n, 0, x, y, left, o);
+// The encounter's sprite n, in the light there is but never darker than least, placed where it starts doing what
+// script says
+inline void rare_on(const char *n, float least, int x, int y, const std::string &script, const overlay::Consts &k = {},
+                    How o = {}) {
+  in_light(n, least);
+  place(n, 0, x, y, script, k, o);
   R.rare = n;
 }
 // The x behind the forest's edge spruce that has the encounter's sprite n all out of sight, its top dy above the
@@ -190,29 +174,23 @@ inline int in_forest(const Seen &e, const char *n, int dy) {
   Frames sp;
   return e.edge.x >= 0 && make_sprite(n, sp) ? e.edge.hide(sp.w, sp.h, e.hill.at(e.edge.tx) - dy + sp.h - 1) : -1;
 }
-// The encounter n fades out over fade ms from at ms on, and it's over
-inline void rare_end(const char *n, uint32_t at, int fade) {
-  later(at, [n, fade] { remove(n, 0, fade); });
-  later(at + (uint32_t) fade + 200, rare_off);
-}
 
 // Copy 0 of the encounter's sprite n, w wide, along the open water off the coast at speed px/s, its top above
-// rows over the water's, out of nowhere and back into it, most px at most and clear of the skerries
-inline void on_the_water(const char *n, int w, int above, float speed, int most, float light) {
+// rows over the water's, out of nowhere and back into it, most px at most and clear of the skerries. With a round
+// it's gone at the end of a round of its frames.
+inline void on_the_water(const char *n, int w, int above, float speed, int most, float least, bool round = false) {
   const Seen &e = SEEN;
   bool left = chance(0.5f);
   int span = e.sea_r - e.sea_l - w - 2, len = std::min(span, most),
       a = e.sea_l + 1 + (int) rnd(0, (float) (span - len));
   int x0 = left ? a + len : a, x1 = left ? a : a + len, y = e.sea_y - above, ms = (int) ((float) len * 1000 / speed);
-  rare_on(n, light, x0, y, {false, 0, 2500, D_SEA}, left);
-  when_on(n, [=] {
-    move(n, 0, flip_x(n, x1, left), y, ms);
-    rare_end(n, (uint32_t) ms, 3000);
-  });
+  rare_on(n, least, x0, y,
+          std::string("move x1, y over ms\n") + (round ? "wait rounds 1\nend" : "wait ms\nend fade 3000"),
+          {{"x1", x1}, {"y", y}, {"ms", ms}}, {.left = left, .fade = 2500, .depth = D_SEA});
 }
 
 // n blows across the sky with the wind, rising or dropping a little in each of three gusts, turning at turn degrees a
-// second. It crosses in one glide so it never stops, whenever the gusts get to the panel.
+// second. It crosses in one glide so it never stops.
 inline void blown(const char *n, float turn) {
   const Seen &e = SEEN;
   const Frames *sp = frames_of(n);
@@ -220,16 +198,12 @@ inline void blown(const char *n, float turn) {
   int x0 = d > 0 ? -w - 2 : W + 2, x1 = d > 0 ? W + 2 : -w - 2;
   float v = 30 + 2.5f * std::max(e.at.wind, e.at.gust * 0.7f);  // px/s
   int gust = (int) ((float) (W + w + 4) * 1000 / v / 3);
-  rare_on(n, std::max(e.at.light, 0.5f), x0, y, {false, 0, 0});
-  when_on(n, [=] {
-    spin(n, 0, turn * (float) d);
-    glide(n, 0, "x", x1, 3 * gust);
-    for (int k = 0, yy = y; k < 3; k++) {
-      yy = std::clamp(yy + (int) rnd(-24, 24), lo, hi);
-      later((uint32_t) (k * gust), [=] { glide(n, 0, "y", yy, gust, "both"); });
-    }
-    later((uint32_t) (3 * gust), rare_off);
-  });
+  std::string t = "spin turn\nglide x x1 over 3 * gust\n";
+  for (int k = 0, yy = y; k < 3; k++) {
+    yy = std::clamp(yy + (int) rnd(-24, 24), lo, hi);
+    t += "glide y " + num(yy) + " over gust ease both\nwait gust\n";
+  }
+  rare_on(n, 0.5f, x0, y, t + "end", {{"turn", turn * (float) d}, {"x1", x1}, {"gust", gust}}, {.fade = 0});
 }
 
 // A flying saucer comes in from far off, stops over the cabin's roof, or over the hill away from the moon, looks a
@@ -247,118 +221,131 @@ inline void saucer() {
   }
   bool left = chance(0.5f);
   int y = std::max(e.top, base - 44), come = 2400;
-  rare_on("ufo", 1, left ? -40 : W + 20, e.top, {false, 0, 0});
-  rounds("ufo", 0, 1);
-  when_on("ufo", [=] {
-    glide("ufo", 0, "size", 30, 0);
-    glide("ufo", 0, "size", 100, come, "out");
-    path("ufo", 0, {{x, y, come, "out"}, {x, y - 2, 1000, "both"}, {x, y, 1000, "both"}});
-    later(ms_of("ufo", 0, 15) + 200, [=] {  // the beam's off
-      move("ufo", 0, left ? W + 30 : -50, -50, 700, "in");
-      glide("ufo", 0, "size", 40, 700, "in");
-    });
-    later(ms_of("ufo") + 400, rare_off);
-  });
+  rare_on("ufo", 1, left ? -40 : W + 20, e.top, R"(
+    glide size 30
+    glide size 100 over come ease out
+    move x, y over come ease out
+    wait come
+    move x, y - 2 over 1000 ease both
+    wait 1000
+    move x, y over 1000 ease both
+    wait beam                # till the beam's off
+    move away, -50 over 700 ease in
+    glide size 40 over 700 ease in
+    wait rounds 1
+    end
+  )",
+          {{"x", x},
+           {"y", y},
+           {"come", come},
+           {"beam", std::max(0, ms_of("ufo", 0, 15) + 200 - come - 1000)},
+           {"away", left ? W + 30 : -50}},
+          {.fade = 0});
 }
 
 // A sea serpent surfaces off the coast, swims along the open water at 3 px/s and goes under again
-inline void serpent() { on_the_water("serpent", 32, 8, 3, 150, std::max(SEEN.at.light, 0.5f)); }
+inline void serpent() { on_the_water("serpent", 32, 8, 3, 150, 0.5f); }
 
 // A Viking longship rows out of nowhere along the open water off the coast, and back into it, on a fresh day that
 // keeps the sailboat in
-inline void longship() { on_the_water("longship", 32, 16, 5, 160, SEEN.at.light); }
+inline void longship() { on_the_water("longship", 32, 16, 5, 160, 0); }
 
 // A troll plods along the ridge with the sun down, and is gone before the sun can catch it
 inline void troll() {
   const Seen &e = SEEN;
-  NearHill ridge = e.ridge;
   bool right = chance(0.5f);
   int span = e.ridge_r - e.ridge_l - 24, len = std::min(span, 100),
       a = e.ridge_l + 4 + (int) rnd(0, (float) (span - len));
   int x0 = right ? a : a + len, x1 = right ? a + len : a;
-  rare_on("troll", std::max(e.at.light, 0.5f), x0, ridge.at(x0 + 8) - 22, {false, 0, 2500}, !right);
-  when_on("troll", [=] { rare_end("troll", amble("troll", 0, ridge, x0, x1, 5, 8, 22), 2500); });
+  Walk w = walk(e.ridge, x0, x1, 5, 8, 22);
+  rare_on("troll", 0.5f, x0, w.y[0], "b = n; d = 1; t = leg\n" + w.loop("go") + "end", {{"n", w.n}, {"leg", w.leg(5)}},
+          {.left = !right, .fade = 2500});
 }
 
 // A wolf comes up onto the skyline under the full moon from behind the hill, howls at it twice and goes back down
 inline void wolf() {
   const Seen &e = SEEN;
   bool left = e.moon_x < e.den_x + 8;
-  int x = flip_x("wolf", e.den_x, left), y = e.den_y, under = y + 15, climb = 1500, all = ms_of("wolf");
-  rare_on("wolf", 1, e.den_x, under, {false, 0, 0, e.den_depth}, left);
-  when_on("wolf", [=] {
-    move("wolf", 0, x, y, climb, "out");
-    move_later((uint32_t) (climb + all), "wolf", 0, x, under, climb, "in");
-    later((uint32_t) (2 * climb + all), rare_off);
-  });
+  int climb = 1500;
+  rare_on("wolf", 1, e.den_x, e.den_y + 15, R"(
+    move x, y over climb ease out
+    wait climb + howls
+    move x, y + 15 over climb ease in
+    wait climb
+    end
+  )",
+          {{"x", e.den_x}, {"y", e.den_y}, {"climb", climb}, {"howls", ms_of("wolf")}},
+          {.left = left, .fade = 0, .depth = e.den_depth});
 }
 
 // A witch on her broomstick flies across the moon
 inline void witch() {
   Ride r = witch_ride(SEEN.moon_x, SEEN.moon_y, SEEN.top);
-  rare_on("witch", 1, r.x[0], r.y[0], {false, 0, 0}, r.x[3] < r.x[0]);
-  when_on("witch", [=] { later(ride("witch", r), rare_off); });
+  rare_on("witch", 1, r.x[0], r.y[0], r.text(), {}, {.left = r.left(), .fade = 0});
 }
 
 // The huldra stands at the forest's edge, her hair stirring, then turns and walks back into the trees, her cow's tail
 // showing under her dress, glancing back once, and is gone behind the spruce
 inline void huldra() {
   const Seen &e = SEEN;
-  int to = in_forest(e, "huldra", 10), x = to + 16, y = e.hill.at(x + 4) - 11, y1 = e.hill.at(e.edge.tx) - 10;
-  rare_on("huldra", std::max(e.at.light, 0.5f), x, y, {false, 0, 2000, D_NEAR_ON}, true);
-  rounds("huldra", 0, 1);
-  when_on("huldra", [=] {
-    int stand = ms_of("huldra", 0, 4), all = ms_of("huldra");
-    later(stand, [=] { move("huldra", 0, flip_x("huldra", to, true), y1, all - stand); });
-    rare_end("huldra", all, 0);
-  });
+  int to = in_forest(e, "huldra", 10), x = to + 16;
+  rare_on("huldra", 0.5f, x, e.hill.at(x + 4) - 11, R"(
+    wait stand
+    move to_x, to_y over walk
+    wait rounds 1
+    end fade 0
+  )",
+          {{"stand", ms_of("huldra", 0, 4)},
+           {"walk", ms_of("huldra", 4)},
+           {"to_x", to},
+           {"to_y", e.hill.at(e.edge.tx) - 10}},
+          {.left = true, .fade = 2000, .depth = D_NEAR_ON});
 }
 
 // A nisse walks along the snow below the cabin toward it with his lantern, stops to hold it up and look about, and
 // walks on up round the cabin's corner, out of sight, his feet on its floor's row
 inline void nisse() {
   const Seen &e = SEEN;
-  int x1 = e.roof_x - 15, y1 = e.roof_y + 18, x = x1 - 28, y = e.roof_y + 31;
-  int walk = ms_of("nisse", 0, 12), on = ms_of("nisse", 0, 17);
-  rare_on("nisse", std::max(e.at.light, 0.35f), x, y, {false, 0, 1500, D_NEAR_ON});
-  rounds("nisse", 0, 1);
-  when_on("nisse", [=] {
-    int all = ms_of("nisse");
-    move("nisse", 0, x + 13, y, walk);
-    move_later(on, "nisse", 0, x1, y1, all - on);
-    rare_end("nisse", all, 0);
-  });
+  int x1 = e.roof_x - 15, y1 = e.roof_y + 18, x = x1 - 28, y = e.roof_y + 31, on = ms_of("nisse", 0, 17);
+  rare_on("nisse", 0.35f, x, y, R"(
+    move x + 13, y over walk
+    wait on
+    move x1, y1 over rest
+    wait rounds 1
+    end fade 0
+  )",
+          {{"x", x},
+           {"y", y},
+           {"walk", ms_of("nisse", 0, 12)},
+           {"on", on},
+           {"x1", x1},
+           {"y1", y1},
+           {"rest", ms_of("nisse") - on}},
+          {.fade = 1500, .depth = D_NEAR_ON});
 }
 
 // Draugen rows his half boat along the open water on a windy night, rising and falling on the swell
-inline void draugen() { on_the_water("draugen", 12, 7, 2, 70, std::max(SEEN.at.light, 0.35f)); }
+inline void draugen() { on_the_water("draugen", 12, 7, 2, 70, 0.35f); }
 
-// Two orcas surface in turn off the coast in the north in winter, drifting along at 2 px/s
-inline void orcas() {
-  on_the_water("orcas", 24, 7, 2, ms_of("orcas") * 2 / 1000, std::max(SEEN.at.light, 0.5f));
-  rounds("orcas", 0, 1);
-}
+// Two orcas surface in turn off the coast in the north in winter, drifting along at 2 px/s, a round of their frames
+inline void orcas() { on_the_water("orcas", 24, 7, 2, ms_of("orcas") * 2 / 1000, 0.5f, true); }
 
 // A lynx walks out of the forest from behind the spruce at its edge along the near hill at twilight, stopping to look
-// at you and behind it, short of the cabin, then turns and walks back into the trees
+// at you and behind it, short of the cabin, then turns and walks back into the trees: a stride a round of its frames
 inline void lynx() {
   const Seen &e = SEEN;
-  NearHill h = e.hill;
-  int x = in_forest(e, "lynx", 6), round = ms_of("lynx"), walk = ms_of("lynx", 0, 12), walks = 2;
+  int x = in_forest(e, "lynx", 6), walks = 2;
   if (e.roof_x >= 0)
     walks = std::clamp((e.roof_x - 29 - x) / 13, 1, 2);
-  rare_on("lynx", std::max(e.at.light, 0.5f), x, h.at(x + 6) - 6, {false, 0, 0, D_NEAR_ON});
-  when_on("lynx", [=] {
-    for (int i = 0; i < 2 * walks; i++)
-      later((uint32_t) (i * round), [=] {
-        bool back = i >= walks;
-        int from = x + 13 * (back ? 2 * walks - i : i), to = from + (back ? -13 : 13);
-        if (i == walks)
-          flip("lynx", 0, true, false);
-        amble("lynx", 0, h, flip_x("lynx", from, back), flip_x("lynx", to, back), 5, 6, 6, 0, 13);
-      });
-    rare_end("lynx", (uint32_t) ((2 * walks - 1) * round + walk), 0);
-  });
+  std::string t;
+  for (int i = 0; i < 2 * walks; i++) {
+    bool back = i >= walks;
+    int to = x + 13 * (back ? 2 * walks - i - 1 : i + 1);
+    t += std::string(i == walks ? "flip x\n" : "") + "move " + num(to) + ", " + num(e.hill.at(to + 6) - 6) +
+         " over 2600\n" + (i < 2 * walks - 1 ? "wait rounds 1\n" : "wait walk\n");
+  }
+  rare_on("lynx", 0.5f, x, e.hill.at(x + 6) - 6, t + "end fade 0", {{"walk", ms_of("lynx", 0, 12)}},
+          {.fade = 0, .depth = D_NEAR_ON});
 }
 
 // A sea eagle glides down to the open water off the coast, strikes in a spray with its talons, and beats up off it
@@ -366,16 +353,26 @@ inline void lynx() {
 inline void catch_fish() {
   const Seen &e = SEEN;
   bool left = chance(0.5f);  // the way it flies
+  const char *n = "seaeaglecatch";
   int x = (int) rnd(e.sea_l, (float) (e.sea_r - 24)), y = e.sea_y - 17, d = left ? -1 : 1;
-  int down = ms_of("seaeaglecatch", 0, 1), strike = ms_of("seaeaglecatch", 0, 5), all = ms_of("seaeaglecatch");
-  rare_on("seaeaglecatch", std::max(e.at.light, 0.5f), x - 44 * d, y - 43, {false, 0, 0, D_SEA}, left);
-  rounds("seaeaglecatch", 0, 1);
-  when_on("seaeaglecatch", [=] {
-    move("seaeaglecatch", 0, flip_x("seaeaglecatch", x, left), y, down, "out");
-    move_later(strike, "seaeaglecatch", 0, flip_x("seaeaglecatch", x + 4 * d, left), y - 4, 500);
-    move_later(strike + 500, "seaeaglecatch", 0, flip_x("seaeaglecatch", x + 150 * d, left), y - 70, all - strike);
-    rare_end("seaeaglecatch", all - 800, 800);
-  });
+  int strike = ms_of(n, 0, 5), all = ms_of(n);
+  rare_on(n, 0.5f, x - 44 * d, y - 43, R"(
+    move a, y over down ease out
+    wait strike
+    move b, y - 4 over 500
+    wait 500
+    move c, y - 70 over all - strike
+    wait all - strike - 1300
+    end fade 800
+  )",
+          {{"a", x},
+           {"b", x + 4 * d},
+           {"c", x + 150 * d},
+           {"y", y},
+           {"down", ms_of(n, 0, 1)},
+           {"strike", strike},
+           {"all", all}},
+          {.left = left, .fade = 0, .depth = D_SEA});
 }
 
 // A ski jumper flies in from the right in the V style, drops onto the near hill beside the forest in a telemark and
@@ -383,17 +380,18 @@ inline void catch_fish() {
 inline void ski_jump() {
   const Seen &e = SEEN;
   int land = e.jump_x, low = e.hill.at(land + 11) - 12, fly = ms_of("skijumper", 0, 8), all = ms_of("skijumper");
-  rare_on("skijumper", e.at.light, 322, JUMP_TOP, {false, 0, 0}, true);
-  rounds("skijumper", 0, 1);
-  when_on("skijumper", [=] {
-    for (int k = 1; k <= 10; k++) {  // down the curve a tenth of the flight at a time
-      float u = k / 10.0f;
-      int x = 322 - (int) ((322 - land) * u), y = JUMP_TOP + (int) ((low - JUMP_TOP) * u * u * u * u);
-      move_later((uint32_t) (fly * (k - 1) / 10), "skijumper", 0, flip_x("skijumper", x, true), y, fly / 10);
-    }
-    move_later((uint32_t) fly, "skijumper", 0, flip_x("skijumper", land - 4, true), low, all - fly, "out");
-    rare_end("skijumper", (uint32_t) (all - 1500), 1500);
-  });
+  std::string t;
+  for (int k = 1; k <= 10; k++) {  // down the curve a tenth of the flight at a time
+    float u = k / 10.0f;
+    int x = 322 - (int) ((322 - land) * u), y = JUMP_TOP + (int) ((low - JUMP_TOP) * u * u * u * u);
+    t += path({{x, y, fly / 10}});
+  }
+  rare_on("skijumper", 0, 322, JUMP_TOP, t + R"(
+    move x, low over rest ease out
+    wait rest - 1500
+    end fade 1500
+  )",
+          {{"x", land - 4}, {"low", low}, {"rest", all - fly}}, {.left = true, .fade = 0});
 }
 
 // What a roll can bring: its odds when it fits, the longest it takes once its sprite is on the panel, whether it fits
@@ -469,7 +467,12 @@ inline bool encounter(int k) {
   if (!R.rare.empty() || !rare_room(RARE_WAIT + RARE[k].ms))
     return false;
   ESP_LOGI("met", "Something rare: %s", RARE[k].name);
-  RARE[k].go();
+  come(
+      [k] {
+        RARE[k].go();
+        return RARE[k].ms;
+      },
+      RARE_WAIT);
   return true;
 }
 

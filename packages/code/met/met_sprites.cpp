@@ -717,7 +717,8 @@ Frames lights(const Light *l, int n, int *x0, int *y0) {
           }};
 }
 // Half a firework, the other half its mirror: frames 0-7 a round peony, 8-15 a ring that crackles, each falling
-// into glitter that twinkles down and goes out. A burst plays one of them. k5 from white to the darkest
+// into glitter that twinkles down and goes out. A burst plays one of them. k5 from white to the darkest, greys
+// that a tint makes shades of its colour.
 static Frames firework(std::array<uint32_t, 5> k5, int seed) {
   return {25,
           50,
@@ -836,8 +837,8 @@ static constexpr uint16_t GULLVISIT_MS[] = {240,  240,  240,  300, 400, 2600, 13
 // it soars, glides, soars again and beats once, deep
 static constexpr uint16_t EAGLE_MS[] = {2600, 1200, 2400, 200, 260, 160, 140, 160, 240, 160, 200};
 static constexpr uint16_t GEESE_MS[] = {240, 240, 240, 240};
-static constexpr uint16_t BOAT_MS[] = {1300, 800, 1300, 900};
-static constexpr uint16_t TACK_MS[] = {700, 700, 900, 700, 700};
+// sailing, then coming about
+static constexpr uint16_t BOAT_MS[] = {1300, 800, 1300, 900, 700, 700, 900, 700, 700};
 static constexpr uint16_t GLITTER_MS[] = {700, 110, 160, 110, 2400};
 static constexpr uint16_t EIDERS_MS[] = {700, 700, 700, 700, 700, 700, 700, 700, 700, 700, 500, 400, 2600, 600};
 // the lighthouse's beam each frame, in degrees from you, to the left below 0, and how long it points there: it turns
@@ -865,7 +866,6 @@ static constexpr uint16_t REINDEER_MS[] = {500, 500, 500, 500, 500, 500, 1600, 9
 static constexpr uint16_t SKIER_MS[] = {140, 140, 140, 140, 140, 140, 140, 140};
 static constexpr uint16_t SNOWDROP_MS[] = {500, 300, 160, 160, 200, 260, 320, 420, 40000};
 static constexpr uint16_t LEAF_MS[] = {375, 375, 375, 375, 375, 375, 375, 375, 5000};
-static constexpr uint16_t LEAFFALL_MS[] = {300, 300, 300, 300, 300, 300, 300, 300};
 static constexpr uint16_t PYRE_MS[] = {90, 110, 100, 130, 90, 120, 100, 110};
 static constexpr uint16_t SPARK_MS[] = {120, 160, 120};
 static constexpr uint16_t TREESTAR_MS[] = {900, 700, 900};
@@ -1001,7 +1001,7 @@ static constexpr Fixed FIXED[] = {
     // A gull's visit to the ridge: it comes in gliding, flares with its legs down, lands with its wings up, folds
     // them, looks back, calls with its head thrown back and preens, looks back and preens again and calls, then
     // crouches and takes off
-    {"gullvisit", 21, 15, GULLVISIT_MS,
+    {"gullstay", 21, 15, GULLVISIT_MS,
      [](int f, const Canvas &c) {
        const int n = (int) std::size(GULLVISIT_MS);
        if (f >= 3 && f <= n - 4) {  // standing, its feet on the bottom row
@@ -1140,7 +1140,7 @@ static constexpr Fixed FIXED[] = {
      [](int f, const Canvas &c) { crow_flying(c, pose<CROWFLY_MS>("0121", f), 0, 0, false); }},
     // A hooded crow's visit to the ridge: it comes in with its legs down, lands with its wings up and folds them,
     // looks about, caws three times, bobbing forward with its bill open and its tail up, and takes off
-    {"crow", 11, 9, CROW_MS,
+    {"crowsit", 11, 9, CROW_MS,
      [](int f, const Canvas &c) {
        // stand, look back, caw, crouch
        static const char *const SIT[] = {"......kk|"
@@ -1223,23 +1223,23 @@ static constexpr Fixed FIXED[] = {
        eagle_wing(c, pose<SEAEAGLE_MS>("52510123432", f), true);
      }},
     // ---- the sea
-    // A small sailboat, bow to the left: the jib and the main fill and luff, the hull rocks
-    {"boat", 13, 15, BOAT_MS, [](int f, const Canvas &c) { boat_pose(c, pose<BOAT_MS>("0102", f), false); }},
-    // Coming about: the bow swings toward you, the sails flap edge on, then fill on the other side
-    {"tack", 13, 15, TACK_MS,
+    // A small sailboat, bow to the left: the jib and the main fill and luff, the hull rocks. From frame 4 it comes
+    // about: the bow swings toward you, the sails flap edge on, then fill on the other side.
+    {"boat", 13, 15, BOAT_MS,
      [](int f, const Canvas &c) {
-       if (f == 0 || f == 4) {
-         boat_pose(c, f ? 0 : 3, f == 4);
+       int k = pose<BOAT_MS>("010234240", f);  // its pose, or edge on how wide the hull shows
+       if (f < 5 || f == 8) {
+         boat_pose(c, k, f == 8);
          return;
        }
-       int hw = pose<TACK_MS>("04240", f), side = f == 1 ? 1 : f == 3 ? -1 : 0;
+       int hw = k, side = f == 5 ? 1 : f == 7 ? -1 : 0;
        line(c, 6 - hw, 12, 6 + hw, 12, BOAT_GUNWALE);
        rect(c, 7 - hw, 13, 5 + hw, 14, BOAT_HULL);
        if (hw < 3)
          dots(c, {5, 13, 7, 13, 6, 14}, BOAT_HULL);
        line(c, 6, 0, 6, 11, BOAT_MAST);
        for (int r = 2; r <= 11; r++) {
-         int flap = (r + f) % 3 == 0;
+         int flap = (r + f - 4) % 3 == 0;
          c.put(6 + (side ? side : r % 2 ? 1 : -1) * (1 + flap), r, BOAT_MAIN);
          if (side && r > 4)
            c.put(6 + side * 2, r, r % 2 ? BOAT_SHADE : BOAT_MAIN);
@@ -1467,7 +1467,7 @@ static constexpr Fixed FIXED[] = {
        }
      }},
     // firelight through the cabin's window: both panes flicker together, brightest low down where the fire is
-    {"firewin", 7, 6, FIREWIN_MS,
+    {"firelight", 7, 6, FIREWIN_MS,
      [](int f, const Canvas &c) { firelight(c, pose<FIREWIN_MS>("21312032", f), pose<FIREWIN_MS>("01001010", f)); }},
     // The cabin's window with the cat sitting on the sill, black against the firelight, which flickers like
     // firewin's: it flicks its tail, looks one way and the other and licks a paw. The show swaps it for firewin when
@@ -1541,7 +1541,7 @@ static constexpr Fixed FIXED[] = {
      }},
     // ---- animals and people
     // A bull moose walking along the meadow, and grazing there
-    {"moose", 24, 21, MOOSE_MS, [](int f, const Canvas &c) { moose_pose(c, f, -1); }},
+    {"moosewalk", 24, 21, MOOSE_MS, [](int f, const Canvas &c) { moose_pose(c, f, -1); }},
     {"moosegraze", 24, 21, MOOSEGRAZE_MS,
      [](int f, const Canvas &c) { moose_pose(c, 0, pose<MOOSEGRAZE_MS>("0102101210", f)); }},
     // A reindeer grazing its way along, grey-brown with a pale neck and mane, a white rump and tail, a darker face, big
@@ -1576,7 +1576,7 @@ static constexpr Fixed FIXED[] = {
             "GdPwfas", {0x7E6E5A, 0x5C4E40, 0xD8D2C4, 0xF2EEE6, 0x4A3C30, 0xA89070, 0xA49680});
      }},
     // A red squirrel bounding along, its bushy tail bobbing behind it: gathered, off, stretched out, landing
-    {"squirrel", 9, 5, SQUIRREL_MS,
+    {"squirrelrun", 9, 5, SQUIRREL_MS,
      [](int f, const Canvas &c) {
        static const char *const LOOK[] = {"..hh|"
                                           ".hhh...r|"
@@ -1641,11 +1641,11 @@ static constexpr Fixed FIXED[] = {
        squirrel_rows(c, HEAD[pose<SQUIRRELNUT_MS>("0101010121110101012111", f)]);
      }},
     // A red fox trotting across the snow, its brush out behind it
-    {"fox", 16, 8, FOX_MS, [](int f, const Canvas &c) { fox_pose(c, f, 0); }},
+    {"foxtrot", 16, 8, FOX_MS, [](int f, const Canvas &c) { fox_pose(c, f, 0); }},
     // and stopping to look at you, then ahead again before it trots on
     {"foxlook", 16, 8, FOXLOOK_MS, [](int f, const Canvas &c) { fox_pose(c, 4, pose<FOXLOOK_MS>("01210121210", f)); }},
     // The mountain hare in its winter white, only its ear tips black: hopping, gathered, off, in the air, landing
-    {"harew", 10, 6, HARE_MS,
+    {"harewhop", 10, 6, HARE_MS,
      [](int f, const Canvas &c) {
        static const char *const LOOK[] = {"......t|"
                                           "......Wt|"
@@ -1697,7 +1697,7 @@ static constexpr Fixed FIXED[] = {
          snowhare_rows(c, "s", 6, 4);
      }},
     // A roe buck at the edge of the meadow, small and slender: grazing, then its head up to look, ears twitching
-    {"roedeer", 9, 7, ROEDEER_MS,
+    {"roedeergraze", 9, 7, ROEDEER_MS,
      [](int f, const Canvas &c) {
        static const char *const LOOK[] = {"||"
                                           ".whhhhh|"
@@ -2010,7 +2010,6 @@ static constexpr Fixed FIXED[] = {
     // A birch leaf tumbling along for 3 s, then lying still on the grass for 5, in step with its wander
     {"leaf", 6, 6, LEAF_MS, [](int f, const Canvas &c) { leaf_pose(c, f); }},
     // and one tumbling all the way down from the crown
-    {"leaffall", 6, 6, LEAFFALL_MS, [](int f, const Canvas &c) { leaf_pose(c, f); }},
     // The midsummer bonfire: a pyre of stacked logs with the flames licking up through it
     {"pyre", 25, 28, PYRE_MS,
      [](int f, const Canvas &c) {
@@ -2143,7 +2142,7 @@ static constexpr Fixed FIXED[] = {
        rows(c, LOOK[f], "yebl", {0xFFEE55, 0x222222, 0xFF9922, 0xFF9922});
      }},
     // A hare three chicks long, hopping: crouched, pushing off, stretched out in the air, landing
-    {"hare", 21, 12, HARE_MS,
+    {"harehop", 21, 12, HARE_MS,
      [](int f, const Canvas &c) {
        static const char *const LOOK[] = {
            "..............ee|"
@@ -2287,7 +2286,7 @@ static constexpr Fixed FIXED[] = {
            c.px[i] = 0;
      }},
     // the owl, gliding with slow deep beats, its pale face and eyes catching what light there is
-    {"owl", 15, 8, OWL_MS,
+    {"owlfly", 15, 8, OWL_MS,
      [](int f, const Canvas &c) {
        static const int8_t TIP[] = {3, 1, 0, 0, 3, 3, 0, 3, 3, 4, 1, 6, 3, 3, 0, 4};  // up, mid, down, glide
        const int8_t *t = TIP + pose<OWL_MS>("012133", f) * 4;
@@ -3191,14 +3190,35 @@ static const Made MADE[] = {
     {"puffnight", [] { return smoke_puff({0x555566, 0x444455, 0x333344}); }},
     {"butterfly", [] { return butterfly(0xFF8822, 0x221111, 0x3366CC, 0x997755); }},  // a small tortoiseshell
     {"brimstone", [] { return butterfly(0xFFFF66, 0xDDCC33, 0xFFFF66, 0xCCCC77); }},
-    {"fwpink", [] { return firework({0xFFFFFF, 0xFFCCEE, 0xFF77BB, 0xBB4488, 0x773344}, 3); }},
-    {"fwcyan", [] { return firework({0xFFFFFF, 0xCCFFFF, 0x66DDFF, 0x3388AA, 0x224455}, 5); }},
-    {"fwgold", [] { return firework({0xFFFFFF, 0xFFFFDD, 0xFFDD66, 0xCC8833, 0x774422}, 7); }},
+    {"burst", [] { return firework({0xFFFFFF, 0xCCCCCC, 0x808080, 0x555555, 0x333333}, 3); }},
     {"tram", [] { return tram(true); }},
     {"tramday", [] { return tram(false); }},
 };
 
-bool make_sprite(const std::string &name, Frames &out) {
+// Sprites as one strip, their frames one after the other, each part's top left at the strip's: a bird flying in and
+// perching, say, so one copy does it all. Each part's frames are a clip by its name, or by the names in its clips.
+struct Join {
+  const char *name;
+  struct Part {
+    const char *sprite, *clip, *clips = nullptr;
+  } parts[2];
+};
+static const Join JOINS[] = {
+    {"gullvisit", {{"gull", "fly"}, {"gullstay", "stay"}}},
+    {"crow", {{"crowfly", "fly"}, {"crowsit", "sit"}}},
+    {"squirrel", {{"squirrelrun", "run"}, {"squirrelnut", "nut"}}},
+    {"fox", {{"foxtrot", "trot"}, {"foxlook", "look"}}},
+    {"firewin", {{"firelight", "fire"}, {"firewincat", "cat"}}},
+    {"moose", {{"moosewalk", "walk"}, {"moosegraze", "graze"}}},
+    {"roedeer", {{"roedeerrun", "run"}, {"roedeergraze", "graze"}}},
+    {"harew", {{"harewhop", "hop"}, {"haresitw", "sit"}}},
+    {"hare", {{"harehop", "hop"}, {"haresit", "sit"}}},
+    {"owl", {{"owlfly", "fly"}, {"owlperch", "perch"}}},
+    // a rocket up and its burst, half of it: a peony or a ring
+    {"firework", {{"rocket", "rise"}, {"burst", "burst", "peony 0-7, ring 8-15"}}},
+};
+
+static bool made(const std::string &name, Frames &out) {
   for (const Fixed &s : FIXED)
     if (name == s.name) {
       out = Frames{s.w, s.h, std::vector<uint16_t>(s.delays, s.delays + s.n), s.draw};
@@ -3210,6 +3230,54 @@ bool make_sprite(const std::string &name, Frames &out) {
       return true;
     }
   return false;
+}
+
+static Frames joined(const Join &j) {
+  Frames out;
+  std::vector<Frames> parts;
+  for (const Join::Part &p : j.parts) {
+    Frames f;
+    made(p.sprite, f);
+    int first = out.count(), last = first + f.count() - 1;
+    out.clips[p.clip] = {first, last, f.w, f.h};
+    for (const char *c = p.clips; c && *c;) {  // "peony 0-7, ring 8-15"
+      char name[16];
+      int a, b, used;
+      if (sscanf(c, " %15[a-z] %d-%d%n", name, &a, &b, &used) < 3)
+        break;
+      out.clips[name] = {first + a, first + b, f.w, f.h};
+      c += used + (c[used] == ',');
+    }
+    out.w = std::max(out.w, f.w);
+    out.h = std::max(out.h, f.h);
+    out.delays.insert(out.delays.end(), f.delays.begin(), f.delays.end());
+    parts.push_back(std::move(f));
+  }
+  out.draw = [parts](int f, const Canvas &c) {
+    for (const Frames &p : parts) {
+      if (f >= p.count()) {
+        f -= p.count();
+        continue;
+      }
+      std::vector<uint8_t> px((size_t) p.w * p.h);
+      p.draw(f, Canvas{p.w, p.h, px.data(), c.cols});
+      for (int y = 0; y < p.h; y++)
+        for (int x = 0; x < p.w; x++)
+          if (px[(size_t) y * p.w + x])
+            c.px[y * c.w + x] = px[(size_t) y * p.w + x];
+      return;
+    }
+  };
+  return out;
+}
+
+bool make_sprite(const std::string &name, Frames &out) {
+  for (const Join &j : JOINS)
+    if (name == j.name) {
+      out = joined(j);
+      return true;
+    }
+  return made(name, out);
 }
 
 }  // namespace flexit::panel::met::live

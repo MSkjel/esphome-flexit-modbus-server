@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <initializer_list>
+#include <map>
 #include <string>
 #include <vector>
 #include "met_scene.h"
@@ -39,7 +40,7 @@ struct Canvas {
       px[y * w + x] = cols->of(rgb);
   }
 };
-// A colour that glows, which dimmed() leaves as it is: a troll's eyes
+// A colour that glows, which the light on the panel leaves as it is: a troll's eyes
 inline constexpr uint32_t LAMP = 0xF2E27A;
 
 // A sprite's frames, drawn when they're wanted
@@ -47,6 +48,12 @@ struct Frames {
   int w = 0, h = 0;
   std::vector<uint16_t> delays;  // ms each frame shows, one per frame
   std::function<void(int f, const Canvas &c)> draw;
+  // A strip's clips by name, see make_sprite(): their first and last frame, and the size of what they show from
+  // the top left
+  struct Clip {
+    int first, last, w, h;
+  };
+  std::map<std::string, Clip> clips = {};
   int count() const { return (int) delays.size(); }
   // ms frames from to to - 1 show, to the last without to
   int ms(int from = 0, int to = INT_MAX) const {

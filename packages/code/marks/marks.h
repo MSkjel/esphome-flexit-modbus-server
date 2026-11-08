@@ -652,17 +652,17 @@ inline void set(const std::string &name, Layer l) {
   drop(m.layer.boxes);  // they were for laying it out
   m.soft.reset();
   m.sharp.reset();
-  // the overlay covers what the sharp ops do, an even size so its rows are whole bytes
+  // the overlay covers what the sharp ops do
   Box b{(float) W, (float) H, 0, 0};
   for (const Op &o : m.layer.ops)
     if (!o.soft)
       b = {std::min(b.x0, o.box.x0), std::min(b.y0, o.box.y0), std::max(b.x1, o.box.x1), std::max(b.y1, o.box.y1)};
   m.ow = 0;
   if (b.x0 < b.x1) {
-    m.ox = std::max(0, (int) floorf(b.x0)) & ~1;
-    m.oy = std::max(0, (int) floorf(b.y0)) & ~1;
-    m.ow = std::min(W - m.ox, ((int) ceilf(b.x1) - m.ox + 2) & ~1);
-    m.oh = std::min(H - m.oy, ((int) ceilf(b.y1) - m.oy + 2) & ~1);
+    m.ox = std::max(0, (int) floorf(b.x0));
+    m.oy = std::max(0, (int) floorf(b.y0));
+    m.ow = std::min(W - m.ox, (int) ceilf(b.x1) - m.ox + 1);
+    m.oh = std::min(H - m.oy, (int) ceilf(b.y1) - m.oy + 1);
     overlay::Source s{m.ow, m.oh, 1, 500, m.ox, m.oy, 1, [&m](int, int x, int y) { return sharp_pixel(m, x, y); }};
     s.colours = colours_of(m.layer);
     s.fade_ms = 300;

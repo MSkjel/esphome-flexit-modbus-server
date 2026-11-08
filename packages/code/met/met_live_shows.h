@@ -102,17 +102,10 @@ inline bool flag_fits(const Scene &s, int show) {
   return show >= 0 && (SHOWS[show].live & L_FLAG) && s.at.flag_up && s.pole_x >= 0;
 }
 
-// The flag's light in tenths. The flag is made again when it changes.
-inline int8_t flag_light(const Scene &s) { return (int8_t) lroundf(s.at.light * 10); }
-
-// The hoist next to the pole
+// The hoist next to the pole, in the light there is
 inline void flag_up(const Scene &s) {
-  Frames sp;
-  if (!R.sprites.count("flag") && make_sprite("flag", sp)) {
-    add("flag", dimmed(std::move(sp), s.at.light));
-    R.flag_light = flag_light(s);
-  }
-  place_flipped("flag", 0, s.at.wdir < 0 ? s.pole_x - 16 : s.pole_x + 1, s.pole_top, s.at.wdir > 0);
+  in_light("flag", 0);
+  place("flag", 0, s.at.wdir < 0 ? s.pole_x - 16 : s.pole_x + 1, s.pole_top, "", {}, {.left = s.at.wdir > 0});
   R.flown = s.at.wdir;
 }
 
@@ -139,6 +132,7 @@ inline void apply(const Scene &s) {
   if (i >= 0 && SHOWS[i].made_of)
     where = where * 31u + SHOWS[i].made_of(s);
   R.sun_x = (int16_t) (s.sun ? s.sun_x : -1);
+  bool relit = lroundf(R.light * 100) != lroundf(s.at.light * 100);
   R.light = s.at.light;
   if (i != R.show || where != R.where) {
     stop();
@@ -148,17 +142,19 @@ inline void apply(const Scene &s) {
     R.show = i;
     R.rng = seeded((uint32_t) millis());
     ESP_LOGI("met", "Weather animation: %s", SHOWS[i].name);
+    overlay::emptied = emptied;
     SHOWS[i].start(s);
     rare_start();
-  } else if (i >= 0 && SHOWS[i].redo) {
-    SHOWS[i].redo(s);
+  } else {
+    if (i >= 0 && SHOWS[i].redo)
+      SHOWS[i].redo(s);
+    if (relit)
+      relight();
   }
   if (i >= 0)
     rare_seen(s);
-  bool flag = flag_fits(s, i), relit = flag && R.flag_light != flag_light(s);
-  if (relit)
-    unload("flag");  // made again in the new light
-  if (flag && (!R.flag || R.flown != s.at.wdir || relit)) {
+  bool flag = flag_fits(s, i);
+  if (flag && (!R.flag || R.flown != s.at.wdir)) {
     rare_off();  // the flag may need its slot
     flag_up(s);
   } else if (!flag && R.flag)

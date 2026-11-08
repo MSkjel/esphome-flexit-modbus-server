@@ -107,11 +107,13 @@ enum {
 };
 
 // ---- Screensaver overlays, drawn over the picture: 16 colours, each with its own opacity, animated or still
-// BEGIN: id, slot (0..OVERLAY_SLOTS - 1), w (2, even), h (2), scale (1 or 2), OVERLAY_ANIMATED or OVERLAY_STILL, size
-// (4), then at OVERLAY_BEGIN_HEAD the palette: 16 x RGB, then their opacities from 0, clear, to 15, two a byte, the
-// first colour's in the high nibble. Then DATA up to size bytes and END, as for a picture. It replaces the slot's
-// overlay and its places. The panel keeps every slot's records, and an animated one's frame, in OVERLAY_POOL, and
-// answers PIC_TOO_BIG when they don't fit next to the others.
+// BEGIN: id, slot (0..OVERLAY_SLOTS - 1), w (2), h (2), scale (1 or 2), OVERLAY_ANIMATED or OVERLAY_STILL, size (4),
+// then at OVERLAY_BEGIN_HEAD the palette: 16 x RGB, then their opacities from 0, clear, to 15, two a byte, the first
+// colour's in the high nibble. Then at OVERLAY_BEGIN_GLOWS a bit for each colour that glows (2), which a place's
+// light and tint leave as they are, and at OVERLAY_BEGIN_SHADE the RGB its light goes toward below 100. A frame's rows
+// are (w + 1) / 2 bytes. Then DATA up to size bytes and END, as for a picture. It replaces the slot's overlay and its
+// places. The panel keeps every slot's records, and an animated one's frame, in OVERLAY_POOL, and answers
+// PIC_TOO_BIG when they don't fit next to the others.
 #define K_OVERLAY_BEGIN 0x120
 enum {
   OVERLAY_BEGIN_SLOT = 1,
@@ -122,13 +124,19 @@ enum {
   OVERLAY_BEGIN_SIZE,
   OVERLAY_BEGIN_HEAD = 12,
 };
-#define OVERLAY_PAL_LEN (PIC_PAL_LEN + 8)
-// The data is records of OVERLAY_RECORD_HEAD bytes, delay, x / 2, y, w / 2 and h, then that rectangle of the frame:
+#define OVERLAY_PAL_LEN (PIC_PAL_LEN + 8)  // the palette and its opacities
+#define OVERLAY_BEGIN_GLOWS (OVERLAY_BEGIN_HEAD + OVERLAY_PAL_LEN)
+#define OVERLAY_BEGIN_SHADE (OVERLAY_BEGIN_GLOWS + 2)
+#define OVERLAY_BEGIN_LEN (OVERLAY_BEGIN_SHADE + 3)
+// The data is records of OVERLAY_RECORD_HEAD bytes, delay, x / 2, y, w / 2 and h, then that rectangle of the frame's
+// bytes:
 //   OVERLAY_ANIMATED  a record a frame from plink_overlay_record, the rectangle that changed, deflated. The first is
-//                     the whole first frame, the last takes the last frame back to the first.
+//                     the whole first frame, the last takes the last frame back to the first. An empty one with x
+//                     OVERLAY_RECORD_MORE only makes the frame before it longer, so it isn't a frame of its own. It
+//                     can't be the last, and the second goes for the first frame each time round.
 //   OVERLAY_STILL     its pieces from plink_overlay_pieces, each at most OVERLAY_PIECE_MAX bytes, its rows packed as
 //                     plink_pack_row packs them. Clear where there's none. The panel keeps them packed and unpacks
-//                     them as they're drawn. The first one's delay is how long a round is, see ROUNDS.
+//                     them as they're drawn. The first one's delay is how long a round is, see OVERLAY_DO_ROUNDS.
 // The delay is in OVERLAY_TICK_MS, up to OVERLAY_DELAY_MAX. Whatever its delay, a frame shows OVERLAY_FRAME_MIN_MS at
 // least.
 enum { OVERLAY_ANIMATED, OVERLAY_STILL };
@@ -141,6 +149,7 @@ enum {
   OVERLAY_RECORD_H,
   OVERLAY_RECORD_HEAD
 };
+#define OVERLAY_RECORD_MORE 0xFF
 #define OVERLAY_TICK_MS 10
 #define OVERLAY_DELAY_MAX 255
 #define OVERLAY_FRAME_MIN_MS 40
@@ -151,20 +160,19 @@ enum {
 #define K_OVERLAY_FRAMES 0x122  // slot, frame rate (2, percent of the records' times, 0..OVERLAY_RATE_MAX, 0 = paused)
 enum { OVERLAY_FRAMES_SLOT, OVERLAY_FRAMES_RATE, OVERLAY_FRAMES_LEN = 3 };
 #define OVERLAY_RATE_MAX 1000
-// PLACE, where an overlay shows: place (0..OVERLAY_PLACES - 1), slot, x (2), y (2), own, start, fade (2). Replaces
-// that place, x and y signed, so it can start off the screen. Every place of an animated slot shows its frames in
-// step, unless own = 1 gives it a frame of its own (w x h / 2 bytes more of OVERLAY_POOL) that starts start frames
-// in. A still ignores own. It fades in over fade ms, upright, full size and on the whole screen. Ignored without the
-// overlay or the room.
+// PLACE, where an overlay shows: place (0..OVERLAY_PLACES - 1), slot, x (2), y (2), own, fade (2). Replaces that
+// place, x and y signed, so it can start off the screen. Every place of an animated slot shows its frames in step,
+// unless own = 1 gives it a frame of its own (as many bytes again of OVERLAY_POOL), from the first frame. A still
+// ignores own. It fades in over fade ms, upright, full size, in its light and on the whole screen, showing all of its
+// frame. Ignored without the overlay or the room.
 #define K_OVERLAY_PLACE 0x123
 enum {
   OVERLAY_PLACE_SLOT = 1,
   OVERLAY_PLACE_X,
   OVERLAY_PLACE_Y = 4,
   OVERLAY_PLACE_OWN = 6,
-  OVERLAY_PLACE_START,
   OVERLAY_PLACE_FADE,
-  OVERLAY_PLACE_LEN = 10,
+  OVERLAY_PLACE_LEN = 9,
 };
 // AREA, where a drift or wander keeps and what a MAP goes across: place, x0, y0, x1, y1 (2 each, signed, x1 and y1
 // just past it), then OVERLAY_EDGE_* for x and for y. The turned and sized box keeps to it.
@@ -183,12 +191,22 @@ enum {
   OVERLAY_EDGE_BOUNCE,  // back off the edges
 };
 // A place's channels: x, y the top left of its frame at full size in px, turn degrees clockwise round its middle,
-// size, opacity and speed in percent. Speed is how fast its drifts and wander on x and y go.
-enum { OVERLAY_X, OVERLAY_Y, OVERLAY_TURN, OVERLAY_SIZE, OVERLAY_OPACITY, OVERLAY_SPEED, OVERLAY_CHANNELS };
+// size, opacity, speed and light in percent. Speed is how fast its drifts and wander on x and y go. Below 100 its light
+// takes its colours toward its slot's shade, above toward white, all the way at 0 and OVERLAY_LIGHT_MAX.
+enum {
+  OVERLAY_X,
+  OVERLAY_Y,
+  OVERLAY_TURN,
+  OVERLAY_SIZE,
+  OVERLAY_OPACITY,
+  OVERLAY_SPEED,
+  OVERLAY_LIGHT,
+  OVERLAY_CHANNELS
+};
 // GLIDE: place, channels (a bit per OVERLAY_*), ms (2, 0 = at once), OVERLAY_EASE_*, then at OVERLAY_GLIDE_HEAD a value
-// (2, signed) for each channel in order: size OVERLAY_SIZE_MIN..OVERLAY_SIZE_MAX, opacity and speed from 0 to their
-// OVERLAY_*_MAX. A turn goes the short way round. It stops each channel's drift, the wander on x or y, the face on
-// turn.
+// (2, signed) for each channel in order: size OVERLAY_SIZE_MIN..OVERLAY_SIZE_MAX, opacity, speed and light from 0 to
+// their OVERLAY_*_MAX. A turn goes the short way round. It stops each channel's drift, the wander on x or y, the face
+// on turn.
 #define K_OVERLAY_GLIDE 0x125
 enum { OVERLAY_GLIDE_CHANNELS = 1, OVERLAY_GLIDE_MS, OVERLAY_GLIDE_EASE = 4, OVERLAY_GLIDE_HEAD };
 #define OVERLAY_EASE_IN 1   // starts slow
@@ -197,9 +215,10 @@ enum { OVERLAY_GLIDE_CHANNELS = 1, OVERLAY_GLIDE_MS, OVERLAY_GLIDE_EASE = 4, OVE
 #define OVERLAY_SIZE_MAX 400
 #define OVERLAY_OPACITY_MAX 100
 #define OVERLAY_SPEED_MAX 1000
-// DRIFT: place, channels (bits of x, y and turn), then at OVERLAY_DRIFT_HEAD tenths of a px or degree per second (2,
-// signed) for each channel in order, 0 = stays where it is. On x and y it keeps to the AREA. It stops each channel's
-// glide, the wander on x or y, the face on turn.
+#define OVERLAY_LIGHT_MAX 200
+// DRIFT: place, channels (bits of x, y and turn), then at OVERLAY_DRIFT_HEAD for each channel in order hundredths of
+// a px per second on x and y, tenths of a degree on turn (2, signed), 0 = stays where it is. On x and y it keeps to
+// the AREA. It stops each channel's glide, the wander on x or y, the face on turn.
 #define K_OVERLAY_DRIFT 0x126
 enum { OVERLAY_DRIFT_CHANNELS = 1, OVERLAY_DRIFT_HEAD };
 // WANDER: place, legs of speed min..max tenths of a px/s (2 + 2) toward heading +- spread degrees (2 + 2, signed,
@@ -254,22 +273,105 @@ enum {
 // depth.
 #define K_OVERLAY_MAP 0x12B
 enum { OVERLAY_MAP_CHANNEL = 1, OVERLAY_MAP_VALUES, OVERLAY_MAP_LEN = 10 };  // VALUES: left, right, top, bottom
-// ROUNDS: place, rounds (2), fade (2), tag. Plays to the end of rounds rounds, then fades out over fade ms and goes,
-// answering GONE. A frame of its own holds the last one. 0 plays on.
-#define K_OVERLAY_ROUNDS 0x12C
-enum { OVERLAY_ROUNDS_COUNT = 1, OVERLAY_ROUNDS_FADE = 3, OVERLAY_ROUNDS_TAG = 5, OVERLAY_ROUNDS_LEN };
-#define K_OVERLAY_GONE 0x12D  // panel -> ESP: place | tag << 8 of one that went after its rounds
+// SCRIPT: place, at (2), len (2), then the script's bytes from at on, in as many messages as it takes, each going on
+// at the byte the one before ended. len is the whole script's, OVERLAY_SCRIPT_MAX at most. It takes OVERLAY_SCRIPT_POOL
+// + len bytes of OVERLAY_POOL from its first message until the place goes, and runs once the last is in: at once, then
+// on as its waits end. Another one, one of len 0, a PLACE or a CLEAR of the place ends it. It's dropped whole if it
+// doesn't fit, has a bad step or plays frames on a place without a frame of its own.
+#define K_OVERLAY_SCRIPT 0x12C
+enum { OVERLAY_SCRIPT_AT = 1, OVERLAY_SCRIPT_LEN = 3, OVERLAY_SCRIPT_BYTES = 5 };
+#define OVERLAY_SCRIPT_MAX 480
+#define OVERLAY_SCRIPT_POOL 64   // what a script takes of OVERLAY_POOL besides its bytes
+#define OVERLAY_SCRIPT_STEPS 32  // steps it takes in a row, then it goes on at the next motion step
+// A script is steps, each an OVERLAY_DO_* and then what it takes, in this order:
+//   r   a register: 0..7 the place's own, 8..11 shared by all of them. 32 bits, signed, 0 to start with, the
+//       shared ones again after a CLEAR of everything.
+//   v   a value: OVERLAY_V16 and 2 bytes or OVERLAY_V32 and 4, signed, low byte first, or OVERLAY_VREG + a register
+//   p   a place, or OVERLAY_SELF for its own
+//   at  the byte of the script the step to go on with starts at, 2 bytes, low byte first
+//   l   a list: a byte n, 1 or more, then n numbers of 2 bytes, signed, low byte first
+//   z   a size in px, 2 bytes, low byte first, 0 for all of the frame's width or height
+// Maths wraps round at 32 bits, v / 0 and v % 0 are 0. Frames are numbered as the records go, but for those that only
+// make one longer, and round its frames: 5 of 4 is 1.
+enum {
+  OVERLAY_DO_SET,  // r v: r is v
+  OVERLAY_DO_ADD,  // r v: r + v, and so on
+  OVERLAY_DO_SUB,
+  OVERLAY_DO_MUL,
+  OVERLAY_DO_DIV,
+  OVERLAY_DO_MOD,
+  OVERLAY_DO_MIN,
+  OVERLAY_DO_MAX,
+  OVERLAY_DO_ABS,     // r v: r is v without its sign
+  OVERLAY_DO_RAND,    // r v v: r is the first to the second, both in
+  OVERLAY_DO_GET,     // r OVERLAY_GET_* p: what p is now, 0 if it has no overlay
+  OVERLAY_DO_DIST,    // r p p: px from the first's middle to the second's
+  OVERLAY_DO_ANGLE,   // r p p: the way from the first's middle to the second's, degrees, 0 right, 90 down
+  OVERLAY_DO_SIN,     // r v v: the second times sin of the first, in degrees
+  OVERLAY_DO_COS,     // r v v
+  OVERLAY_DO_PICK,    // r v l: r is the list's number v, from 0, its first below that and its last past it
+  OVERLAY_DO_GOTO,    // at
+  OVERLAY_DO_IF,      // v OVERLAY_IF_* v at: on at at if it holds
+  OVERLAY_DO_WAIT,    // v: ms
+  OVERLAY_DO_UNTIL,   // v OVERLAY_IF_* v at: on if it holds, else on at at at the next motion step
+  OVERLAY_DO_ROUNDS,  // v: until that many more rounds of its clip have ended
+  OVERLAY_DO_CLIP,    // v v OVERLAY_CLIP_* z z: its frames from the first to the second round and round, w x h of
+                      // each from its top left: its box, and what it's mirrored and turned in
+  OVERLAY_DO_FRAME,   // v: to that frame at once, its clip going on from there
+  OVERLAY_DO_RATE,    // v: percent its frames go at, 0..OVERLAY_RATE_MAX, 0 holds the frame it's on
+  OVERLAY_DO_MOVE,    // v v v ease: a GLIDE of x and y to the first two over the third's ms, ease an OVERLAY_EASE_*
+  OVERLAY_DO_SEND,    // key - K_OVERLAY_FRAMES, n, n bytes, k, then k times a byte and v: that message to itself, AREA
+                      // to TINT but SCRIPT, with the low 16 bits of each v at its byte
+  OVERLAY_DO_MARK,    // tag: tells the ESP, see MARK
+  OVERLAY_DO_END,     // v tag: fades out over v ms and goes, answering GONE. A frame of its own stays as it is.
+  OVERLAY_DOS
+};
+#define OVERLAY_V16 0
+#define OVERLAY_V32 1
+#define OVERLAY_VREG 2
+#define OVERLAY_REGS 12
+#define OVERLAY_OWN_REGS 8
+#define OVERLAY_SELF 0xFF
+#define OVERLAY_SEND_MAX 24  // bytes in a SEND's message
+enum { OVERLAY_IF_LT, OVERLAY_IF_LE, OVERLAY_IF_EQ, OVERLAY_IF_NE, OVERLAY_IF_GE, OVERLAY_IF_GT };
+// x, y its top left, w, h what its clip shows of its frame at full size, px. turn in degrees 0..359, size, opacity and
+// light percent as it's shown, the frame it shows, rounds of its clip so far and ms since its script started, but for
+// those 0 without a script, and here 1. A place shown in step with its slot counts the slot's rounds, one that
+// doesn't play frames a round each time its first record's delay goes by.
+enum {
+  OVERLAY_GET_X,
+  OVERLAY_GET_Y,
+  OVERLAY_GET_W,
+  OVERLAY_GET_H,
+  OVERLAY_GET_TURN,
+  OVERLAY_GET_SIZE,
+  OVERLAY_GET_OPACITY,
+  OVERLAY_GET_LIGHT,
+  OVERLAY_GET_FRAME,
+  OVERLAY_GET_ROUNDS,
+  OVERLAY_GET_HERE,
+  OVERLAY_GET_MS,
+  OVERLAY_GETS
+};
+#define OVERLAY_CLIP_NOW 0    // from the first at once
+#define OVERLAY_CLIP_NEXT 1   // once a round of the clip it plays ends, the script waiting. At once if one just did.
+#define K_OVERLAY_GONE 0x12D  // panel -> ESP: place | tag << 8 of one that went after its script's END
 // DEPTH: place, depth, 0 the farthest. PLACE starts it at OVERLAY_NEAREST. A place is drawn in front of those at less
 // depth, and behind each part of the picture at more, see K_PIC_PART.
 #define K_OVERLAY_DEPTH 0x12E
 enum { OVERLAY_DEPTH_DEPTH = 1, OVERLAY_DEPTH_LEN };
+#define K_OVERLAY_MARK 0x12F  // panel -> ESP: place | tag << 8 of a script at its MARK
+// TINT: place, 0 for its own colours or 1 and an RGB: its colours as shades of that one, from black through it to
+// white as they're dark or light, but for those that glow. PLACE starts it with its own.
+#define K_OVERLAY_TINT 0x130
+enum { OVERLAY_TINT_ON = 1, OVERLAY_TINT_RGB, OVERLAY_TINT_LEN = 5 };
 #define OVERLAY_NEAREST 255
 #define OVERLAY_SLOTS 6
 #define OVERLAY_PLACES 8
 #define OVERLAY_WAVES 12  // waves the panel runs at a time, of all places together
 #define OVERLAY_PLACE_BIT 0x80
 #define OVERLAY_ALL 0xFF
-#define OVERLAY_POOL 8192  // panel memory for the overlays: their records, and an animated one's frame of w x h / 2
+#define OVERLAY_POOL 8192  // panel memory for the overlays: records, an animated one's frame, scripts
 
 // ---- Screenshots: what the panel shows as a JPEG, which the ESP puts together from 64x8 tiles, numbered across and
 // then down. Each tile is one restart interval from pjpeg_tile() at the quality SHOT asked for. The ESP writes the
