@@ -33,21 +33,25 @@ inline Cols water(const Scene &s, int y0, int y1, bool pass) {
   }
   return c;
 }
+// The longest run of them in columns from to to as its first and last, and its length, 0 if there's none
+inline int longest(const Cols &c, int from, int to, int &l, int &r) {
+  int n = 0;
+  for (int a = from, b; a <= to; a = b + 1) {
+    for (b = a; b <= to && c[b]; b++) {
+    }
+    if (b - a > n) {
+      n = b - a;
+      l = a;
+      r = b - 1;
+    }
+  }
+  return n;
+}
+
 // The run of them around column x as its first and last, or the longest run with x < 0. False if there's none.
 inline bool stretch(const Cols &c, int x, int &l, int &r) {
-  if (x < 0) {
-    int n = 0;
-    for (int a = 0, b; a < W; a = b + 1) {
-      for (b = a; b < W && c[b]; b++) {
-      }
-      if (b - a > n) {
-        n = b - a;
-        l = a;
-        r = b - 1;
-      }
-    }
-    return n > 0;
-  }
+  if (x < 0)
+    return longest(c, 0, W - 1, l, r) > 0;
   if (x >= W || !c[x])
     return false;
   for (l = x; l > 0 && c[l - 1]; l--) {
@@ -66,42 +70,33 @@ inline void in_gap(int &l, int &r, int least = 40) {
   }
 }
 // The run of c with the most columns in the gap, cut to it, if that's least or more. False if none has.
-inline bool gap_stretch(const Cols &c, int &l, int &r, int least) {
-  int best = 0;
-  for (int a = GAP_L, b; a <= GAP_R; a = b + 1) {
-    for (b = a; b <= GAP_R && c[b]; b++) {
-    }
-    if (b - a > best) {
-      best = b - a;
-      l = a;
-      r = b - 1;
-    }
-  }
-  return best >= least;
-}
+inline bool gap_stretch(const Cols &c, int &l, int &r, int least) { return longest(c, GAP_L, GAP_R, l, r) >= least; }
 
-// The boat's turning points and row, as the sprite's left and top, and which way the wind blows it
-struct Course {
-  int16_t a, b, y;
-  bool left_runs;
-};
-// The boat heading left or right from x, a minute's move at a time. At the end it comes about over the tack's
-// frames, the last of which is the boat the other way, so the swaps don't show. Bow to the right they're mirrored.
-inline void sail_on(Course c, int x, bool left) {
-  float v = left == c.left_runs ? 0.9f : 0.55f;  // it runs before the wind and beats back slower
-  int d = std::min(abs((left ? c.a : c.b) - x), (int) (60 * v));
-  if (d) {
-    int to = left ? x - d : x + d, ms = (int) (d * 1000 / v);
-    move("boat", 0, flip_x("boat", to, !left), c.y, ms);
-    later(ms, [=] { sail_on(c, to, left); });
-    return;
-  }
-  swap_flipped("boat", 0, "tack", x, c.y, !left, true);
-  later(ms_of("tack") - STEP, [=] {
-    swap_flipped("tack", 0, "boat", x, c.y, left);
-    sail_on(c, x, !left);
-  });
-}
+// The sailboat from one end of its course to the other and back, l and r its left there, row its top. It runs
+// before the wind at 0.9 px a second and beats back at 0.55. At each end it comes about over frames 4 to 8, the last
+// of which is the boat the other way, so the flip doesn't show. Bow to the right it's mirrored.
+inline const char *const SAIL = R"(
+  if starts_right == 1 goto right
+left:
+  clip 0 to 3
+  drift -vl, 0
+  wait until x <= l
+  drift 0, 0
+  move l, row
+  clip 4 to 8
+  wait rounds 1
+  flip x
+right:
+  clip 0 to 3
+  drift vr, 0
+  wait until x >= r
+  drift 0, 0
+  move r, row
+  clip 4 to 8
+  wait rounds 1
+  flip none
+  goto left
+)";
 
 // Points of sunlight on the water near the sun's reflection, somewhere new each time: each moves on while it's
 // dark and holds still while it glints, its wander in step with its frames
@@ -116,13 +111,15 @@ inline void glitter(const Scene &s) {
       remove("glitter", i);
       continue;
     }
-    int gx = (int) rnd(l, r - 2), gy = (int) rnd(top, top + 7);
-    later(870 * i, [=] {
-      int glint = ms_of("glitter", 1, 4), dark = ms_of("glitter") - glint;  // from frame 4 round to 0, then 1 to 3
-      place("glitter", i, gx, gy, {true, 4, -1, D_SEA});
-      area("glitter", i, l, top, r + 1, top + 10, "bounce", "bounce");
-      wander("glitter", i, 3, 6, 0, 180, dark, dark, glint, glint);
-    });
+    int glint = ms_of("glitter", 1, 4), dark = ms_of("glitter") - glint;  // from frame 4 round to 0, then 1 to 3
+    place("glitter", i, (int) rnd(l, r - 2), (int) rnd(top, top + 7), std::string(i ? "glide opacity 0\n" : "") + R"(
+      area l, top, r + 1, top + 10 bounce
+      wait after
+      frame 4
+      wander 3, 6, 0, 180, dark, dark, glint, glint
+    )" + (i ? "glide opacity 100 over 300" : ""),
+          {{"l", l}, {"r", r}, {"top", top}, {"after", 870 * i}, {"dark", dark}, {"glint", glint}},
+          {.depth = D_SEA});  // a little after one another
   }
 }
 
@@ -137,15 +134,15 @@ inline uint32_t sjark_by(Lane n) {
   bool left = chance(0.5f);
   int len = std::min(n.r - n.l, 50), a = n.l + (int) rnd(0, (float) (n.r - n.l - len));
   int x0 = left ? a + len : a, x1 = left ? a : a + len, ms = len * 1000 * 5 / 4;  // 0.8 px/s
-  place_flipped("sjark", 0, x0, n.y, left, {false, 0, 4000, D_SEA});
-  move("sjark", 0, flip_x("sjark", x1, left), n.y, ms);
-  return gone_later(ms, "sjark", 4000);
+  place("sjark", 0, x0, n.y, "move x1, y over ms; wait ms; end", {{"x1", x1}, {"y", n.y}, {"ms", ms}},
+        {.left = left, .fade = 4000, .depth = D_SEA});
+  return (uint32_t) ms;
 }
 
 // A sea eagle soars in over the fjord from the side away from the sun, circles there a while and goes. The ms.
 inline uint32_t sea_eagle() {
   in_light("seaeagle");
-  return gone_later(soar("seaeagle", 78, 22, 7), "seaeagle");
+  return soar("seaeagle", 78, 22, 7);
 }
 
 // A porpoise rolls along its lane, up and under twice. The ms it takes.
@@ -154,16 +151,14 @@ inline uint32_t porpoise(Lane n) {
   bool left = chance(0.5f);
   int len = 26, a = n.l + (int) rnd(0, (float) (n.r - n.l - len)), x0 = left ? a + len : a, x1 = left ? a : a + len;
   int ms = 2 * ms_of("porpoise");
-  place_flipped("porpoise", 0, x0, n.y, left, {true, 0, 0, D_SEA});
-  rounds("porpoise", 0, 2);
-  move("porpoise", 0, flip_x("porpoise", x1, left), n.y, ms);
-  return gone_later(ms, "porpoise", 0);
+  place("porpoise", 0, x0, n.y, "frame 0; move x1, y over ms; wait rounds 2; end", {{"x1", x1}, {"y", n.y}, {"ms", ms}},
+        {.left = left, .fade = 0, .depth = D_SEA});
+  return (uint32_t) ms;
 }
 
 inline void sail(const Scene &s) {
-  int x = s.boat.x - 6, y = s.boat.y - 14, l, r;  // the picture's mast and waterline
+  int x = s.boat.x - 6, y = s.boat.y - 14, l = 0, r = 0;  // the picture's mast and waterline
   bool left = s.at.wdir < 0;
-  preload("tack");
   // it turns where the open water at its rows ends, off a skerry, a tree or the point, and stays between the
   // clock and the temperatures when there's room for that
   bool room = stretch(water(s, std::max<int>(s.sea_top, y), s.boat.y, true), s.boat.x, l, r) && r - l > 40;
@@ -171,9 +166,14 @@ inline void sail(const Scene &s) {
     in_gap(l, r);
   if (room)
     x = std::clamp(x, l + 1, r - 13);
-  place_flipped("boat", 0, x, y, !left, {.depth = D_SEA});
-  if (room)
-    sail_on({(int16_t) (l + 1), (int16_t) (r - 13), (int16_t) y, left}, x, left);
+  place("boat", 0, x, y, room ? SAIL : "clip 0 to 3",  // it rocks where it is without room
+        {{"l", l + 1},
+         {"r", r - 13},
+         {"row", y},
+         {"vl", left ? 0.9 : 0.55},
+         {"vr", left ? 0.55 : 0.9},
+         {"starts_right", !left}},
+        {.left = !left, .depth = D_SEA});
   int a = room ? l + 1 : x, b = room ? r : x + 13;  // where the sailboat goes
   glitter(s);
   // Now and then a sjark chugging along the fjord near the horizon off the sailboat's course, a sea eagle circling,
@@ -210,10 +210,13 @@ inline void sail(const Scene &s) {
   Cols open = water(s, shore - 10, shore - 1, false);
   if (!gap_stretch(open, l, r, 30) && (!stretch(open, -1, l, r) || r - l < 40))
     return;
-  place("eiders", 0, (l + r) / 2 - 7, shore - 8, {true, 0, -1, D_SEA});
-  area("eiders", 0, l, shore - 10, r + 1, shore, "bounce", "bounce");
-  face("eiders", 0, 180);
-  wander("eiders", 0, 0.3f, 0.6f, 180, 30, 8000, 15000, 5000, 20000);
+  place("eiders", 0, (l + r) / 2 - 7, shore - 8, R"(
+    area l, shore - 10, r + 1, shore bounce
+    face 180 mirror level
+    wander 0.3, 0.6, 180, 30, 8000, 15000, 5000, 20000
+    frame 0
+  )",
+        {{"l", l}, {"r", r}, {"shore", shore}}, {.depth = D_SEA});
 }
 // the reflection moves with the sun
 inline void sail_redo(const Scene &s) { glitter(s); }
@@ -237,9 +240,8 @@ inline void lighthouse(const Scene &s) {
     return;
   int y = s.sea_top - 5, ms = (r - 26 - x) * 10000 / 7;  // 0.7 px/s
   sometimes(minutes(60), minutes(10, 40), [=] {
-    place("ship", 0, x, y, {false, 0, 5000, D_SEA});
-    drift("ship", 0, 0.7f, 0);
-    return remove_later(ms, "ship", 0, 5000) + 5000;
+    place("ship", 0, x, y, "drift 0.7, 0; wait ms; end", {{"ms", ms}}, {.fade = 5000, .depth = D_SEA});
+    return (uint32_t) ms + 5000;
   });
 }
 
@@ -263,9 +265,7 @@ inline std::weak_ptr<Town> town;  // the timers hold it, so it goes with the sho
 inline uint32_t drive(const char *n, bool right, int y, float speed) {
   const Frames *sp = frames_of(n);
   int w = sp ? sp->w : 0, ms = (int) ((float) (W + w + 4) * 1000 / speed);
-  place_flipped(n, 0, right ? -w - 2 : W + 2, y, !right);
-  move(n, 0, flip_x(n, right ? W + 2 : -w - 2, !right), y, ms);
-  return gone_later((uint32_t) ms, n);
+  return right ? across(n, -w - 2, y, W + 2, y, ms) : across(n, W + 2, y, -w - 2, y, ms);
 }
 // The top row of something h tall driving to the right, in the near lane, or the left, in the far one
 inline int lane(bool right, int h) { return (right ? ROAD_KERB : ROAD_MID) - h; }
@@ -334,7 +334,7 @@ inline void town_evening(const Scene &s) {
     for (const Win &o : t->slot)
       if (o.x == n.x && o.y == n.y)
         return 0;
-    place(n.lit ? "windark" : "winlit", k, n.x, n.y, {true, (int) rnd(0, 4), 400});
+    place(n.lit ? "windark" : "winlit", k, n.x, n.y, "frame " + num((int) rnd(0, 4)), {}, {.fade = 400});
     w = n;
     return 0;
   });
@@ -351,10 +351,7 @@ inline void town_evening(const Scene &s) {
     if (k == 3) {
       if (t->plane < 0)
         return 0;
-      uint32_t ms = (W + 11) * 1000 / 4;
-      place("plane", 0, -10, t->plane);
-      move("plane", 0, W + 1, t->plane + 6, (int) ms);
-      return gone_later(ms, "plane");
+      return across("plane", -10, t->plane, W + 1, t->plane + 6, (W + 11) * 1000 / 4);
     }
     return t->trams ? tram_by("tram", y) : 0;
   });
@@ -377,7 +374,7 @@ inline void pigeons(const Scene &s) {
     return;
   const Bld &b = s.bld[best];
   in_light("pigeons");
-  place("pigeons", 0, b.x + (b.w - 34) / 2, b.top - 16, {false, 0, 2000});
+  place("pigeons", 0, b.x + (b.w - 34) / 2, b.top - 16, "", {}, {.fade = 2000});
 }
 
 inline void town_day(const Scene &s) {

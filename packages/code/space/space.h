@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
-#include <new>
 #include <string>
 #include "../marks/marks.h"
 #include "../panel/fetch.h"
@@ -16,6 +15,12 @@ namespace flexit::panel::space {
 // A request whose JSON answer goes to value() and end() as it streams
 struct Ask : fetch::Request, JsonScan {
   bool feed(const char *p, size_t n) override { return scan(p, n); }
+};
+
+// A list asked for at url and read into L as it streams, the package's got() taking what it found
+template<typename L> struct Listing : fetch::Asker {
+  const char *url = nullptr;
+  fetch::Request *make(int) override { return fetch::request<L>(url); }
 };
 
 // From a package's setup: a asked every `every`, like 6h, at least every least_s, with status saying how it went
@@ -66,10 +71,7 @@ void today(Today &t, const std::string &name, Img &&image, uint32_t (*pixel)(int
   t.name = name;
   auto *img = ptr_of(image);
   t.set_url = [&t, img](const std::string &u) { picture::online_url(t.name, img, u); };
-  t.dims = [img](int &w, int &h) {
-    w = img->get_width();
-    h = img->get_height();
-  };
+  t.dims = [img](int &w, int &h) { picture::dims_of(img, w, h); };
   auto it = picture::sources.find(name);
   if (it == picture::sources.end())
     return;

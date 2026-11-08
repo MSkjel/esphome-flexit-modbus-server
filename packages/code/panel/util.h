@@ -1,9 +1,13 @@
 // What the panel's headers share: entities from id(), RAM, the loop's time slice and status texts
 #pragma once
+#include <strings.h>
 #include <algorithm>
 #include <atomic>
+#include <cctype>
+#include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace flexit::panel {
@@ -49,14 +53,65 @@ template<typename T> T *ptr_of(T &r) { return &r; }
 
 template<typename T> void drop(std::vector<T> &v) { std::vector<T>().swap(v); }  // empty, with its RAM freed
 
+inline std::string lower(std::string s) {
+  for (auto &c : s)
+    c = (char) tolower((unsigned char) c);
+  return s;
+}
+
+// Index of name in names, in any case, or -1
+template<size_t N> int find(const char *const (&names)[N], const std::string &name) {
+  for (size_t i = 0; i < N; i++)
+    if (!strcasecmp(names[i], name.c_str()))
+      return (int) i;
+  return -1;
+}
+
 // fetch.h's requests in tasks of their own, whose TLS buffers come and go meanwhile
 inline std::atomic<int> requests{0};
 inline constexpr size_t REQUEST_RAM = 24 * 1024;
 
-// Whether the ESP has `bytes` free with some to spare, `block` of it in one piece
-inline bool has_ram(size_t bytes, size_t block) {
-  RAMAllocator<uint8_t> ram(RAMAllocator<uint8_t>::ALLOC_INTERNAL);  // vectors and new come from there, not PSRAM
-  return ram.get_free_heap_size() >= bytes + 8192 + requests * REQUEST_RAM && ram.get_max_free_block_size() >= block;
+// PSRAM's free bytes and its biggest piece, none without psram: in the yaml
+inline std::pair<size_t, size_t> psram_left() {
+#ifdef USE_PSRAM
+  RAMAllocator<uint8_t> ps(RAMAllocator<uint8_t>::ALLOC_EXTERNAL);
+  return {ps.get_free_heap_size(), ps.get_max_free_block_size()};
+#else
+  return {0, 0};
+#endif
+}
+
+// Whether PSRAM has `bytes` free, `block` of them in one piece
+inline bool psram_has(size_t bytes, size_t block) {
+  auto [left, piece] = psram_left();
+  return left >= bytes && piece >= block;
+}
+
+// Whether the ESP has `bytes` of internal RAM free with some to spare, `block` of it in one piece: vectors and new
+// come from there. `big` more, `big_block` the biggest, are RAMAllocator's blocks, which go in PSRAM if it has room
+inline bool has_ram(size_t bytes, size_t block, size_t big = 0, size_t big_block = 0) {
+  if (big && psram_has(big, big_block))
+    big = big_block = 0;
+  RAMAllocator<uint8_t> ram(RAMAllocator<uint8_t>::ALLOC_INTERNAL);
+  return ram.get_free_heap_size() >= bytes + big + 8192 + requests * REQUEST_RAM &&
+         ram.get_max_free_block_size() >= std::max(block, big_block);
+}
+
+// Where RAMAllocator's blocks of `bytes`, `block` the biggest, go: internal RAM while it has them to spare, PSRAM
+// when it hasn't. 0 when neither has the room
+inline uint8_t room_for(size_t bytes, size_t block) {
+  using A = RAMAllocator<uint8_t>;
+  return has_ram(bytes, block) ? A::ALLOC_INTERNAL : psram_has(bytes, block) ? A::ALLOC_EXTERNAL : 0;
+}
+
+// The RAM the ESP has, for the log
+inline std::string ram_left() {
+  auto kb = [](size_t left, size_t piece) {
+    return std::to_string(left / 1024) + " KB free, " + std::to_string(piece / 1024) + " KB in one piece";
+  };
+  RAMAllocator<uint8_t> ram(RAMAllocator<uint8_t>::ALLOC_INTERNAL);
+  auto [left, piece] = psram_left();
+  return kb(ram.get_free_heap_size(), ram.get_max_free_block_size()) + (left ? ", PSRAM " + kb(left, piece) : "");
 }
 
 // A status text sensor, published only when it changes
@@ -77,6 +132,8 @@ using panel::fits;
 using panel::has_ram;
 using panel::progress;
 using panel::ptr_of;
+using panel::ram_left;
+using panel::room_for;
 using panel::status;
 }  // namespace picture
 

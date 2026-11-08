@@ -30,6 +30,9 @@ inline constexpr uint8_t NONE = 255;                       // a row in the per-c
 // Radii of the sun's disc and its rings, and of the moon's disc and its glow
 inline constexpr int SUN_R = 13, RING1_R = 21, RING2_R = 30;
 inline constexpr int MOON_R = 9, MOON_GLOW_R = 15;
+// The lamps' and windows' warm light, the same so they share one of the 16 colours, and the animations' lit windows
+// the same again. rgb4(255, 210, 122)
+inline constexpr uint32_t WARM_LIGHT = 0xFFCC77;
 
 // What the picture shows besides the weather. The names are met.yaml's Panel Weather Scene and Aurora options.
 enum Ground : uint8_t { G_HILLS, G_COAST, G_MOUNTAINS, G_CITY };
@@ -81,12 +84,16 @@ enum Depth : uint8_t {
 };
 struct Options {
   Ground ground = G_HILLS;
-  Aurora aurora = A_AUTO;  // auto = some clear nights north of 55 degrees
+  Aurora aurora = A_AUTO;  // auto = when the Kp reaches kp_needed() here
   float facing = 180;      // azimuth in the picture's middle, clockwise from north: 0 north, 90 east, 180 south
   int heater_pct = 0;      // the unit's heater %, for the chimney smoke
   bool fireplace = false;  // more smoke
   uint32_t frame = 0;      // counts the redraws, for the lights that blink and the fireworks
+  float kp = NAN;          // NOAA's for now, NAN without it, see met_kp.h
 };
+
+// The Kp it takes for the auroral oval to reach over lat, lon, 0 where it's there even when it's quiet
+float kp_needed(double lat, double lon);
 
 // Local time minus UTC at t, in seconds
 using Offset = int (*)(uint32_t t);
@@ -154,7 +161,7 @@ enum : uint8_t {
 };
 static_assert(COLOURS <= 64, "a bit each in drawn() and KEY_COLOURS");
 
-// Small things that would vanish if their colour went to their surroundings', besides the sprites
+// Small things that would vanish if their colour went to their surroundings', besides the stamps
 inline constexpr uint64_t KEY_COLOURS = 1ull << C_STAR | 1ull << C_DIM | 7ull << C_RB | 1ull << C_BOLT |
                                         1ull << C_BIRCH | 1ull << C_WINDOW | 1ull << C_TEXT | 1ull << C_OUTLINE;
 
@@ -170,19 +177,27 @@ struct Cloud {
   uint8_t n;
 };
 
-// A one-colour bitmap. Layer 0 is drawn in the sky behind the ground, ON_WATER on the sea behind the middle land and
-// what stands on it, 1 in front of the ground, 2 on top of everything.
-inline constexpr int ON_WATER = 3;
-struct Sprite {
+// Where a stamp is drawn, back to front: in the sky behind the land, on the sea behind the middle land and what
+// stands on it, in front of the land, and on top of everything
+enum StampLayer : uint8_t { IN_SKY, ON_WATER, ON_LAND, ON_TOP };
+
+// A one-colour bitmap stamped on the picture, like a bird or the flag's red. The animations have sprites instead,
+// see met_sprites.h.
+struct Stamp {
   int16_t x, y;
-  uint8_t w, h;                  // at most 64 by 24
-  uint16_t layer : 2, tag : 14;  // tag: the L_* it's left out for, or 0
+  uint8_t w, h;                  // at most 64 wide
+  uint16_t layer : 2, tag : 14;  // StampLayer, and the L_* it's left out for or 0
   uint32_t c : 24, ix : 8;       // 0xRRGGBB, and its place in the palette
-  uint64_t rows[24];             // leftmost pixel in the highest of w bits
+  uint64_t *rows;                // h of Stamps::rows, the leftmost pixel in the highest of w bits
 };
-inline constexpr int SPRITES = 32;
-static_assert(L_BOAT < 1 << 14, "the L_* fit Sprite::tag");
-static_assert(PENNANT_MAX + 4 <= 64, "the pennant's sprite fits its rows");
+// The stamps and their rows. A year of scenes takes at most 27 stamps and 209 rows.
+inline constexpr int STAMPS = 32, STAMP_ROWS = 256;
+struct Stamps {
+  Stamp at[STAMPS];
+  uint64_t rows[STAMP_ROWS];
+};
+static_assert(L_BOAT < 1 << 14, "the L_* fit Stamp::tag");
+static_assert(PENNANT_MAX + 4 <= 64, "the pennant fits a stamp");
 
 // The land's shape, which only depends on the place and the landscape, so it's kept from one scene to the next
 struct Land {
@@ -286,12 +301,12 @@ struct Scene {
   uint8_t neggs, nlights;
   uint8_t puffs;  // the chimney's, by the heat
   uint16_t live;  // L_*, what row() and palette() leave out for the weather animations
-  uint16_t tag;   // L_*, what the sprites made now are left out for
+  uint16_t tag;   // L_*, what the stamps made now are left out for
   At at;
-  int nsprites;
-  bool overlay;  // the forecast drawn over the picture
+  int nstamps, nrows;  // the stamps made and the rows they took
+  bool overlay;        // the forecast drawn over the picture
   // The caller's, kept apart so the scene needs no big block
-  Sprite *sprite;        // SPRITES of them
+  Stamps *stamps;
   uint8_t (*ov)[W / 4];  // OV_H rows, 2 bits per pixel. 0 shows the picture, 1 outline, 2 text. Or null
   Land *land;            // made again when the place or landscape changes
 };
@@ -461,7 +476,7 @@ struct Now : At {
 };
 
 // The whole scene at t, UTC, but its colours' places: palette() gives them, after s.live is set. Without w.ok
-// there's no weather in it. s.sprite, s.ov and s.land are the caller's and stay, s.ov may be null without the
+// there's no weather in it. s.stamps, s.ov and s.land are the caller's and stay, s.ov may be null without the
 // forecast.
 void build(Scene &s, const Weather &w, double lat, double lon, uint32_t t, bool with_forecast, Offset offset,
            const Options &o);

@@ -327,13 +327,18 @@ in the gaps on the bus: a 320x240 drawing takes a few seconds, a photo half a mi
 when a picture is updated. `Panel Picture Status` and `Panel Animation Status` show how it's going. Names are
 letters, digits and `_`.
 
+An ESP32 with PSRAM, like a WROVER or an S3 with R in its name, can decode online pictures at `resize: 320x240` and
+take bigger JPEGs. Add `psram:` to your config: their download buffer and decoded pixels go there, and the rest stays
+in the ESP's own RAM, which is faster. The weather's scene only goes there when that's short. An ESP32-C3 can't have
+PSRAM.
+
 | Package | Vars |
 |---|---|
 | `picture.yaml` | `name`, `file` (PNG or JPEG next to your config). `encoding`: `auto`, `palette` (16 colours) or `jpeg`; a palette picture that doesn't fit the panel's 14 KB goes as a JPEG anyway. `quality`: the JPEG quality, or `auto` for the best that fits |
 | `online_picture.yaml` | `name`, `url`, `update_interval` (like `10min`, `1.5h` or `1d`, `never` = only when shown), `format` (PNG, JPEG, BMP or AUTO), `resize` (160x120 default, blown up to the screen; 320x240 needs PSRAM), plus `encoding` and `quality`. A failed download is retried after 30 s, then twice as long each time. Before each download the ESP asks the server about the file and skips one it doesn't have the RAM for, with the reason in `Panel Picture Status`. A JPEG has to fit in RAM whole, so the server has to send its size; PNG and BMP are read a bit at a time. For a Home Assistant camera use `ha_picture.yaml` |
 | `ha_picture.yaml` | `name`, `entity_id` (a `camera.` or `image.` entity, with `kind: image` for the latter), `ha_url` (`http://homeassistant.local:8123`), `width` (320, HA scales the camera picture down to it when the camera can), plus `update_interval`, `resize`, `format`, `encoding` and `quality` as above. HA only hands out camera pictures with a token that changes now and then; the ESP follows the entity's `access_token` attribute, so nothing to set up. If the camera won't scale, the full picture is often too big for an ESP without PSRAM and is skipped; a Frigate camera's own `latest.jpg?h=120` through `online_picture.yaml` is the way round that |
-| `animation.yaml` | `name`, `file` (a GIF), `resize` (64x64 default), `x`, `y` (top left on the 320x240 screen), `scale` (1, or 2 to draw each pixel 2x), `frame_ms` (40 to 2550, the GIF's own timing isn't used), `drift_x`, `drift_y` (pixels per second it drifts, wrapping round the screen seamlessly), `fade_ms` (300, how long copies fade in and out). The panel plays all its animations from 8 KB, up to 6 at a time in up to 8 places, so keep them small: about 64x64 with a few frames, or more frames if little changes between them. A single frame goes as a still, which the panel keeps packed, so it takes only that, not w x h / 2 bytes. Too big at scale 1 and it's made at half size and drawn 2x. `Panel Animation Status` says what's shown and what didn't fit |
-| `met.yaml` | `latitude`, `longitude`, `scene` (hills, coast, mountains, city), `aurora` (auto, off, always), `facing` (the compass direction in the middle of the picture for the sun, moon and stars: 0 north, 90 east, 180 south by default, 270 west), `redraw_interval`, `name` (weather). The forecast is asked for again once MET says it has expired. `Panel Weather Scene`, `Panel Weather Aurora` and `Panel Weather Forecast` change it from Home Assistant, `Panel Animation Weather` brings it to life |
+| `animation.yaml` | `name`, `file` (a GIF), `resize` (64x64 default), `x`, `y` (top left on the 320x240 screen), `scale` (1, or 2 to draw each pixel 2x), `frame_ms` (40 to 2550, the GIF's own timing isn't used), `drift_x`, `drift_y` (pixels per second it drifts, wrapping round the screen seamlessly), `fade_ms` (300, how long copies fade in and out), `clips` and `script` (see [animation scripts](#animation-scripts)). The panel plays all its animations from 8 KB, up to 6 at a time in up to 8 places, so keep them small: about 64x64 with a few frames, or more frames if little changes between them. A single frame goes as a still, which the panel keeps packed, so it takes only that, not w x h / 2 bytes. Too big at scale 1 and it's made at half size and drawn 2x. `Panel Animation Status` says what's shown and what didn't fit |
+| `met.yaml` | `latitude`, `longitude`, `scene` (hills, coast, mountains, city), `aurora` (auto, off, always, see below), `facing` (the compass direction in the middle of the picture for the sun, moon and stars: 0 north, 90 east, 180 south by default, 270 west), `redraw_interval`, `name` (weather). The forecast is asked for again once MET says it has expired. `Panel Weather Scene`, `Panel Weather Aurora` and `Panel Weather Forecast` change it from Home Assistant, `Panel Animation Weather` brings it to life |
 
 `met.yaml` draws the sky for the time of day and the next hour's weather from [MET Norway](https://api.met.no)
 (CC BY 4.0). The weather right now is also an item, so it can be a dashboard tile, and the cabin's chimney smokes
@@ -341,13 +346,23 @@ when the heater is on. `The forecast hasn't changed (HTTP 304)` in the log is fi
 MET is busy or down (HTTP 502, 503) the picture keeps the last forecast and asks again a minute later, then less
 often, up to every half hour.
 
-`Panel Animation Weather`, on unless you turn it off, adds slow animations that fit the picture, one show at a
-time: gulls over the cabin, rain and snow falling from under the clouds, the aurora glowing, a moose at dusk, the
+On a clear dark night the aurora follows the planetary Kp from
+[NOAA SWPC](https://www.swpc.noaa.gov/products/planetary-k-index), asked for every 3 hours while `Panel Weather
+Aurora` isn't off. On auto it shows once the Kp for those 3 hours reaches what it takes for the auroral oval to reach
+over you: about 0 in Tromsø, 2 in Trondheim, 3.3 in Oslo, 4 in Stockholm and 5.5 in Copenhagen. `Panel Weather Kp`
+says the Kp now and what your place needs. Its colours are what's usual at the Kp: a pale green arc when it's quiet,
+green under a violet top from about 3, a pink lower edge from 5, a red top from 6 and more red at 8. The further the
+Kp is over what your place needs the brighter it glows, and in a storm that only just reaches you it's mostly red.
+Until NOAA has answered it shows some clear nights north of 55 degrees.
+
+`Panel Animation Weather`, on unless you turn it off, adds slow animations that fit the picture, one show at a time:
+gulls over the cabin, rain and snow falling from under the clouds, the stars sparkling, a moose at dusk, the
 sailboat, the town's windows, the lights on the Christmas spruce, fireworks on New Year's Eve, the flag waving on
-flag days and more, some of them by chance now and then. Very seldom something stranger comes by. The picture
-leaves out what they draw, and tells the panel what in it is nearer, so they go behind it where they should: the
-sailboat behind the point and the flagpole, a roe deer out of the forest from behind a spruce. Your own animations
-are always in front of all of it. They take the panel's animations, so turn your other ones off with it.
+flag days and more, some of them by chance now and then. The aurora is part of the picture and shifts a little every
+hour. Very seldom something stranger comes by. The picture leaves out what they draw, and tells the panel what in it
+is nearer, so they go behind it where they should: the sailboat behind the point and the flagpole, a roe deer out of
+the forest from behind a spruce. Your own animations are always in front of all of it. They take the panel's
+animations, so turn your other ones off with it.
 
 ### Space pictures
 
@@ -402,15 +417,17 @@ Like the [other actions](#messages-views-and-settings), in Home Assistant and as
 | `panel_show_picture` (`name`), `panel_clear_picture` | The screensaver picture, same as the `Panel Picture` select |
 | `panel_show_animation` (`name`), `panel_clear_animation` (`name`, or none for all) | An animation over it, where its yaml puts it, the same as its `Panel Animation <name>` switch. Showing it again puts copy 0 back there if it went. Any combination of them, within the panel's 8 KB |
 | `panel_place_animation` (`name`, `copy`, `x`, `y`, `own`, `start`), `panel_remove_animation` (`name`, `copy`) | The same animation in more places, which can start off the screen to come in. Copy 0 is the one `panel_show_animation` shows, copy 1 and up are extra. They play in step and cost nothing extra, unless `own: true` gives the copy a frame of its own, which takes another w x h / 2 bytes of the 8 KB and starts `start` frames in. A still ignores `own` |
-| `panel_move_animation` (`name`, `copy`, `x`, `y`, `ms`, `ease`), `panel_drift_animation` (`name`, `copy`, `vx`, `vy`) | Glide a copy to `x`, `y` over `ms` (0 jumps, 65535 at most), or drift it at `vx`, `vy` pixels per second (to a tenth, like 0.5), round the screen or as its area says; 0, 0 stops it. Drifting over a JPEG photo costs more redraws than over a palette picture, so keep it slow there |
-| `panel_glide_animation` (`name`, `copy`, `what`, `to`, `ms`, `ease`) | One of a copy's `x`, `y`, `turn`, `size`, `opacity` or `speed` to `to` over `ms`. A turn goes the short way round, size is 10 to 400, opacity 0 to 100, speed 0 to 1000 |
+| `panel_move_animation` (`name`, `copy`, `x`, `y`, `ms`, `ease`), `panel_drift_animation` (`name`, `copy`, `vx`, `vy`) | Glide a copy to `x`, `y` over `ms` (0 jumps, 65535 at most), or drift it at `vx`, `vy` pixels per second (to a hundredth, like 0.55, 327 at most), round the screen or as its area says; 0, 0 stops it. Drifting over a JPEG photo costs more redraws than over a palette picture, so keep it slow there |
+| `panel_glide_animation` (`name`, `copy`, `what`, `to`, `ms`, `ease`) | One of a copy's `x`, `y`, `turn`, `size`, `opacity`, `speed` or `light` to `to` over `ms`. A turn goes the short way round, size is 10 to 400, opacity 0 to 100, speed 0 to 1000, light 0 to 200: 100 as it was made, less takes its colours toward black, the weather's toward the night's blue, more toward white |
+| `panel_tint_animation` (`name`, `copy`, `colour`) | A copy's colours as shades of `colour`, like `FF77BB`: its dark ones from black to it, its light ones from it to white, so one animation can show in many colours. `""` or `none` for its own. Its light goes on top |
 | `panel_spin_animation` (`name`, `copy`, `speed`), `panel_flip_animation` (`name`, `copy`, `horizontal`, `vertical`) | Spin a copy at `speed` degrees per second, negative the other way, 0 stops it where it is. Flip mirrors it left to right, upside down or both. Quarter turns and flips stay sharp, other angles look rougher |
 | `panel_area_animation` (`name`, `copy`, `left`, `top`, `right`, `bottom`, `edge_x`, `edge_y`) | Where a copy's drift or wander keeps, and what its maps go across. Each edge is `screen` (round the whole screen, the default), `cross` (out at one edge of the area, in at the other) or `bounce` |
 | `panel_wander_animation` (`name`, `copy`, `speed_min`, `speed_max`, `heading`, `spread`, `leg_min`, `leg_max`, `rest_min`, `rest_max`) | Legs of `speed_min` to `speed_max` pixels per second (to a tenth) toward `heading` give or take `spread` degrees (`spread` 180 is any way), each `leg_min` to `leg_max` ms (0 0 is one leg), with rests of `rest_min` to `rest_max` ms between (0 0 none). It keeps to its area, and a bounce turns the heading round |
 | `panel_face_animation` (`name`, `copy`, `facing`, `mirror`, `tilt`, `rate`, `level`) | Turns a copy toward where it goes. `facing` is the way its frames face, `mirror` flips it to face the other way, `tilt` the most it turns (0 to 180), `rate` degrees per second (0 at once), `level` back upright when it stops. A glide of its turn or a spin ends it |
 | `panel_wave_animation` (`name`, `copy`, `what`, `low`, `high`, `rise`, `fall`, `hold_high`, `hold_low`, `jitter`, `random`, `slow`) | The panel takes `what` between `low` and `high` on its own, for good. `rise` and `fall` are the ms for the whole way up and down, `hold_high` and `hold_low` how long it stays at each end, `jitter` how many percent the times vary. `random` goes to anywhere between low and high each time. `slow` is where it eases: `low`, `high`, `both` or `none`. On `x`, `y` and `turn` it's an offset in pixels or degrees, on the rest percent of what a glide set, so a fade still fades it. Low = high goes there and stays, and at 0 (or 100) the wave is gone. The panel runs 12 waves at a time |
-| `panel_map_animation` (`name`, `copy`, `what`, `left`, `right`, `top`, `bottom`) | `turn`, `size`, `opacity` or `speed` follows where the copy's middle is in its area: the value at the left and right edge, and at the top and bottom, in between it goes evenly. Turn adds the two up, the others are percent and multiply. With size it's depth: smaller further up, and the copies bigger from it are drawn in front |
-| `panel_rounds_animation` (`name`, `copy`, `rounds`) | A copy plays to the end of `rounds` rounds, then fades out and goes. 0 plays on. With `own: true` and `start: 0` it plays from the first frame and holds the last |
+| `panel_map_animation` (`name`, `copy`, `what`, `left`, `right`, `top`, `bottom`) | `turn`, `size`, `opacity`, `speed` or `light` follows where the copy's middle is in its area: the value at the left and right edge, and at the top and bottom, in between it goes evenly. Turn adds the two up, the others are percent and multiply. With size it's depth: smaller further up, and the copies bigger from it are drawn in front |
+| `panel_rounds_animation` (`name`, `copy`, `rounds`) | A copy plays to the end of `rounds` rounds, then fades out and goes. 0 plays on. With `own: true` and `start: 0` it plays from the first frame and holds the last. It's the script `wait rounds N; end`, so it takes the place of one the copy ran |
+| `panel_script_animation` (`name`, `copy`, `code`) | A copy runs the [script](#animation-scripts) in `code` on the panel instead of the one it ran, `""` for none. One that plays frames needs `own: true` |
 | `panel_frame_rate_animation` (`name`, `percent`) | How fast an animation's frames go, for all its copies. 100 is as made, up to 1000, 0 holds the frame it's on |
 
 For the animation actions:
@@ -503,6 +520,99 @@ Examples, for an ESP called `flexit`:
 - action: esphome.flexit_panel_frame_rate_animation
   data: {name: fan, percent: "{{ states('sensor.flexit_supply_fan_speed_percentage') | int(0) * 2 }}"}
 ```
+
+### Animation scripts
+
+A copy can run a script on the panel: which of its frames play, where it goes, and what it does after that. The
+panel runs it on its own, so it goes on with nothing from the ESP, and a panel restart starts it again. Copy 0 of an
+`animation.yaml` runs its `script`, and `clips` names parts of its frames for it. `panel_script_animation` gives any
+copy one.
+
+```yaml
+      - path: packages/panel/animation.yaml
+        vars:
+          name: kite
+          file: animations/kite.gif   # facing left, frames 0-3 climbing, 4-7 diving
+          y: 40
+          clips: "climb 0-3, dive 4-7"
+          script: |
+            left:
+              clip climb
+              move 20, rand(30, 60) over 6000 ease both
+              wait 6000
+              clip dive at end        # once the climb's round is over
+              wait rounds 1
+              flip x
+              clip climb
+              move 250, rand(30, 60) over 6000 ease both
+              wait 6000
+              flip none
+              goto left
+```
+
+```yaml
+# a second ghost that follows the first, a little behind
+- action: esphome.flexit_panel_place_animation
+  data: {name: ghost, copy: 1, x: 0, y: 0, own: false, start: 0}
+- action: esphome.flexit_panel_script_animation
+  data:
+    name: ghost
+    copy: 1
+    code: |
+      on:
+        move x(ghost) - 30, y(ghost) + 10 over 400
+        wait 500
+        goto on
+```
+
+A line is one statement, or several with `;` between them, and `#` starts a comment.
+
+| Statement | Does |
+|---|---|
+| `name:` | A place in the script to go to |
+| `v = expr` | A number of its own, 0 to start with, 8 at most |
+| `shared a, b` | Numbers all the copies' scripts share, 4 at most. 0 again once all the animations are cleared |
+| `goto name`, `if a < b goto name`, `stop` | Go on there, if it holds, or stop. Compare with `<`, `<=`, `==`, `!=`, `>=` or `>` |
+| `wait ms`, `wait lo to hi` | Wait that long, or a random time between |
+| `wait until a < b` | Wait until it holds. It's checked every 50 ms, so it can follow where things are |
+| `wait rounds n` | Wait until n more rounds of its clip have ended, of its frames when it has no frame of its own |
+| `clip name`, `clip a to b`, `clip a` | Play those frames round and round from the first, now, or with `at end` once a round of the clip it plays is over |
+| `frame n`, `rate percent` | Jump to that frame, the clip going on from there. How fast its frames go, 0 holds the one it's on |
+| `move x, y`, `glide what to` | Go there, or one of `x`, `y`, `turn`, `size`, `opacity`, `speed`, `light` to that, `over ms` and with `ease none`, `in`, `out` or `both` if you like |
+| `drift vx, vy`, `spin speed` | As `panel_drift_animation` and `panel_spin_animation` |
+| `flip none`, `flip x`, `flip y`, `flip both` | Mirror it left to right, upside down, both or neither |
+| `tint 0xFF77BB`, `tint none` | As `panel_tint_animation` |
+| `depth n` | Drawn in front of the copies at less depth, 0 the farthest and 255 the nearest, where they start |
+| `area l, t, r, b edge_x edge_y` | As `panel_area_animation`, the edges `screen`, `cross` or `bounce` (one for both, or none for `screen`) |
+| `wander speed_min, speed_max, heading, spread, leg_min, leg_max, rest_min, rest_max` | As `panel_wander_animation` |
+| `face facing` | As `panel_face_animation`, followed by those you want of `mirror`, `level`, `tilt t` and `rate r`, in that order |
+| `wave what low, high, rise, fall` | As `panel_wave_animation`, followed by those you want of `hold high, low`, `jitter j`, `random` and `slow s`, in that order |
+| `map what left, right, top, bottom` | As `panel_map_animation` |
+| `mark n` | Tells the ESP, which logs `Animation kite: copy 0 at mark 3` (n 0 to 255) |
+| `end`, `end fade ms` | Fades out, over its fade or ms, and goes. With a frame of its own it holds the one it's on |
+
+Numbers are whole, with `+`, `-`, `*`, `/`, `%` and brackets. Division drops the fraction and `/ 0` is 0. Speeds can
+have fractions: drifts to a hundredth, like `drift -0.55, 0`, spins and wanders to a tenth. These read a copy, its own
+when bare, or another one in brackets: `x(kite)` is copy 0 of kite, `x(kite.2)` its copy 2.
+
+| Read | Is |
+|---|---|
+| `x`, `y`, `w`, `h` | Its top left, and the size of what it shows of its frames, in pixels |
+| `turn`, `size`, `opacity`, `light` | As it's shown, degrees 0 to 359 and percent |
+| `frame`, `rounds`, `ms` | The frame it's on, rounds of its clip so far, ms since its script started |
+| `here` | 1 if the copy is shown, 0 if not |
+| `rand(a, b)` | A whole number from a to b |
+| `dist(a, b)`, `angle(a, b)` | From the middle of copy a to that of b, in pixels, and the way there in degrees, 0 right, 90 down. `self` is its own |
+| `sin(deg, n)`, `cos(deg, n)` | n times the sine or cosine of deg |
+| `abs(v)`, `min(a, b)`, `max(a, b)` | |
+| `pick(k, a, b, …)` | Number k of the list, from 0, the first below that and the last past it. Up to 255 whole numbers, -32768 to 32767, like rows along a hill for a walk |
+
+A script is 480 bytes at most, made from the text on the ESP, and takes another 64 of the panel's 8 KB while it
+runs. A `move` takes about 11 bytes, a `wait` 4. What it sets with plain numbers at its start, before its first label
+and anything else, is told to the panel apart, so `area`, `wander`, `face` and the like there cost nothing. A
+mistake is logged with its line, like `Animation kite: line 3: what's 'mvoe'?`, and the copy keeps the script it had,
+if any. A script that plays frames (`clip`, `frame` or `rate`) needs a copy with a frame of its own: copy 0 of an
+`animation.yaml` with a script like that gets one.
 
 ## The panel's screen in Home Assistant
 

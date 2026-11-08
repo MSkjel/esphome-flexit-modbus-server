@@ -30,6 +30,23 @@ struct Box {
   float x0, y0, x1, y1;
 };
 
+// The box round x, y pairs
+inline Box bounds(const std::vector<float> &pts) {
+  Box b{1e9f, 1e9f, -1e9f, -1e9f};
+  for (size_t i = 0; i + 1 < pts.size(); i += 2)
+    b = {std::min(b.x0, pts[i]), std::min(b.y0, pts[i + 1]), std::max(b.x1, pts[i]), std::max(b.y1, pts[i + 1])};
+  return b;
+}
+
+// Where the line from cx, cy toward dx, dy leaves b
+inline void edge(const Box &b, float cx, float cy, float dx, float dy, float &x, float &y) {
+  float kx = dx > 0 ? (b.x1 - cx) / dx : dx < 0 ? (b.x0 - cx) / dx : 1e9f;
+  float ky = dy > 0 ? (b.y1 - cy) / dy : dy < 0 ? (b.y0 - cy) / dy : 1e9f;
+  float k = std::min(kx, ky);
+  x = cx + dx * k;
+  y = cy + dy * k;
+}
+
 struct Op {
   enum Kind : uint8_t { TEXT, DOT, RING, LINE, POLY, RECT, SCRIM, GLOW_DOT, GLOW_LINE };
   Kind kind;
@@ -119,9 +136,7 @@ struct Layer {
     return text(x, y, upper(s), CAPS, rgb, alpha, anchor, 0.78f);
   }
   void line(std::vector<float> pts, float w, uint32_t rgb, float alpha = 1, float glow = 0) {
-    Box b{1e9f, 1e9f, -1e9f, -1e9f};
-    for (size_t i = 0; i + 1 < pts.size(); i += 2)
-      b = {std::min(b.x0, pts[i]), std::min(b.y0, pts[i + 1]), std::max(b.x1, pts[i]), std::max(b.y1, pts[i + 1])};
+    Box b = bounds(pts);
     if (glow) {
       float m = w * 2 + 3;
       Op &g = add(Op::GLOW_LINE, true, rgb, glow, {b.x0 - m, b.y0 - m, b.x1 + m, b.y1 + m});
@@ -137,10 +152,8 @@ struct Layer {
     if (glow) {
       float R = r * 3.2f;
       add(Op::GLOW_DOT, true, rgb, glow, {x - R - 3, y - R - 3, x + R + 3, y + R + 3}).r = R;
-      add(Op::DOT, false, rgb, alpha, {x - r - 1, y - r - 1, x + r + 1, y + r + 1}).r = r;
-    } else {
-      add(Op::DOT, false, rgb, alpha, {x - r - 1, y - r - 1, x + r + 1, y + r + 1}).r = r;
     }
+    add(Op::DOT, false, rgb, alpha, {x - r - 1, y - r - 1, x + r + 1, y + r + 1}).r = r;
   }
   void ring(float x, float y, float r, uint32_t rgb, float w = 1, float alpha = 1) {
     float m = r + w / 2 + 1;
@@ -149,9 +162,7 @@ struct Layer {
     o.w = w;
   }
   void poly(std::vector<float> pts, uint32_t rgb, float alpha = 1) {
-    Box b{1e9f, 1e9f, -1e9f, -1e9f};
-    for (size_t i = 0; i + 1 < pts.size(); i += 2)
-      b = {std::min(b.x0, pts[i]), std::min(b.y0, pts[i + 1]), std::max(b.x1, pts[i]), std::max(b.y1, pts[i + 1])};
+    Box b = bounds(pts);
     add(Op::POLY, false, rgb, alpha, {b.x0 - 1, b.y0 - 1, b.x1 + 1, b.y1 + 1}).pts = std::move(pts);
   }
   // A box with round corners, into the picture
@@ -641,17 +652,17 @@ inline void set(const std::string &name, Layer l) {
   drop(m.layer.boxes);  // they were for laying it out
   m.soft.reset();
   m.sharp.reset();
-  // the overlay covers what the sharp ops do, an even size so its rows are whole bytes
+  // the overlay covers what the sharp ops do
   Box b{(float) W, (float) H, 0, 0};
   for (const Op &o : m.layer.ops)
     if (!o.soft)
       b = {std::min(b.x0, o.box.x0), std::min(b.y0, o.box.y0), std::max(b.x1, o.box.x1), std::max(b.y1, o.box.y1)};
   m.ow = 0;
   if (b.x0 < b.x1) {
-    m.ox = std::max(0, (int) floorf(b.x0)) & ~1;
-    m.oy = std::max(0, (int) floorf(b.y0)) & ~1;
-    m.ow = std::min(W - m.ox, ((int) ceilf(b.x1) - m.ox + 2) & ~1);
-    m.oh = std::min(H - m.oy, ((int) ceilf(b.y1) - m.oy + 2) & ~1);
+    m.ox = std::max(0, (int) floorf(b.x0));
+    m.oy = std::max(0, (int) floorf(b.y0));
+    m.ow = std::min(W - m.ox, (int) ceilf(b.x1) - m.ox + 1);
+    m.oh = std::min(H - m.oy, (int) ceilf(b.y1) - m.oy + 1);
     overlay::Source s{m.ow, m.oh, 1, 500, m.ox, m.oy, 1, [&m](int, int x, int y) { return sharp_pixel(m, x, y); }};
     s.colours = colours_of(m.layer);
     s.fade_ms = 300;

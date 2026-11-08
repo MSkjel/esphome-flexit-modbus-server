@@ -35,4 +35,12 @@ inline int nearest(uint32_t c, const uint32_t *pal, int n = 16) {
   return best;
 }
 
+// c's index in pal's n colours, the first nearest its bin(), looked up once in lut by bin(), 0xFF until then
+inline uint8_t lut_index(uint8_t *lut, uint32_t c, const uint32_t *pal, int n) {
+  uint8_t &i = lut[bin(c)];
+  if (i == 0xFF)
+    i = (uint8_t) nearest(bin_rgb(bin(c)), pal, n);
+  return i;
+}
+
 }  // namespace flexit::panel

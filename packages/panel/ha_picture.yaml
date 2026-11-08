@@ -6,7 +6,7 @@
 #     vars: {name: front_door, entity_id: camera.front_door, update_interval: 1min}
 # kind: camera, or image for an image.* entity
 # width: Home Assistant scales a camera picture down to this when the camera can, which keeps the download small.
-#   The ESP keeps a JPEG whole in RAM, so a big one needs PSRAM.
+#   The ESP keeps a JPEG whole in RAM, so a big one needs PSRAM, see online_picture.yaml.
 # resize, format, encoding and quality work as in online_picture.yaml
 defaults:
   ha_url: http://homeassistant.local:8123

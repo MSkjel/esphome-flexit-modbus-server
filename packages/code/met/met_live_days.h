@@ -11,9 +11,7 @@ namespace flexit::panel::met::live {
 // The sleigh across the sky now and then, a few times an evening, its colours as dim as the night's
 inline void sleigh(int y) {
   sometimes(minutes(30), minutes(3, 25), [y] {
-    uint32_t ms = across("sleigh", -36, y, 330, y - 18, 45000);
-    wave("sleigh", 0, "y", -3, 3, 4000, 4000, 0, 0, 20, false, "both");
-    return ms;
+    return across("sleigh", -36, y, 330, y - 18, 45000, "wave y -3, 3, 4000, 4000 jitter 20 slow both");
   });
 }
 
@@ -56,52 +54,48 @@ inline int from_midnight() {
   return m < 720 ? m : 1440 - m;
 }
 
-inline const char *const FW[] = {"fwpink", "fwcyan", "fwgold"};
-// Each lane's colour of FW. Three and their bursts' frames of their own are over the 6 KB, so the panel has two
-// and now and then a lane swaps its for the third.
-inline uint8_t fw_lane[2];
+// The bursts' colours
+inline constexpr uint32_t FW[] = {0xFF77BB, 0x66DDFF, 0xFFDD66};
 
-// A rocket goes up from the near hill with a spitting trail and bursts in its lane's colour as half a firework and
-// its mirror, a round peony or a crackling ring. Both halves get a frame of their own from the burst's first. The
-// ms it all takes.
-inline int rocket(int lane, const NearHill &hill, int top) {
-  std::string col = FW[fw_lane[lane]];
+// A rocket goes up from the near hill with a spitting trail and bursts in one of FW as half a firework and its
+// mirror, a round peony or a crackling ring: two copies, the mirror hidden till the burst. The ms it all takes.
+inline uint32_t rocket(int lane, const NearHill &hill, int top) {
+  const char *n = "firework";
   int x = (int) rnd(50, 270), y = top + (int) rnd(0, 50), fly = (int) rnd(1100, 1600);
-  bool ring = chance(0.5f);
-  int burst = ms_of(col, ring ? 8 : 0, ring ? 16 : 8);  // firework()'s frames, the peony's or the ring's
-  place("rocket", lane, x - 1, hill.at(x) - 9);
-  move("rocket", lane, x - 1, y, fly, "out");
-  later(fly, [=] {
-    remove("rocket", lane, 1);
-    for (int h = 0; h < 2; h++)
-      place_flipped(col, lane * 2 + h, x - 25 + h * 25, y - 24, h, {true, ring ? 8 : 0, 60});
-    later(burst - 300, [=] {  // fading out over its last frame
-      remove(col, lane * 2);
-      remove(col, lane * 2 + 1);
-    });
-  });
-  return fly + burst;
+  const char *burst = chance(0.5f) ? "ring" : "peony";
+  overlay::Consts k = {{"x", x}, {"y", y}, {"fly", fly}, {"lasts", ms_of(n, burst)}, {"colour", FW[(int) rnd(0, 3)]}};
+  place(n, lane * 2, x - 1, hill.at(x) - 9, std::string(R"(
+    clip rise
+    move x - 1, y over fly ease out
+    wait fly
+    move x - 25, y - 24
+    tint colour
+    clip )") + burst + R"(
+    wait lasts - 300
+    end fade 300
+  )",
+        k, {.fade = 60});
+  place(n, lane * 2 + 1, x, y - 24, std::string(R"(
+    flip x
+    tint colour
+    glide opacity 0
+    wait fly
+    clip )") + burst + R"(
+    glide opacity 100 over 60
+    wait lasts - 300
+    end fade 300
+  )",
+        k, {.fade = 60});
+  return (uint32_t) (fly + ms_of(n, burst));
 }
 
 // The lane's next rocket once its last has burst, sooner the nearer it gets to midnight
 inline void rockets(int lane, NearHill hill, int top) {
-  later((uint32_t) (2500 * (8 + from_midnight()) / 8 * rnd(0.5f, 1.5f)), [=] {
-    later((uint32_t) rocket(lane, hill, top), [=] {
-      if (chance(0.3f)) {  // the colour neither lane has
-        clear(FW[fw_lane[lane]]);
-        fw_lane[lane] = (uint8_t) (3 - fw_lane[0] - fw_lane[1]);
-        preload(FW[fw_lane[lane]]);
-      }
-      rockets(lane, hill, top);
-    });
-  });
+  later((uint32_t) (2500 * (8 + from_midnight()) / 8 * rnd(0.5f, 1.5f)),
+        [=] { later(rocket(lane, hill, top), [=] { rockets(lane, hill, top); }); });
 }
 
 inline void new_year(const Scene &s) {
-  fw_lane[0] = (uint8_t) rnd(0, 3);
-  fw_lane[1] = (uint8_t) ((fw_lane[0] + 1) % 3);
-  for (const char *n : {"rocket", FW[fw_lane[0]], FW[fw_lane[1]]})
-    preload(n);
   NearHill hill(s);
   int top = s.overlay ? 80 : 42;  // under the forecast
   for (int lane = 0; lane < 2; lane++)
@@ -120,23 +114,29 @@ inline void easter(const Scene &s) {
       if (s.egg[k].x + 5 > l && s.egg[k].x - 5 < r)
         top = std::max(top, s.egg[k].y + 6);
     top = std::min(top, H - 10);
-    place("chick", i, (l + r) / 2 - 3, top + 1, {true, i});
-    area("chick", i, l, top, r, std::min(top + 14, H), "bounce", "bounce");
-    wander("chick", i, 2, 5, 0, 180, 1000, 3000, 1500, 4000);
-    face("chick", i);
+    place("chick", i, (l + r) / 2 - 3, top + 1, R"(
+      area l, top, r, bottom bounce
+      wander 2, 5, 0, 180, 1000, 3000, 1500, 4000
+      face 0 mirror level
+      frame i
+    )",
+          {{"l", l}, {"top", top}, {"r", r}, {"bottom", std::min(top + 14, H)}, {"i", i}});
   }
   int sit = s.cabin ? GAP_L + 2 : s.home_x + 44;  // left of the cabin, or past the park's pole in town
   sometimes(minutes(8), minutes(1, 6), [hill = NearHill(s), sit] {
-    int stop = sit + (int) rnd(0, 12), y = hill.at(stop + 10) - 8;
-    place("hare", 0, -22, hill.at(-12) - 8);
-    later(amble("hare", 0, hill, -22, stop, 14, 10, 8, 0, 32), [=] {  // hops 32 px long
-      swap("hare", 0, "haresit", stop, y);
-      later(ms_of("haresit") - STEP, [=] {
-        swap("haresit", 0, "hare", stop, y);
-        remove_later(amble("hare", 0, hill, stop, W + 10, 18, 10, 8, 0, 32), "hare", 0);
-      });
-    });
-    return 24000u;  // its hops and the sitting, about
+    int stop = sit + (int) rnd(0, 12);
+    Walk in = walk(hill, -22, stop, 14, 10, 8, 0, 32), on = walk(hill, stop, W + 10, 18, 10, 8, 0, 32);  // 32 px hops
+    place("hare", 0, -22, in.y[0], R"(
+      clip hop
+      b = n_in; d = 1; t = t_in
+    )" + in.loop("in") + R"(
+      clip sit
+      wait rounds 1
+      clip hop
+      k = 0; b = n_on; t = t_on
+    )" + on.loop("on") + "end",
+          {{"n_in", in.n}, {"t_in", in.leg(14)}, {"n_on", on.n}, {"t_on", on.leg(18)}});
+    return (uint32_t) (in.n * in.leg(14) + ms_of("hare", "sit") + on.n * on.leg(18));
   });
 }
 
@@ -148,11 +148,15 @@ inline void may17(const Scene &s) {
   int y = std::min(hill_low(s, 0, W) + 6, H - 14), wdir = s.at.wdir;  // below all of the near hill's top
   sometimes(minutes(60), minutes(5, 40), [y] { return across("parade", -36, y - 4, 330, y, 60000); });
   sometimes(minutes(15), minutes(3, 15), [hill = NearHill(s), wdir] {
-    int x = wdir < 0 ? (int) rnd(90, 300) : (int) rnd(20, 230), ms = 60000;
-    place("balloon", 0, x, hill.at(x) + 8, {false, 0, 600});
-    move("balloon", 0, x + wdir * 70, -16, ms);
-    wave("balloon", 0, "x", -3, 3, 2600, 2600, 300, 300, 30, false, "both");
-    return remove_later(ms, "balloon", 0);
+    int x = wdir < 0 ? (int) rnd(90, 300) : (int) rnd(20, 230);
+    place("balloon", 0, x, hill.at(x) + 8, R"(
+      wave x -3, 3, 2600, 2600 hold 300, 300 jitter 30 slow both
+      move away, -16 over 60000
+      wait 60000
+      end
+    )",
+          {{"away", x + wdir * 70}}, {.fade = 600});
+    return 60000u;
   });
 }
 
@@ -163,15 +167,16 @@ inline void may17(const Scene &s) {
 inline void sankthans(const Scene &s) {
   int x = s.fire.x, y = s.fire.y;
   place("pyre", 0, x - 12, y - 27);  // its logs on the picture's
-  auto spark = [x, y](int i) {
-    place("spark", i, x - 1, y - 27, {true, i});
-    area("spark", i, x - 24, y - 77, x + 36, y - 23, "screen", "screen");
-    map("spark", i, "opacity", 100, 100, 0, 100);
-    wave("spark", i, "y", -46, 0, 0, 3400, 0, 0, 0, false, "low");
-    wave("spark", i, "x", -6, 6, 1500, 1500, 0, 0, 30, true, "both");
-  };
-  spark(0);
-  later(1700, [spark] { spark(1); });
+  for (int i = 0; i < 2; i++)        // the second hidden till 1.7 s on
+    place("spark", i, x - 1, y - 27, std::string(i ? "glide opacity 0\n" : "") + R"(
+      area x - 24, y - 77, x + 36, y - 23 screen
+      map opacity 100, 100, 0, 100
+      wait after
+      frame i
+      wave y -46, 0, 0, 3400 slow low
+      wave x -6, 6, 1500, 1500 jitter 30 random slow both
+    )" + (i ? "glide opacity 100 over 300" : ""),
+          {{"x", x}, {"y", y}, {"i", i}, {"after", 1700 * i}});
   // its smoke from over the cabin's roof, since the fire is in the meadow in front of it
   if (s.cabin)
     chimney("puffdusk", 4, x, s.cabin_y - 30, 30, 12, s.at.wdir);
@@ -188,8 +193,8 @@ inline void halloween(const Scene &s) {
   place("pumpkin", 0, s.pumpkin.x - 5, s.pumpkin.y - 3);
   sometimes(minutes(10), minutes(4, 30), [] {  // where the moon is by then
     Ride r = witch_ride(SEEN.moon_x, SEEN.moon_y, SEEN.top);
-    place_flipped("witch", 0, r.x[0], r.y[0], r.x[3] < r.x[0]);
-    return remove_later(ride("witch", r), "witch", 0);
+    place("witch", 0, r.x[0], r.y[0], r.text(), {}, {.left = r.left()});
+    return (uint32_t) r.all();
   });
   // Where it perches, x and the row under its feet: the ridge, the town's flat roofs and the near spruces in the gap
   // between the clock and the temperatures, or any near spruce if there's none of those
@@ -214,18 +219,22 @@ inline void halloween(const Scene &s) {
     int k = (int) rnd(0, (float) (tops.size() / 2)) * 2, x = tops[k] - 4, y = tops[k + 1] - 9;  // its feet on top
     int from = x < W / 2 ? W + 10 : -25, to = x < W / 2 ? -25 : W + 10;                         // in from the far side
     int in = (int) (hypotf((float) (x - from), (float) (y - 70)) * 1000 / 7.5f);
-    place("owl", 0, from, 70);
-    move("owl", 0, x - 3, y + 1, in);
-    later((uint32_t) in, [=] {
-      swap("owl", 0, "owlperch", x, y, true);
-      later(2 * ms_of("owlperch") - STEP, [=] {  // two rounds of its frames
-        swap("owlperch", 0, "owl", x - 3, y + 1);
-        int off = (int) (hypotf((float) (to - x), 54) * 1000 / 9);
-        move("owl", 0, to, y - 54, off, "in");
-        remove_later(off, "owl", 0);
-      });
-    });
-    return 70000u;  // its flights and the perching, about
+    int off = (int) (hypotf((float) (to - x), 54) * 1000 / 9);
+    place("owl", 0, from, 70, R"(
+      clip fly
+      move x - 3, y + 1 over in
+      wait in
+      clip perch
+      move x, y
+      wait rounds 2
+      clip fly
+      move x - 3, y + 1
+      move away, y - 54 over off ease in
+      wait off
+      end
+    )",
+          {{"x", x}, {"y", y}, {"in", in}, {"away", to}, {"off", off}});
+    return (uint32_t) (in + 2 * ms_of("owl", "perch") + off);
   });
 }
 

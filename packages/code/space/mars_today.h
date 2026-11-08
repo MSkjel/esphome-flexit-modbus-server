@@ -9,7 +9,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
-#include <new>
 #include <string>
 #include "../panel/picture_online.h"
 #include "space.h"
@@ -82,13 +81,7 @@ struct List : Ask {
 };
 
 // NASA's list of the newest
-struct Photos : fetch::Asker {
-  fetch::Request *make(int) override {
-    auto *r = new (std::nothrow) List();
-    if (r)
-      r->url = LIST;
-    return r;
-  }
+struct Photos : Listing<List> {
   bool got(fetch::Request &r) override;
 };
 
@@ -159,6 +152,7 @@ inline uint32_t pixel(int x, int y) {
 template<typename Img, typename S> void setup(const std::string &name, Img &&image, const char *every, S &&status) {
   list.what = "photo";
   list.server = "NASA";
+  list.url = LIST;
   ask_every(list, every, status);
   space::today(today, name, image, pixel, level);
 }

@@ -39,7 +39,7 @@ inline uint32_t fnv1_hash(const char *str) {
 
 inline bool no_ram;  // RAMAllocator fails while set
 template<typename T> struct RAMAllocator {
-  enum { ALLOC_EXTERNAL = 1, ALLOC_INTERNAL = 2 };
+  enum { ALLOC_EXTERNAL = 1, ALLOC_INTERNAL = 2, PREFER_INTERNAL = 8 };
   RAMAllocator(uint8_t = 0) {}
   T *allocate(size_t n) { return no_ram ? nullptr : (T *) malloc(n * sizeof(T)); }
   void deallocate(T *p, size_t) { free(p); }

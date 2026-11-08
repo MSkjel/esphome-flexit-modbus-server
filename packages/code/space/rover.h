@@ -9,7 +9,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
-#include <new>
 #include <string>
 #include <vector>
 #include "rover_maps.h"
@@ -90,12 +89,11 @@ struct Map : fetch::Asker {
   Waypoint first, last;
 
   fetch::Request *make(int) override {
-    auto *q = new (std::nothrow) List();
-    if (q) {
-      std::string code = r->code;
+    std::string code = r->code;
+    auto *q =
+        fetch::request<List>("https://mars.nasa.gov/mmgis-maps/" + code + "/Layers/json/" + code + "_waypoints.json");
+    if (q)
       q->r = r;
-      q->url = "https://mars.nasa.gov/mmgis-maps/" + code + "/Layers/json/" + code + "_waypoints.json";
-    }
     return q;
   }
   bool got(fetch::Request &q) override;
@@ -157,22 +155,13 @@ inline uint32_t sol_middle(const Rover &r, int sol) { return sol_start(sol, r.la
 
 // ---------------------------------------------------------------- the marks
 
-// Where the line from the map's middle to x, y leaves the screen less m
-inline void to_edge(float &x, float &y, float m) {
-  float cx = marks::W / 2.0f, cy = marks::H / 2.0f, dx = x - cx, dy = y - cy;
-  float kx = dx > 0 ? (marks::W - m - cx) / dx : dx < 0 ? (m - cx) / dx : 1e9f;
-  float ky = dy > 0 ? (marks::H - m - cy) / dy : dy < 0 ? (m - cy) / dy : 1e9f;
-  float k = std::min(kx, ky);
-  x = cx + dx * k;
-  y = cy + dy * k;
-}
-
 // Where it is now and which way it faces, or an arrow at the edge toward it when it's off the map. "Now" beside it.
 inline void now_mark(marks::Layer &l, float x, float y, float yaw) {
   bool off = x < 8 || y < 8 || x > marks::W - 8 || y > marks::H - 8;
   if (off) {
-    yaw = atan2f(x - marks::W / 2.0f, marks::H / 2.0f - y) * 180 / (float) M_PI;
-    to_edge(x, y, 11);  // the tip 3 px in
+    float cx = marks::W / 2.0f, cy = marks::H / 2.0f;
+    yaw = atan2f(x - cx, cy - y) * 180 / (float) M_PI;
+    marks::edge({11, 11, marks::W - 11.0f, marks::H - 11.0f}, cx, cy, x - cx, y - cy, x, y);  // the tip 3 px in
   }
   float a = yaw * (float) M_PI / 180;
   l.poly({x + 8 * sinf(a), y - 8 * cosf(a), x + 3.6f * sinf(a - 1.9f), y - 3.6f * cosf(a - 1.9f),
@@ -346,8 +335,7 @@ void setup(const char *rover, const Mosaic &map, const char *every, const char *
     uint8_t two = map.px[(y * marks::W + x) / 2];
     return map.rgb[x & 1 ? two & 15 : two >> 4];
   };
-  s.encoding = picture::encoding_of(encoding);
-  s.quality = picture::quality_of(quality);
+  s.coding(encoding, quality);
   picture::add(rover, s);
   marks::on(rover);
 }

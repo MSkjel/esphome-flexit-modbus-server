@@ -272,7 +272,7 @@ api:
       variables: &drift_animation {name: string, copy: int, vx: float, vy: float}
       then: &do_drift_animation
         - lambda: flexit::panel::overlay::drift(name, copy, vx, vy);
-    # what: x, y, turn, size, opacity or speed
+    # what: x, y, turn, size, opacity, speed or light
     - action: panel_glide_animation
       variables: &glide_animation {name: string, copy: int, what: string, to: int, ms: int, ease: string}
       then: &do_glide_animation
@@ -285,6 +285,11 @@ api:
       variables: &flip_animation {name: string, copy: int, horizontal: bool, vertical: bool}
       then: &do_flip_animation
         - lambda: flexit::panel::overlay::flip(name, copy, horizontal, vertical);
+    # colour: like FF77BB, the copy's colours as shades of it. "" or none for its own.
+    - action: panel_tint_animation
+      variables: &tint_animation {name: string, copy: int, colour: string}
+      then: &do_tint_animation
+        - lambda: flexit::panel::overlay::tint(name, copy, colour);
     # edge_x, edge_y: screen, cross or bounce
     - action: panel_area_animation
       variables: &area_animation
@@ -320,6 +325,11 @@ api:
       variables: &rounds_animation {name: string, copy: int, rounds: int}
       then: &do_rounds_animation
         - lambda: flexit::panel::overlay::rounds(name, copy, rounds);
+    # a script the copy runs on the panel, see docs/panel.md#animation-scripts. One that plays frames needs own.
+    - action: panel_script_animation
+      variables: &script_animation {name: string, copy: int, code: string}
+      then: &do_script_animation
+        - lambda: flexit::panel::overlay::script(name, copy, code);
     - action: panel_frame_rate_animation
       variables: &frame_rate_animation {name: string, percent: int}
       then: &do_frame_rate_animation
@@ -347,10 +357,12 @@ script:
   - {id: panel_glide_animation, parameters: *glide_animation, then: *do_glide_animation}
   - {id: panel_spin_animation, parameters: *spin_animation, then: *do_spin_animation}
   - {id: panel_flip_animation, parameters: *flip_animation, then: *do_flip_animation}
+  - {id: panel_tint_animation, parameters: *tint_animation, then: *do_tint_animation}
   - {id: panel_area_animation, parameters: *area_animation, then: *do_area_animation}
   - {id: panel_wander_animation, parameters: *wander_animation, then: *do_wander_animation}
   - {id: panel_face_animation, parameters: *face_animation, then: *do_face_animation}
   - {id: panel_wave_animation, parameters: *wave_animation, then: *do_wave_animation}
   - {id: panel_map_animation, parameters: *map_animation, then: *do_map_animation}
   - {id: panel_rounds_animation, parameters: *rounds_animation, then: *do_rounds_animation}
+  - {id: panel_script_animation, parameters: *script_animation, then: *do_script_animation}
   - {id: panel_frame_rate_animation, parameters: *frame_rate_animation, then: *do_frame_rate_animation}

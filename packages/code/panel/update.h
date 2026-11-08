@@ -24,6 +24,7 @@ struct Hooks {
   virtual uint8_t server_address() = 0;                               // this ESP's
   virtual void set_updating(bool updating) = 0;                       // the bus is ours, and the panel away
   virtual uint32_t quiet_min_us() = 0;                                // since the last frame on the bus
+  virtual uint32_t status_age_us() = 0;                               // since the CX60's status broadcast ended
   virtual void save_settings() = 0;                                   // asks the panel for them
   virtual bool settings_saved() = 0;                                  // they're in, or there was no panel to ask
   virtual void settings_flashed() = 0;                                // they go back once the panel starts again
@@ -50,7 +51,7 @@ void progress(int pct);
 // ---- the versions, for the Panel Firmware entity -------------------------------------------------------
 inline int32_t panel_version = -1;   // what the panel reports over the link, -1 = not known, like a stock one
 inline int32_t latest_version = -1;  // in the file at the URL, -1 = not known
-inline bool installing = false;      // the entity started it and it's still downloading
+inline bool downloading = false;     // the file is on its way to the spare slot
 inline std::string link_note;        // which one to update if the panel has another link version, else empty
 
 // A status when it changes, so it's still the last one there after the flash that caused it
@@ -91,9 +92,14 @@ inline constexpr uint32_t RESET_AGAIN_MAX_MS = 5000;  // at most
 inline constexpr uint32_t TOTAL_TIMEOUT_MS = 20 * 60000;
 inline constexpr uint32_t SAVE_TIMEOUT_MS = 10000;  // for the panel's settings over the link
 inline constexpr uint32_t DOWNLOAD_TIMEOUT_MS = 5 * 60000;
-inline constexpr uint32_t STALL_MS = 15000;     // no data from the server for this long, it's gone
 inline constexpr uint32_t BUS_QUIET_US = 2500;  // since the last frame on the bus before we send
-inline constexpr int READ_AGAIN = -0x7007;      // -ESP_ERR_HTTP_EAGAIN, http_request's read() timed out with no data
+// The requests that go once a phase are short, so they wait for the CX60's quiet time after its status broadcast
+inline constexpr uint32_t ONE_SHOT_US = 4000;     // what's left of it for one and its answer
+inline constexpr uint32_t WINDOW_WAIT_MS = 1000;  // without one that long, any quiet will do
+inline constexpr uint8_t PROBE_TRIES = 4;         // at each address, the CX60's polls can run into a few
+inline constexpr uint8_t ENTER_TRIES = 4;         // for the loader to show after the kick or the reset
+inline constexpr uint8_t CLEAN_TRIES = 6;         // resets for a loader left waiting, a busy one misses some
+inline constexpr uint8_t RESET_TRIES = 6;         // resets after the firmware's in
 
 enum Phase {
   IDLE,
@@ -159,26 +165,14 @@ inline Flash F;
 
 inline bool running() { return F.phase != IDLE && F.phase != DONE && F.phase != FAIL; }
 
-// For update.yaml's button, before it downloads. False with a status if a flash is running or there's no spare slot.
-bool can_start();
-
-// The download as stage() reads it, from http_request's response
-struct Download {
-  int status_code;
-  size_t content_length;  // 0 when the server doesn't say, like a chunked one
-  std::function<int(uint8_t *buf, size_t max)> read;
-  std::function<bool()> read_complete;
-};
-
-// Writes the .fxup to the spare app slot a block at a time, which holds up the main loop until it's done, then
-// starts the flash
-void stage(const Download &d);
-
-// update.yaml's http_request.get passes its response here, once can_start() said yes
-template<typename Response> void download(Response &r) {
-  stage({r->status_code, r->content_length, [&r](uint8_t *buf, size_t max) { return r->read(buf, max); },
-         [&r]() { return r->is_read_complete(); }});
-}
+// The download into the spare app slot, a block at a time, from update_yaml.h. stage_begin() before it asks, false
+// with a status if a flash or a download is running, or there's no spare slot or RAM. stage_feed() with each piece
+// of the answer and its length, 0 when the server doesn't say, in the download's task, false once it has had enough.
+// stage_end() in the loop with the answer's HTTP status, 0 for none or one cut short, says how it went and starts
+// the flash once it's all in.
+bool stage_begin();
+bool stage_feed(const uint8_t *p, size_t n, size_t total);
+void stage_end(int code, bool no_ram = false);
 
 // The check asks for just the start of the file, the version is in its name. A server that sends it all anyway gets
 // cut off after this.
@@ -190,8 +184,8 @@ bool check_head(const uint8_t *head, size_t n);
 // With the firmware staged
 void begin();
 
-// The component's status and read callbacks. One bus action per call, and only once the bus has been quiet long
-// enough not to collide with the CX60.
+// The component's status and read callbacks: the download's progress, then one bus action per call, and only once
+// the bus has been quiet long enough not to collide with the CX60.
 void pump();
 
 // The component's frame callback, with every slice received, our own frames too. Collects the bootloader's bytes.

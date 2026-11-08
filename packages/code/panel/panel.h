@@ -220,6 +220,7 @@ inline void setup(uint8_t panel_address) {
     overlay::ack(v);
   };
   h[K_OVERLAY_GONE] = overlay::gone;
+  h[K_OVERLAY_MARK] = overlay::mark;
   h[K_SHOT_DONE] = shot::done;
   h[K_SETTINGS] = settings::got;
   for (int i = 0; i < N_ITEMS; i++)

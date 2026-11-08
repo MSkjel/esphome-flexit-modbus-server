@@ -45,7 +45,7 @@ unsigned plink_pack_row(const uint8_t *in, unsigned n, uint8_t *out) {
 
 unsigned plink_overlay_record_in(const pdeflate_work_t *work, const uint8_t *prev, const uint8_t *cur, unsigned w,
                                  unsigned h, uint8_t delay, uint8_t *out) {
-  unsigned rb = w / 2, x0 = rb, x1 = 0, y0 = h, y1 = 0;
+  unsigned rb = (w + 1) / 2, x0 = rb, x1 = 0, y0 = h, y1 = 0;
   for (unsigned y = 0; y < h; y++)
     for (unsigned x = 0; x < rb; x++)
       if (!prev || prev[y * rb + x] != cur[y * rb + x]) {
@@ -80,7 +80,7 @@ unsigned plink_overlay_record(const uint8_t *prev, const uint8_t *cur, unsigned 
 
 uint32_t plink_overlay_pieces(const uint8_t *frame, unsigned w, unsigned h, uint16_t clear, uint8_t delay, uint8_t *out,
                               uint32_t cap) {
-  unsigned rb = w / 2;
+  unsigned rb = (w + 1) / 2;
   uint32_t n = 0;
   for (unsigned y0 = 0; y0 < h; y0 += PIECE_ROWS) {
     unsigned x0 = rb, x1 = 0, top = h, bottom = 0;  // bytes x0..x1 - 1 of rows top..bottom - 1 have a colour
@@ -152,7 +152,7 @@ int plink_pic_patch(uint8_t *b, uint8_t id, uint16_t y, uint16_t count, uint32_t
 }
 
 int plink_overlay_begin(uint8_t *b, uint8_t id, uint8_t slot, uint8_t kind, uint16_t w, uint16_t h, uint8_t scale,
-                        uint32_t size, const uint32_t *pal) {
+                        uint32_t size, const uint32_t *pal, uint16_t glows, uint32_t shade) {
   b[PIC_MSG_ID] = id;
   b[OVERLAY_BEGIN_SLOT] = slot;
   plink_put16(b + OVERLAY_BEGIN_W, w);
@@ -165,7 +165,10 @@ int plink_overlay_begin(uint8_t *b, uint8_t id, uint8_t slot, uint8_t kind, uint
   memset(opa, 0, OVERLAY_PAL_LEN - PIC_PAL_LEN);
   for (int i = 0; i < 16; i++)
     opa[i / 2] |= (uint8_t) (((pal[i] >> 24) * 15 + 127) / 255 << (i & 1 ? 0 : 4));
-  return OVERLAY_BEGIN_HEAD + OVERLAY_PAL_LEN;
+  plink_put16(b + OVERLAY_BEGIN_GLOWS, glows);
+  for (int i = 0; i < 3; i++)
+    b[OVERLAY_BEGIN_SHADE + i] = (uint8_t) (shade >> (16 - 8 * i));
+  return OVERLAY_BEGIN_LEN;
 }
 
 int plink_kind(uint16_t key) {
@@ -178,6 +181,7 @@ int plink_kind(uint16_t key) {
     case K_PIC_CLEAR:
     case K_OVERLAY_CLEAR:
     case K_OVERLAY_GONE:
+    case K_OVERLAY_MARK:
     case K_SHOT:
     case K_SHOT_DONE:
       return PLINK_EVENT;
@@ -188,10 +192,11 @@ int plink_kind(uint16_t key) {
     case K_PIC_PART:
     case K_OVERLAY_BEGIN:
     case K_OVERLAY_DEPTH:
+    case K_OVERLAY_TINT:
     case K_LOG:
       return PLINK_BYTES;
   }
-  if (key >= K_OVERLAY_FRAMES && key <= K_OVERLAY_ROUNDS)
+  if (key >= K_OVERLAY_FRAMES && key <= K_OVERLAY_SCRIPT)
     return PLINK_BYTES;
   if (key >= K_SAVER_LINE && key < K_SAVER_LINE + SAVER_LINES)
     return PLINK_BYTES;

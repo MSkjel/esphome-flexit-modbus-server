@@ -18,16 +18,16 @@ uint64_t drawn(const Scene &s);
 // lends the cabin, is left out, so nothing goes behind the sky.
 picture::Parts parts_of(const Scene &s);
 
-// Gives each colour slot and sprite its place in the 16 colours. Should the scene have more, the one that's least
-// missed goes to the colour nearest it until there are 16. Not the sprites' or other small things', unless there's
+// Gives each colour slot and stamp its place in the 16 colours. Should the scene have more, the one that's least
+// missed goes to the colour nearest it until there are 16. Not the stamps' or other small things', unless there's
 // nothing else. The colours that are in prev, the panel's palette, keep their places, so rows that didn't change
-// stay the same. Sprites left out for the animations, see s.live, take none.
+// stay the same. Stamps left out for the animations, see s.live, take none.
 void palette(Scene &s, const uint32_t *prev);
 
 // palette() a few rows at a time, so the loop gets back to the bus: start(), count() until it's true, then end().
 // The scene mustn't change in between.
 struct Palette {
-  static constexpr int MAX = COLOURS + SPRITES;
+  static constexpr int MAX = COLOURS + STAMPS;
   uint32_t c[MAX], used[MAX];
   bool key[MAX];
   int n = 0, y = H;  // colours, the next row to count

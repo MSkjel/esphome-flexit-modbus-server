@@ -6,22 +6,41 @@
 #include <cstdint>
 #include <functional>
 #include <initializer_list>
+#include <map>
 #include <string>
 #include <vector>
 #include "met_scene.h"
 
 namespace flexit::panel::met::live {
 
-// One frame being drawn: 0xFFRRGGBB per pixel, 0 = nothing there
-struct Canvas {
-  int w, h;
-  uint32_t *px;
-  void put(int x, int y, uint32_t rgb) const {
-    if (x >= 0 && y >= 0 && x < w && y < h)
-      px[y * w + x] = 0xFF000000u | rgb;
+// A frame's colours, 0xRRGGBB from 1 on
+struct Colours {
+  static constexpr int MAX = 32;
+  uint32_t rgb[MAX];
+  int n = 1;
+  // c's number, a new one while there's room, else the nearest there is
+  uint8_t of(uint32_t c) {
+    c &= 0xFFFFFF;
+    int best = n > 1 ? 1 + nearest(c, rgb + 1, n - 1) : 0;
+    if ((!best || rgb[best] != c) && n < MAX) {
+      rgb[n] = c;
+      return (uint8_t) n++;
+    }
+    return (uint8_t) best;
   }
 };
-// A colour that glows, which dimmed() leaves as it is: a troll's eyes
+
+// One frame being drawn: a byte per pixel, its colour's number in cols, 0 = nothing there
+struct Canvas {
+  int w, h;
+  uint8_t *px;
+  Colours *cols;
+  void put(int x, int y, uint32_t rgb) const {
+    if (x >= 0 && y >= 0 && x < w && y < h)
+      px[y * w + x] = cols->of(rgb);
+  }
+};
+// A colour that glows, which the light on the panel leaves as it is: a troll's eyes
 inline constexpr uint32_t LAMP = 0xF2E27A;
 
 // A sprite's frames, drawn when they're wanted
@@ -29,6 +48,12 @@ struct Frames {
   int w = 0, h = 0;
   std::vector<uint16_t> delays;  // ms each frame shows, one per frame
   std::function<void(int f, const Canvas &c)> draw;
+  // A strip's clips by name, see make_sprite(): their first and last frame, and the size of what they show from
+  // the top left
+  struct Clip {
+    int first, last, w, h;
+  };
+  std::map<std::string, Clip> clips = {};
   int count() const { return (int) delays.size(); }
   // ms frames from to to - 1 show, to the last without to
   int ms(int from = 0, int to = INT_MAX) const {
@@ -51,8 +76,6 @@ struct Fall {  // rain_tile and snow_tile: streak length or flake size, px a fra
   uint32_t col;
   float dens;
 };
-// The aurora's bend in px at x of a piece w wide in frame k, nothing at both ends
-int aur_wig(int x, int w, int k);
 
 // The box round the bolt through n points, 2 px wide: from 3 px left of the points and 2 px above them
 Box bolt_box(const int16_t *x, const int16_t *y, int n);

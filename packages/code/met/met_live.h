@@ -1,8 +1,8 @@
 // The weather picture's animations, one show at a time: what fits the weather, the light and the day, like gulls
 // over the cabin, rain from under the clouds or the lights on the Christmas spruce. met_sprites.h draws them in
-// their frames, the panel moves them on its own, and now and then something happens by chance. The picture leaves
-// out what a show draws itself. The shows are in met_live_*.h, met_live_shows.h picks one, met.h runs it, see the
-// Panel Animation Weather switch in met.yaml.
+// their frames, and each copy runs a script on the panel, see overlay_script.h: how it moves, what frames it plays
+// and when it goes. Now and then something comes by. The picture leaves out what a show draws itself. The shows are
+// in met_live_*.h, met_live_shows.h picks one, met.h runs it, see the Panel Animation Weather switch in met.yaml.
 #pragma once
 #include <algorithm>
 #include <climits>
@@ -30,28 +30,30 @@ struct Timer {
 
 // The show that runs and what it made
 struct Running {
-  bool on;         // the switch
-  int show = -1;   // met_live_shows.h's SHOWS, -1 none
-  uint32_t where;  // the place, the landscape and what the show is made of, see apply()
-  bool flag;       // the flag is up with it
-  int8_t flown;    // the way the wind blew it when it went up
-  int16_t sun_x;   // the sun's now, -1 down
-  float light;     // the scene's now, see in_light()
+  bool on;                           // the switch
+  int show = -1;                     // met_live_shows.h's SHOWS, -1 none
+  uint32_t where;                    // the place, the landscape and what the show is made of, see apply()
+  bool flag;                         // the flag is up with it
+  int8_t flown;                      // the way the wind blew it when it went up
+  int16_t sun_x;                     // the sun's now, -1 down
+  float light;                       // the scene's now, see in_light()
+  std::map<std::string, float> lit;  // the sprites in it, and the least light each is in
   std::vector<Timer> timers;
-  std::map<std::string, Frames> sprites;  // the show's, by name
-  std::vector<std::string> names;         // the panel animations it made
+  std::map<std::string, Frames> sprites;   // the show's, by name
+  std::vector<std::string> names;          // the panel animations it made
+  std::map<std::string, uint32_t> comers;  // the sprites of visits and encounters, and the millis() they go by
   Rng rng{1};
-  std::vector<uint32_t> px;  // the frame frame_pixel() drew last, empty without the RAM for it
+  std::vector<uint8_t> px;  // the frame frame_pixel() drew last, empty without the RAM for it
+  Colours cols;             // its colours
   const Frames *drawn;
   int drawn_f;
-  int8_t flag_light;                   // the light the flag was dimmed to, in tenths
   std::string rare;                    // the sprite of the rare encounter on, see met_live_rare.h
   std::function<uint32_t(int)> visit;  // the show's visitors, see visitors()
   int visits;
 };
 inline Running R;
 
-// ---- what the shows use, the panel's animation actions by sprite name
+// ---- what the shows use
 
 // a or more, below b
 inline float rnd(float a, float b) { return a + (b - a) * R.rng.f(); }
@@ -63,12 +65,12 @@ constexpr uint32_t minutes(float m) { return (uint32_t) (m * 60000); }
 inline std::string key(const std::string &name) { return "w_" + name; }
 
 inline void free_px() {
-  std::vector<uint32_t>().swap(R.px);
+  std::vector<uint8_t>().swap(R.px);
   R.drawn = nullptr;
 }
 
-// Pixel x, y of sp's frame f, for overlay.h. The frame is drawn whole and kept, 4 bytes a pixel, up to 28 KB
-// for the rain. Without the RAM it stays empty: a failed allocation would restart the ESP.
+// Pixel x, y of sp's frame f as 0xAARRGGBB, for overlay.h. The frame is drawn whole and kept, a byte a pixel, up
+// to 7 KB for the rain. Without the RAM it stays empty: a failed allocation would restart the ESP.
 inline uint32_t frame_pixel(const Frames *sp, int f, int x, int y) {
   if (R.drawn != sp || R.drawn_f != f) {
     size_t n = (size_t) sp->w * sp->h;
@@ -76,16 +78,18 @@ inline uint32_t frame_pixel(const Frames *sp, int f, int x, int y) {
       free_px();  // before the bigger one is taken
     R.drawn = sp;
     R.drawn_f = f;
-    if (R.px.empty() && !picture::has_ram(n * sizeof(uint32_t), n * sizeof(uint32_t))) {
+    if (R.px.empty() && !picture::has_ram(n, n)) {
       if (!f) {
         ESP_LOGW("met", "No RAM to draw the frames of a %dx%d weather animation", sp->w, sp->h);
       }
       return 0;
     }
     R.px.assign(n, 0);
-    sp->draw(f, Canvas{sp->w, sp->h, R.px.data()});
+    R.cols = Colours();
+    sp->draw(f, Canvas{sp->w, sp->h, R.px.data(), &R.cols});
   }
-  return R.px.empty() ? 0 : R.px[(size_t) y * sp->w + x];
+  uint8_t i = R.px.empty() ? 0 : R.px[(size_t) y * sp->w + x];
+  return i ? 0xFF000000u | R.cols.rgb[i] : 0;
 }
 
 // A sprite the show made itself, like a cloud from the picture's. Before it's placed.
@@ -109,13 +113,24 @@ inline int ms_of(const std::string &name, int from = 0, int to = INT_MAX) {
   const Frames *sp = frames_of(name);
   return sp ? sp->ms(from, to) : 0;
 }
+// ms of a strip's clip, see make_sprite()
+inline int ms_of(const std::string &name, const char *clip) {
+  const Frames *sp = frames_of(name);
+  if (!sp || !sp->clips.count(clip))
+    return 0;
+  const Frames::Clip &c = sp->clips.at(clip);
+  return sp->ms(c.first, c.last + 1);
+}
 // Where name, its top at y, comes out of the forest at e from and goes back into, see Edge::out()
 inline int out_of(const Edge &e, const std::string &name, int y) {
   const Frames *sp = frames_of(name);
   return sp ? e.out(sp->w, sp->h, y + sp->h - 1) : -2;
 }
 
-// name's sprite as a panel animation
+// The colour the scene's goes toward as the light goes, see met::mix()
+inline constexpr uint32_t NIGHT = 0x223344;
+
+// name's sprite as a panel animation, a strip's clips for its scripts. Its light goes toward NIGHT, but for LAMP.
 inline bool ready(const std::string &name) {
   std::string k = key(name);
   if (overlay::sources.count(k))
@@ -127,6 +142,10 @@ inline bool ready(const std::string &name) {
   overlay::Source s{sp->w, sp->h, sp->count(), 100, 0, 0, 1, pixel};
   s.delays = sp->delays;
   s.fade_ms = 300;
+  s.glows = {LAMP};
+  s.shade = NIGHT;
+  for (auto &[n, c] : sp->clips)
+    s.clips[n] = {c.first, c.last, c.w, c.h};
   overlay::add(k, std::move(s));
   R.names.push_back(k);
   return true;
@@ -139,100 +158,145 @@ inline void unload(const std::string &name) {
   overlay::sources.erase(k);
   R.names.erase(std::remove(R.names.begin(), R.names.end(), k), R.names.end());
   R.sprites.erase(name);
+  R.comers.erase(name);
+  R.lit.erase(name);
+  if (R.rare == name)
+    R.rare.clear();
   R.drawn = nullptr;
 }
 
-// sp in the light there is, 1 day to 0 night, the way the picture's colours go, but for LAMP
-inline Frames dimmed(Frames sp, float light) {
-  sp.draw = [draw = sp.draw, light](int f, const Canvas &c) {
-    draw(f, c);
-    for (int i = 0; i < c.w * c.h; i++)
-      if (c.px[i] && (c.px[i] & 0xFFFFFF) != LAMP)
-        c.px[i] = 0xFF000000u | met::mix(0x223344, c.px[i] & 0xFFFFFF, light);
-  };
-  return sp;
-}
+// Sprite n's copies from now on in the light there is, 1 day to 0 night, the way the picture's colours go, but never
+// darker than least, so it still shows: under the stars by default
+inline void in_light(const std::string &n, float least = 0.35f) { R.lit[n] = least; }
+// What a lit sprite's light is now, percent
+inline int light_of(float least) { return (int) lroundf(std::max(R.light, least) * 100); }
 
-// The show's sprite n in the light there is now, but never darker than under the stars, so it still shows. It's
-// made again, so only while it's off the panel.
-inline void in_light(const char *n) {
-  unload(n);
-  Frames sp;
-  if (make_sprite(n, sp))
-    add(n, dimmed(std::move(sp), std::max(R.light, 0.35f)));
+// The lit sprites' copies on the panel glide to the light there is now
+inline void relight() {
+  for (auto &[n, least] : R.lit)
+    if (overlay::Overlay *a = overlay::find(key(n)))
+      for (size_t i = 0; i < a->copies.size(); i++)
+        if (a->copies[i].used)
+          overlay::glide(key(n), (int) i, "light", light_of(least), 3000, "both");
 }
 
 // How a copy is placed
 struct How {
-  bool own = false;                 // a frame of its own
-  int start = 0;                    // frames in, with one
-  int fade = -1;                    // ms it fades in, -1 the usual 300
+  bool left = false;                // mirrored, facing left
+  int fade = -1;                    // ms it fades in and out, -1 the usual 300
   uint8_t depth = OVERLAY_NEAREST;  // a Depth, behind the scene's parts nearer than it
 };
-inline void place(const std::string &n, int i, int x, int y, How o = {}) {
-  if (ready(n))
-    overlay::place(key(n), i, x, y, o.own, o.start, o.fade, o.depth);
+// Copy i of sprite n at x, y doing what script says, with numbers by name in k, see overlay_script.h, in the light
+// there is if it's lit. With a frame of its own if the script plays frames. o.left mirrors it with its left at x all
+// the same.
+inline bool place(const std::string &n, int i, int x, int y, const std::string &script = "",
+                  const overlay::Consts &k = {}, How o = {}) {
+  if (!ready(n))
+    return false;
+  std::string error, first = o.left ? "flip x\n" : "";
+  if (auto l = R.lit.find(n); l != R.lit.end())
+    first += "glide light " + std::to_string(light_of(l->second)) + "\n";
+  overlay::Program p = overlay::compile(first + script, error, overlay::sources[key(n)].clips, k);
+  if (!error.empty()) {
+    ESP_LOGW("met", "Weather animation %s's script, %s", n.c_str(), error.c_str());
+    return false;
+  }
+  return overlay::place(key(n), i, x, y, std::move(p), false, o.fade, o.depth);
 }
-inline void flip(const std::string &n, int i, bool h, bool v) { overlay::flip(key(n), i, h, v); }
-inline void depth(const std::string &n, int i, uint8_t d) { overlay::depth(key(n), i, d); }
-// The panel pads a sprite to an even width, so a mirrored odd-width one moves a column. x that makes up for it.
-inline int flip_x(const std::string &n, int x, bool flipped) {
-  const Frames *sp = frames_of(n);
-  return flipped && sp ? x - (sp->w & 1) : x;
-}
-// Copy i of n at x, y, mirrored if flipped, see flip_x()
-inline void place_flipped(const std::string &n, int i, int x, int y, bool flipped, How o = {}) {
-  place(n, i, flip_x(n, x, flipped), y, o);
-  if (flipped)
-    flip(n, i, true, false);
+// Copy i of n, placed, runs script from now on
+inline void script(const std::string &n, int i, const std::string &text, const overlay::Consts &k = {}) {
+  if (overlay::copy_for(key(n), i).second)
+    overlay::script(key(n), i, text, k);
 }
 inline void remove(const std::string &n, int i, int fade = 300) { overlay::remove(key(n), i, fade); }
-// Copy i of from swaps for to at x, y, at its depth, with own a frame of its own start frames in. Nothing shows
-// between them.
-inline void swap(const std::string &from, int i, const std::string &to, int x, int y, bool own = false, int start = 0) {
-  if (ready(to))
-    overlay::swap(key(from), i, key(to), x, y, own, start);
-}
-// swap() to to facing left if left, see place_flipped()
-inline void swap_flipped(const std::string &from, int i, const std::string &to, int x, int y, bool left,
-                         bool own = false, int start = 0) {
-  swap(from, i, to, flip_x(to, x, left), y, own, start);
-  if (left)
-    flip(to, i, true, false);
-}
 // name's animation and its copies go, faded out
 inline void clear(const std::string &n) { overlay::clear(key(n)); }
-// a show's sprite ready on the panel before it's placed, so a swap to it doesn't wait
-inline void preload(const std::string &n) {
-  if (ready(n))
-    overlay::slot_for(key(n));
+
+// ---- script text
+
+inline std::string num(int v) { return std::to_string(v); }
+
+// A leg of a path: to x, y in ms
+struct Leg {
+  int x, y, ms;
+  const char *ease = "none";
+};
+// Moves along legs one after another, each waited for
+inline std::string path(std::initializer_list<Leg> legs) {
+  std::string t;
+  for (const Leg &l : legs)
+    t += "move " + num(l.x) + ", " + num(l.y) + " over " + num(l.ms) + " ease " + l.ease + "; wait " + num(l.ms) + "\n";
+  return t;
 }
-inline void move(const std::string &n, int i, int x, int y, int ms, const char *ease = "none") {
-  overlay::move(key(n), i, x, y, ms, ease);
+inline int path_ms(std::initializer_list<Leg> legs) {
+  int t = 0;
+  for (const Leg &l : legs)
+    t += l.ms;
+  return t;
 }
-inline void drift(const std::string &n, int i, float vx, float vy) { overlay::drift(key(n), i, vx, vy); }
-inline void glide(const std::string &n, int i, const char *what, int to, int ms, const char *ease = "none") {
-  overlay::glide(key(n), i, what, to, ms, ease);
+
+// The near hill's top every 4 px, for walks along it after the scene's gone
+struct NearHill {
+  uint8_t y[W / 4 + 1] = {};
+  NearHill() = default;
+  explicit NearHill(const Scene &s) {
+    for (int i = 0; i <= W / 4; i++)
+      y[i] = s.land->hill[2][std::min(W - 1, i * 4)];
+  }
+  int at(int x) const {
+    x = std::clamp(x, 0, W - 1);
+    return (y[x / 4] * (4 - x % 4) + y[x / 4 + 1] * (x % 4) + 2) / 4;
+  }
+};
+// The row of the near hill's lowest point over columns l to r - 1
+inline int hill_low(const Scene &s, int l, int r) {
+  int y = 0;
+  for (int x = l; x < r; x++)
+    y = std::max<int>(y, s.land->hill[2][x]);
+  return y;
 }
-inline void area(const std::string &n, int i, int l, int t, int r, int b, const char *ex, const char *ey) {
-  overlay::area(key(n), i, l, t, r, b, ex, ey);
+
+// A walk along a hill from x0 to x1 in n legs about step px long, its top dy above the hill's top under its middle,
+// mid px in, at its points 0 to n
+struct Walk {
+  int x0, x1, n;
+  std::vector<int> y, ms;  // its top at each point, and the ms of the leg to it, quicker downhill with a downhill
+  bool steep;              // with a downhill, so its legs take their own ms
+  int x(int k) const { return x0 + (x1 - x0) * k / n; }
+  int all() const {
+    int t = 0;
+    for (int m : ms)
+      t += m;
+    return t;
+  }
+  // ms of a leg at speed px/s
+  int leg(float speed) const { return (int) ((float) abs(x1 - x0) * 1000 / speed / (float) n); }
+  // The script's loop at label: from point k a leg at a time to point b, d 1 or -1 the way, each leg over t ms or its
+  // own if it's steep. Registers k, b, d, t and v, its row.
+  std::string loop(const char *label) const {
+    std::string ys, ts;
+    for (int k = 0; k <= n; k++)
+      ys += ", " + num(y[k]);
+    for (int k = 0; k <= n; k++)
+      ts += ", " + num(ms[std::clamp(k - 1, 0, n - 1)]);
+    return std::string(label) + ":\n  k = k + d\n  v = pick(k" + ys + ")\n" +
+           (steep ? "  t = pick(k" + ts + ")\n" : "") + "  move " + num(x0) + " + " + num(x1 - x0) + " * k / " +
+           num(n) + ", v over t\n  wait t\n  if k != b goto " + label + "\n";
+  }
+};
+inline Walk walk(const NearHill &h, int x0, int x1, float speed, int mid, int dy, float downhill = 0, int step = 12) {
+  Walk w{x0, x1, std::max(1, abs(x1 - x0) / step), {}, {}, downhill != 0};
+  for (int k = 0; k <= w.n; k++)
+    w.y.push_back(h.at(w.x(k) + mid) - dy);
+  for (int k = 1; k <= w.n; k++) {
+    int dx = std::max(1, abs(w.x(k) - w.x(k - 1)));
+    float v = speed * std::clamp(1 + downhill * (float) (w.y[k] - w.y[k - 1]) / (float) dx, 0.6f, 1.5f);
+    w.ms.push_back((int) ((float) dx * 1000 / v));
+  }
+  return w;
 }
-inline void wander(const std::string &n, int i, float s0, float s1, int heading, int spread, int l0, int l1, int r0,
-                   int r1) {
-  overlay::wander(key(n), i, s0, s1, heading, spread, l0, l1, r0, r1);
-}
-// it faces the way it goes, mirrored from facing, upright
-inline void face(const std::string &n, int i, int facing = 0) { overlay::face(key(n), i, facing, true, 0, 0, true); }
-inline void wave(const std::string &n, int i, const char *what, int lo, int hi, int rise, int fall, int hold_high,
-                 int hold_low, int jitter, bool random, const char *slow) {
-  overlay::wave(key(n), i, what, lo, hi, rise, fall, hold_high, hold_low, jitter, random, slow);
-}
-inline void map(const std::string &n, int i, const char *what, int l, int r, int t, int b) {
-  overlay::map(key(n), i, what, l, r, t, b);
-}
-inline void rounds(const std::string &n, int i, int k) { overlay::rounds(key(n), i, k); }
-// degrees a second clockwise, negative the other way
-inline void spin(const std::string &n, int i, float speed) { overlay::spin(key(n), i, speed); }
+
+// ---- when things happen
 
 // fn by chance, first after first ms, then about every mean ms after the last one ended, or just once with mean
 // 0. It returns the ms it takes.
@@ -246,43 +310,30 @@ template<class F> void later(uint32_t ms, F fn) {
     return 0u;
   });
 }
-// move() and remove() a while later. remove_later() returns at, for an event's ms.
-inline void move_later(uint32_t at, const char *n, int i, int x, int y, int ms, const char *ease = "none") {
-  later(at, [=] { move(n, i, x, y, ms, ease); });
+
+// The longest a visitor's sprite takes to get to the panel, the link busy
+inline constexpr uint32_t ON_PANEL = 5000;
+
+// fn, a visit or an encounter, which places what comes and returns the ms it takes, and what it newly placed goes
+// when its scripts end it, or by then and wait. The ms with wait, 0 if it doesn't fit.
+inline uint32_t come(const std::function<uint32_t()> &fn, uint32_t wait) {
+  std::vector<std::string> had = R.names;
+  uint32_t ms = fn();
+  for (const std::string &k : R.names)
+    if (std::find(had.begin(), had.end(), k) == had.end())
+      R.comers[k.substr(2)] = millis() + ms + wait;
+  return ms ? ms + wait : 0;
 }
-inline uint32_t remove_later(uint32_t at, const char *n, int i, int fade = 300) {
-  later(at, [=] { remove(n, i, fade); });
-  return at;
-}
-// n's copies fade out over fade ms from at ms on and it lets go of its slot, and with it other's, the visit's other
-// sprite. The ms till then, for an event's.
-inline uint32_t gone_later(uint32_t at, const char *n, int fade = 300, const char *other = nullptr) {
-  later(at, [=] {
-    if (const overlay::Overlay *a = overlay::find(key(n)))
-      for (size_t i = 0; i < a->copies.size(); i++)
-        remove(n, (int) i, fade);
-  });
-  later(at + fade + 100, [=] {
-    clear(n);
-    if (other)
-      clear(other);
-  });
-  return at + fade + 100;
-}
-// Copy 0 of n, drawn facing right, from x0, y0 off one edge across to x1, y1 off the other in ms, facing the way it
-// goes, then it's gone. The ms.
-inline uint32_t across(const char *n, int x0, int y0, int x1, int y1, uint32_t ms) {
-  place(n, 0, x0, y0);
-  if (x1 < x0)
-    flip(n, 0, true, false);
-  move(n, 0, x1, y1, (int) ms);
-  return remove_later(ms, n, 0);
+// A script ended the last copy of animation k: a visitor's sprite goes
+inline void emptied(const std::string &k) {
+  if (k.rfind("w_", 0) == 0 && R.comers.count(k.substr(2)))
+    unload(k.substr(2));
 }
 
 // The show's visitors, one at a time so the panel has room for them: about every mean ms one of n at random. fn(k)
 // brings the k-th and returns the ms it takes, 0 if it doesn't fit the picture.
 inline void visitors(uint32_t mean, uint32_t first, int n, std::function<uint32_t(int)> fn) {
-  R.visit = std::move(fn);
+  R.visit = [fn](int k) { return come([&] { return fn(k); }, ON_PANEL); };
   R.visits = n;
   sometimes(mean, first, [n] {
     uint32_t ms = 0;
@@ -292,68 +343,7 @@ inline void visitors(uint32_t mean, uint32_t first, int n, std::function<uint32_
   });
 }
 
-// The longest a visit waits for its sprites to get to the panel, the link busy, before it's called off
-inline constexpr uint32_t READY_WAIT = 5000;
-inline void on_panel(const char *n, const char *other, uint32_t at, std::function<void()> fn, uint32_t waited) {
-  auto state = [](const char *s) {
-    const overlay::Overlay *a = s ? overlay::find(key(s)) : nullptr;
-    return !s ? (int) overlay::SENT : a ? a->state : (int) overlay::FAILED;
-  };
-  int a = state(n), b = state(other);
-  if (a == overlay::SENT && b == overlay::SENT) {
-    fn();
-    gone_later(at, n, 0, other);
-  } else if (a == overlay::FAILED || b == overlay::FAILED || waited >= READY_WAIT) {
-    clear(n);
-    if (other)
-      clear(other);
-  } else {
-    later(STEP, [=] { on_panel(n, other, at, fn, waited + STEP); });
-  }
-}
-// A visit from out of sight back out of it, fn, once the panel has its sprite n and other, so it doesn't come in
-// late and catch up in sight. They're gone at ms on, see gone_later(). The ms from now it can take.
-inline uint32_t set_off(const char *n, const char *other, uint32_t at, std::function<void()> fn) {
-  preload(n);
-  if (other)
-    preload(other);
-  on_panel(n, other, at, std::move(fn), 0);
-  return READY_WAIT + at + 100;
-}
-
-// Copy 0 of walk in from off one side along row y at speed px/s to stop, where it's stay for a round of stay's
-// frames, dy rows higher, then on off the other side or back the way it came, facing the way it goes. The ms it
-// takes.
-inline uint32_t stop_by(const char *walk, const char *stay, int stop, int y, int dy, float speed) {
-  const Frames *f = frames_of(walk);
-  int w = f ? f->w : 0;
-  bool left = chance(0.5f), back = chance(0.5f), on = back ? !left : left;  // the way it comes and goes on
-  int x0 = left ? W + 2 : -w - 2, x1 = on ? -w - 2 : W + 2;
-  int in = (int) ((float) abs(stop - x0) * 1000 / speed), out = (int) ((float) abs(x1 - stop) * 1000 / speed);
-  int still = ms_of(stay) - STEP;
-  return set_off(walk, stay, in + still + out, [=] {
-    place_flipped(walk, 0, x0, y, left);
-    move(walk, 0, flip_x(walk, stop, left), y, in);
-    later(in, [=] { swap_flipped(walk, 0, stay, stop, y - dy, left, true); });
-    later(in + still, [=] {
-      swap_flipped(stay, 0, walk, stop, y, on);
-      move(walk, 0, flip_x(walk, x1, on), y, out);
-    });
-  });
-}
-
-// Copy 0 of n soars in from off the side away from the sun, circles rx by ry px round row y there a while and goes
-// off higher up, facing the way it flies. The ms it takes.
-inline uint32_t soar(const char *n, int y, int rx, int ry) {
-  bool left = R.sun_x > W / 2;  // where it comes in from
-  place(n, 0, left ? -40 : W + 20, y - 16, {true});
-  face(n, 0);
-  wave(n, 0, "x", -rx, rx, 12000, 12000, 0, 0, 20, false, "both");
-  wave(n, 0, "y", -ry, ry, 8000, 8000, 0, 0, 20, false, "both");
-  move(n, 0, left ? 60 : 225, y, 12000, "out");
-  move_later(40000, n, 0, left ? -60 : W + 40, y - 28, 14000, "in");
-  return remove_later(56000, n, 0);
-}
+// ---- the sky
 
 // The top row of what stands in front of the sky in each column: the land, the mountains' far ridge with far, the
 // sea's horizon, the trees, the cabin, the flagpole and its flag, the lighthouse, and the town's buildings with
@@ -437,6 +427,15 @@ inline int sky_line(const Scene &s, int w, int h, int lo, int hi, int dy) {
 struct Ride {
   int x[4], y[4];  // off one side, the moon's near and far side, off the other side
   int ms[3];       // each leg's
+  bool left() const { return x[3] < x[0]; }
+  int all() const { return ms[0] + ms[1] + ms[2]; }
+  // Its script from where it starts: along the legs, and gone
+  std::string text() const {
+    std::string t;
+    for (int i = 0; i < 3; i++)
+      t += "move " + num(x[i + 1]) + ", " + num(y[i + 1]) + " over " + num(ms[i]) + "; wait " + num(ms[i]) + "\n";
+    return t + "end\n";
+  }
 };
 inline Ride witch_ride(int moon_x, int moon_y, int top) {
   bool right = chance(0.5f), moon = moon_x >= 0 && moon_y - 6 >= top;
@@ -460,16 +459,6 @@ inline Ride witch_ride(int moon_x, int moon_y, int top) {
     r.ms[i] = abs(r.x[i + 1] - r.x[i]) * 1000 / (i == 1 ? 15 : 40);
   return r;
 }
-// Copy 0 of n, placed at the ride's start, along its legs. The ms they take.
-inline uint32_t ride(const char *n, const Ride &r) {
-  uint32_t t = 0;
-  for (int i = 0; i < 3; i++) {
-    if (r.ms[i])
-      move_later(t, n, 0, r.x[i + 1], r.y[i + 1], r.ms[i]);
-    t += (uint32_t) r.ms[i];
-  }
-  return t;
-}
 
 // ---- shared by the shows
 
@@ -479,62 +468,35 @@ inline bool gale(const At &a) { return a.wind >= 17 || a.gust >= 25; }
 // The most of the pool a rare encounter's sprite takes. The firmware's sim/esp_yaml/live_rare.inc checks it.
 inline constexpr int RARE_BYTES = 1200;
 
-// The near hill's top every 4 px, for walks along it after the scene's gone
-struct NearHill {
-  uint8_t y[W / 4 + 1] = {};
-  NearHill() = default;
-  explicit NearHill(const Scene &s) {
-    for (int i = 0; i <= W / 4; i++)
-      y[i] = s.land->hill[2][std::min(W - 1, i * 4)];
-  }
-  int at(int x) const {
-    x = std::clamp(x, 0, W - 1);
-    return (y[x / 4] * (4 - x % 4) + y[x / 4 + 1] * (x % 4) + 2) / 4;
-  }
-};
-// The row of the near hill's lowest point over columns l to r - 1
-inline int hill_low(const Scene &s, int l, int r) {
-  int y = 0;
-  for (int x = l; x < r; x++)
-    y = std::max<int>(y, s.land->hill[2][x]);
-  return y;
+// Copy 0 of n, drawn facing right, from x0, y0 off one edge across to x1, y1 off the other in ms, facing the way it
+// goes, doing what also says on the way, then it's gone. The ms.
+inline uint32_t across(const char *n, int x0, int y0, int x1, int y1, int ms, const std::string &also = "",
+                       How o = {}) {
+  o.left = x1 < x0;
+  place(n, 0, x0, y0, also + "\n" + path({{x1, y1, ms}}) + "end", {}, o);
+  return (uint32_t) ms;
 }
 
-// An amble()'s moves, each to x, y over ms to fn(x, y, ms) in turn. The ms they take.
-template<class F>
-uint32_t amble_steps(const NearHill &h, int x0, int x1, float speed, int mid, int dy, float downhill, int step, F fn) {
-  int steps = std::max(1, abs(x1 - x0) / step), px = x0, py = h.at(x0 + mid) - dy;
-  uint32_t t = 0;
-  for (int k = 1; k <= steps; k++) {
-    int x = x0 + (x1 - x0) * k / steps, y = h.at(x + mid) - dy, dx = std::max(1, abs(x - px));
-    float v = speed * std::clamp(1 + downhill * (y - py) / dx, 0.6f, 1.5f);
-    int ms = (int) (dx * 1000 / v);
-    fn(x, y, ms);
-    t += ms;
-    px = x;
-    py = y;
-  }
-  return t;
-}
-// Copy i of n from x0 to x1 along the hill, a step every step px or so at speed px/s, and with downhill quicker
-// downhill and slower uphill. Its top is dy above the hill's top under its middle, mid px in. Returns the ms it
-// takes.
-inline uint32_t amble(const char *n, int i, const NearHill &h, int x0, int x1, float speed, int mid, int dy,
-                      float downhill = 0, int step = 12) {
-  uint32_t t = 0;
-  return amble_steps(h, x0, x1, speed, mid, dy, downhill, step, [&](int x, int y, int ms) {
-    move_later(t, n, i, x, y, ms);
-    t += ms;
-  });
-}
-// The ms an amble() takes
-inline uint32_t amble_ms(const NearHill &h, int x0, int x1, float speed, int mid, int dy, float downhill = 0,
-                         int step = 12) {
-  return amble_steps(h, x0, x1, speed, mid, dy, downhill, step, [](int, int, int) {});
+// Copy 0 of n soars in from off the side away from the sun, circles rx by ry px round row y there a while and goes
+// off higher up, facing the way it flies. The ms it takes.
+inline uint32_t soar(const char *n, int y, int rx, int ry) {
+  bool left = R.sun_x > W / 2;  // where it comes in from
+  place(n, 0, left ? -40 : W + 20, y - 16, R"(
+    face 0 mirror level
+    wave x -rx, rx, 12000, 12000 jitter 20 slow both
+    wave y -ry, ry, 8000, 8000 jitter 20 slow both
+    move x1, y over 12000 ease out
+    wait 40000
+    move x2, y - 28 over 14000 ease in
+    wait 16000
+    end
+  )",
+        {{"rx", rx}, {"ry", ry}, {"y", y}, {"x1", left ? 60 : 225}, {"x2", left ? -60 : W + 40}});
+  return 56000;
 }
 
 // Gulls back and forth across the picture and round out of sight, on gusts of slow waves, facing the way they fly.
-// Each from x, y at speed s0..s1, between rows top and bottom.
+// Each from x, y at speed s0..s1, between rows top and bottom, the others beating in their own time.
 struct Gull {
   int x, y;
   float s0, s1;
@@ -543,38 +505,45 @@ struct Gull {
 inline void flock(std::initializer_list<Gull> gulls) {
   int i = 0;
   for (const Gull &g : gulls) {
-    place("gull", i, g.x, g.y, {i > 0, (5 * i) % 8});  // the others beating in their own time
-    area("gull", i, -24, g.top, 344, g.bottom, "bounce", "bounce");
-    wave("gull", i, "speed", 70, 130, 4000, 4000, 2000, 2000, 50, true, "both");
-    face("gull", i);
-    wander("gull", i, g.s0, g.s1, 0, 20, 3000, 9000, 0, 0);
+    place("gull", i, g.x, g.y, std::string(R"(
+      area -24, top, 344, bottom bounce
+      wave speed 70, 130, 4000, 4000 hold 2000, 2000 jitter 50 random slow both
+      face 0 mirror level
+      wander s0, s1, 0, 20, 3000, 9000, 0, 0
+    )") + (i ? "frame " + num(5 * i % 8) : ""),
+          {{"top", g.top}, {"bottom", g.bottom}, {"s0", g.s0}, {"s1", g.s1}});
     i++;
   }
 }
 
-// Puff i of name with its middle at x, y: it rises rise px and drifts drift px downwind for exactly as long as its
-// frames last, growing and thinning as it goes, then starts again from there. Thinner higher up too.
-inline void puff(const char *name, int i, int x, int y, int rise, int drift, int wdir) {
+// Puffs of name, after one another so they overlap into a plume, with their middle at x, y: each rises rise px and
+// drifts drift px downwind for exactly as long as its frames last, growing and thinning as it goes, then starts
+// again from there. Thinner higher up too. Each but the first hidden till it starts.
+inline void chimney(const char *name, int puffs, int x, int y, int rise, int drift, int wdir) {
   const Frames *sp = frames_of(name);
   if (!sp)
     return;
   int ms = sp->ms() - STEP;  // a step less for the waves' jump back keeps them in step with the frames
-  int left = wdir < 0 ? drift + 20 : 20, right = wdir < 0 ? 30 : drift + 30;
-  x -= sp->w / 2;
-  place(name, i, x, y - sp->h / 2, {true});
-  area(name, i, x - left, y - rise - 3, x + right, y + 2, "screen", "screen");
-  map(name, i, "opacity", 100, 100, 0, 100);
-  wave(name, i, "y", -rise, 0, 0, ms, 0, 0, 0, false, "none");
-  if (wdir < 0)
-    wave(name, i, "x", -drift, 0, 0, ms, 0, 0, 0, false, "high");
-  else
-    wave(name, i, "x", 0, drift, ms, 0, 0, 0, 0, false, "low");
-}
-// puffs of them their frames apart, so they overlap into a plume
-inline void chimney(const char *name, int puffs, int x, int y, int rise, int drift, int wdir) {
-  puff(name, 0, x, y, rise, drift, wdir);
-  for (int i = 1; i < puffs; i++)
-    later((uint32_t) ((ms_of(name) - STEP) * i / puffs), [=] { puff(name, i, x, y, rise, drift, wdir); });
+  int left = wdir < 0 ? drift + 20 : 20, right = wdir < 0 ? 30 : drift + 30, x0 = x - sp->w / 2;
+  for (int i = 0; i < puffs; i++)
+    place(name, i, x0, y - sp->h / 2,
+          std::string(i ? "glide opacity 0\n" : "") + R"(
+            area l, t, r, b screen
+            map opacity 100, 100, 0, 100
+            wait after
+            clip 0 to last
+            wave y -rise, 0, 0, period
+          )" + (wdir < 0 ? "wave x -drift, 0, 0, period slow high\n" : "wave x 0, drift, period, 0 slow low\n") +
+              (i ? "glide opacity 100 over 300\n" : ""),
+          {{"l", x0 - left},
+           {"t", y - rise - 3},
+           {"r", x0 + right},
+           {"b", y + 2},
+           {"after", ms * i / puffs},
+           {"last", sp->count() - 1},
+           {"rise", rise},
+           {"drift", drift},
+           {"period", ms}});
 }
 
 // Some of the picture's bright stars in full view sparkle now and then, each from another of the twinkle's dark
@@ -609,7 +578,7 @@ inline void twinkle_stars(const Scene &s, Box skip = {}) {
   static constexpr int DARK[] = {0, 9, 4, 13, 8, 17};  // its frames that start a dark while
   for (int i = 0; i < 6; i++)
     if (i < n)
-      place("twinkle", i, s.bright_x[pick[i]] - 2, s.bright_y[pick[i]] - 2, {true, DARK[i]});
+      place("twinkle", i, s.bright_x[pick[i]] - 2, s.bright_y[pick[i]] - 2, "frame " + num(DARK[i]));
     else
       remove("twinkle", i);
 }
@@ -622,6 +591,8 @@ inline void stop() {
   }
   R.names.clear();
   R.sprites.clear();
+  R.comers.clear();
+  R.lit.clear();
   R.timers.clear();
   free_px();
   R.show = -1;
@@ -642,6 +613,11 @@ inline void loop(bool shown) {
   if (overlay::W.phase != overlay::COUNT && overlay::W.phase != overlay::MAKE)
     free_px();  // overlay.h only reads it while it counts or makes frames
   uint32_t now = millis();
+  for (auto it = R.comers.begin(); it != R.comers.end();) {
+    std::string n = (it++)->first;
+    if ((int32_t) (now - R.comers[n]) >= 0)
+      unload(n);  // still there, its sprite never got to the panel
+  }
   for (size_t i = 0; i < R.timers.size(); i++) {
     if ((int32_t) (now - R.timers[i].at) < 0)
       continue;
