@@ -1,16 +1,20 @@
 """
 TCP Bridge Monitor for Flexit Modbus Server
-Connects to the ESP TCP bridge and displays UART traffic with Modbus frame decoding.
+Connects to the ESP TCP bridge, or reads a capture saved with --save, and displays the bus traffic with Modbus
+frame decoding and the ESP's times.
 """
 
 import argparse
 import socket
 import sys
-from datetime import datetime
+from collections.abc import Callable, Iterator
+from contextlib import nullcontext
 
 # (server address, coil number)
 Coil = tuple[int, int]
 
+
+BYTE_US = 10e6 / 115200  # a byte on the bus, start and stop bit included
 
 FUNCTION_CODES = {
     0x01: "Read Coils",
@@ -150,6 +154,27 @@ def format_hex(data: bytes) -> str:
     return " ".join(f"{b:02X}" for b in data)
 
 
+class BusClock:
+    """Each frame's start from the first frame's, and the quiet line before it, from the ESP's times."""
+
+    def __init__(self):
+        self.last: int | None = None  # the time the ESP gave the frame before
+        self.end = 0.0  # when that frame ended, in µs
+
+    def frame(self, t: int, length: int) -> tuple[float, float | None]:
+        """A frame that ended at t: its start in s and the gap before it in ms, None for the first"""
+        took = length * BYTE_US
+        if self.last is None:
+            self.last, self.end = t, took
+            return 0.0, None
+        # The µs wrap every 71 minutes, and a frame can end before the one above it
+        step = (t - self.last + 2**31) % 2**32 - 2**31
+        start = self.end + step - took
+        gap = start - self.end
+        self.last, self.end = t, self.end + step
+        return start / 1e6, gap / 1e3
+
+
 def recv_exact(sock: socket.socket, n: int) -> bytes:
     """Receive exactly n bytes from socket."""
     data = b""
@@ -161,11 +186,101 @@ def recv_exact(sock: socket.socket, n: int) -> bytes:
     return data
 
 
+def records(read: Callable[[int], bytes]) -> Iterator[tuple[str, int, bytes]]:
+    """The bridge's blocks: direction, the ESP's µs when the frame ended, the frame"""
+    while True:
+        header = read(7)
+        if not header:
+            return
+        if len(header) < 7:
+            raise ConnectionError("Capture ends inside a block")
+        time = int.from_bytes(header[1:5], "big")
+        length = int.from_bytes(header[5:7], "big")
+        frame = read(length)
+        if len(frame) < length:
+            raise ConnectionError("Capture ends inside a block")
+        yield chr(header[0]), time, frame
+
+
+def show(blocks: Iterator[tuple[str, int, bytes]], args: argparse.Namespace):
+    """Print the blocks as the options say"""
+    frame_parser = ModbusFrameParser()
+    # Create coil tracker if needed
+    coil_tracker = CoilTracker() if args.coil_changes else None
+    clock = BusClock()
+    try:
+        for direction, time, frame in blocks:
+            # Every frame counts for the gaps, those not shown too
+            start, gap = clock.frame(time, len(frame))
+
+            # Determine direction
+            if direction == "T":
+                if args.no_tx:
+                    continue
+                dir_label = "TX (ESP->UART)"
+                color = "\033[94m"  # Blue
+            elif direction == "R":
+                if args.no_rx:
+                    continue
+                dir_label = "RX (UART->ESP)"
+                color = "\033[92m"  # Green
+            else:
+                dir_label = f"?? (0x{ord(direction):02X})"
+                color = "\033[91m"  # Red
+
+            # When it started on the bus, s from the first frame, and how long the line was quiet before it
+            head = f"{color}[{start:12.6f}] {dir_label}"
+            if args.raw:
+                head += f" ({len(frame)} bytes)"
+            if gap is not None:
+                head += f"  {gap:+.3f} ms"
+
+            if args.raw:
+                print(f"{head}\033[0m")
+                print(f"  HEX:   {format_hex(frame)}")
+                print()
+                continue
+
+            decoded, coil_states = frame_parser.decode_frame(frame, args.verbose)
+
+            if not coil_tracker:
+                print(f"{head}\033[0m")
+                print(f"  {decoded}")
+                if not args.verbose:
+                    print(f"  RAW:   {format_hex(frame)}")
+                print()
+                continue
+
+            # Only frames that change a coil
+            changes = coil_tracker.update(coil_states) if coil_states else []
+            if changes:
+                print(f"{head}\033[0m")
+                print(f"  {decoded}")
+                print("  \033[93mCOIL CHANGES:\033[0m", end="")
+                for (server, coil), old_state, new_state in changes:
+                    old_str = "ON" if old_state else "OFF"
+                    new_str = "ON" if new_state else "OFF"
+                    print(
+                        f" [ID:{server:02X} 0x{coil:04X}: {old_str}->{new_str}]", end=""
+                    )
+                print()
+                if not args.verbose:
+                    print(f"  RAW:   {format_hex(frame)}")
+                print()
+
+    except KeyboardInterrupt:
+        print("\n\nStopped by user.")
+    except ConnectionError as e:
+        print(f"\n\nERROR: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Monitor UART traffic via TCP bridge with Modbus decoding"
     )
-    parser.add_argument("--host", required=True, help="ESP IP address")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--host", help="ESP IP address")
+    source.add_argument("--file", help="Read a capture saved with --save instead")
     parser.add_argument(
         "--port", type=int, default=502, help="TCP bridge port (default: 502)"
     )
@@ -186,14 +301,17 @@ def main():
     parser.add_argument(
         "--coil-changes", action="store_true", help="Only show when coils change state"
     )
+    parser.add_argument(
+        "--save", help="Also save what the ESP sends to this file, for --file"
+    )
 
     args = parser.parse_args()
 
-    frame_parser = ModbusFrameParser()
-    # Create coil tracker if needed
-    coil_tracker = CoilTracker() if args.coil_changes else None
+    if args.file:
+        with open(args.file, "rb") as f:
+            show(records(f.read), args)
+        return
 
-    # Connect to ESP
     print(f"Connecting to {args.host}:{args.port}...")
     try:
         sock = socket.create_connection((args.host, args.port), timeout=5.0)
@@ -204,74 +322,16 @@ def main():
         print(f"ERROR: Could not connect: {e}")
         sys.exit(1)
 
-    try:
-        while True:
-            # Read 3-byte header
-            header = recv_exact(sock, 3)
-            direction = chr(header[0])
-            length = (header[1] << 8) | header[2]
+    with sock, open(args.save, "wb") if args.save else nullcontext() as save:
 
-            # Read payload (complete Modbus frame from ESP)
-            frame = recv_exact(sock, length)
+        def read(n: int) -> bytes:
+            data = recv_exact(sock, n)
+            if save:
+                save.write(data)
+            return data
 
-            # Determine direction
-            if direction == "T":
-                if args.no_tx:
-                    continue
-                dir_label = "TX (ESP->UART)"
-                color = "\033[94m"  # Blue
-            elif direction == "R":
-                if args.no_rx:
-                    continue
-                dir_label = "RX (UART->ESP)"
-                color = "\033[92m"  # Green
-            else:
-                dir_label = f"?? (0x{ord(direction):02X})"
-                color = "\033[91m"  # Red
-
-            timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-
-            if args.raw:
-                hex_str = format_hex(frame)
-                print(f"{color}[{timestamp}] {dir_label} ({len(frame)} bytes)\033[0m")
-                print(f"  HEX:   {hex_str}")
-                print()
-                continue
-
-            decoded, coil_states = frame_parser.decode_frame(frame, args.verbose)
-
-            if not coil_tracker:
-                print(f"{color}[{timestamp}] {dir_label}\033[0m")
-                print(f"  {decoded}")
-                if not args.verbose:
-                    print(f"  RAW:   {format_hex(frame)}")
-                print()
-                continue
-
-            # Only frames that change a coil
-            changes = coil_tracker.update(coil_states) if coil_states else []
-            if changes:
-                print(f"{color}[{timestamp}] {dir_label}\033[0m")
-                print(f"  {decoded}")
-                print("  \033[93mCOIL CHANGES:\033[0m", end="")
-                for (server, coil), old_state, new_state in changes:
-                    old_str = "ON" if old_state else "OFF"
-                    new_str = "ON" if new_state else "OFF"
-                    print(
-                        f" [ID:{server:02X} 0x{coil:04X}: {old_str}->{new_str}]", end=""
-                    )
-                print()
-                if not args.verbose:
-                    print(f"  RAW:   {format_hex(frame)}")
-                print()
-
-    except KeyboardInterrupt:
-        print("\n\nStopped by user.")
-    except ConnectionError as e:
-        print(f"\n\nERROR: {e}")
-    finally:
-        sock.close()
-        print("Connection closed.")
+        show(records(read), args)
+    print("Connection closed.")
 
 
 if __name__ == "__main__":
