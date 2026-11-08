@@ -1,7 +1,8 @@
 // met_scene.h as a panel picture. met.yaml calls redraw() every few minutes so the sun and moon move. Only changed
 // rows are sent to the panel. MET Norway is asked for the forecast through fetch.h, again once its last answer has
 // expired, with If-Modified-Since, soon again after a server error and less often while it refuses or doesn't answer,
-// see Forecasts::got() and fetch::Schedule. The forecast is kept through all of that until it runs out.
+// see Forecasts::got() and fetch::Schedule. The forecast is kept through all of that until it runs out. NOAA is asked
+// for the Kp every 3 hours while the aurora is on, see KpIndex.
 #pragma once
 #include <algorithm>
 #include <cmath>
@@ -11,6 +12,7 @@
 #include "../panel/fetch.h"
 #include "../panel/items.h"
 #include "../panel/picture.h"
+#include "met_kp.h"
 #include "met_live_shows.h"
 #include "met_raster.h"
 
@@ -63,6 +65,21 @@ struct Forecasts : fetch::Asker {
   bool got(fetch::Request &r) override;
 };
 inline Forecasts forecasts;
+
+// A request for the Kp, and what's read from its answer
+struct KpAsk : fetch::Request {
+  KpReader read;
+  bool feed(const char *p, size_t n) override { return read.feed(p, n); }
+};
+
+// NOAA's Kp, asked for while the aurora is on auto or always. Panel Weather Kp is its status.
+struct KpIndex : fetch::Asker {
+  fetch::Request *make(int) override { return fetch::request<KpAsk>(KP_URL); }
+  bool got(fetch::Request &r) override;
+  bool wanted() override { return options.aurora != A_OFF; }
+};
+inline KpIndex kp_index;
+inline KpBlocks kp;  // its last answer's
 
 inline void tile(Icon icon, float temp) {
   item_label(now_item, KINDS[icon].name);
@@ -170,6 +187,7 @@ inline bool begin() {
   options.fireplace = flexit_fireplace_active ? flexit_fireplace_active() : false;
 #pragma GCC diagnostic pop
   options.frame++;
+  options.kp = kp.at((uint32_t) t.timestamp);
   Scene &s = drawing->scene;
   build(s, weather, lat, lon, (uint32_t) t.timestamp, with_forecast, utc_offset, options);
   s.live = live::leaves_out(s);  // what the animations that fit it draw themselves
@@ -291,10 +309,25 @@ inline bool Forecasts::got(fetch::Request &r) {
   return true;
 }
 
-// From met.yaml's on_boot. status: Panel Weather.
-template<typename S>
+// NOAA's answer, with a Kp from now on in it. The aurora's redrawn by it.
+inline bool KpIndex::got(fetch::Request &r) {
+  const KpBlocks &k = static_cast<KpAsk &>(r).read.blocks;
+  uint32_t now = fetch::now_s();
+  if (!k.n || k.b[k.n - 1].t + KP_BLOCK_S <= now)
+    return false;
+  kp = k;
+  char s[64];
+  snprintf(s, sizeof s, "Kp %.1f now, the aurora needs %.1f here", kp.at(now), kp_needed(lat, lon));
+  ESP_LOGI("met", "%s", s);
+  say(s);
+  redraw();
+  return true;
+}
+
+// From met.yaml's on_boot. status: Panel Weather, kp_status: Panel Weather Kp.
+template<typename S, typename K>
 void setup(double latitude, double longitude, const char *picture, const char *encoding, const char *quality,
-           S &&status) {
+           S &&status, K &&kp_status) {
   lat = latitude;
   lon = longitude;
   // MET Norway wants at most 4 decimals, more can get a 403
@@ -304,6 +337,11 @@ void setup(double latitude, double longitude, const char *picture, const char *e
   forecasts.server = "MET Norway";
   forecasts.status = ptr_of(status);
   fetch::add(forecasts);
+  kp_index.what = "Kp";
+  kp_index.server = "NOAA";
+  kp_index.every_s = KP_BLOCK_S;
+  kp_index.status = ptr_of(kp_status);
+  fetch::add(kp_index);
   name = picture;
   now_item = Item("weather", ITEM_SENSOR)
                  .view(false)

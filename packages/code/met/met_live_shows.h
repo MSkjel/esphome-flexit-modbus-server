@@ -59,8 +59,6 @@ inline const Show SHOWS[] = {
     {"Fog in the valley", L_FLAG, valley_fog, nullptr, nullptr,
      [](const Scene &s) { return s.at.fog > 30 && !s.at.dark; }},
     // the night
-    {"Northern lights", 0, northern_lights, nullptr, aurora_shapes,
-     [](const Scene &s) { return s.aurora && s.at.dark; }},
     {"Lighthouse and the coastal express", 0, lighthouse, lighthouse_redo, nullptr,
      [](const Scene &s) { return s.ground == G_COAST && s.at.dark; }},
     {"Evening in town", L_ANTENNA, town_evening, town_redo, nullptr,

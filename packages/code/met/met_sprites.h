@@ -13,7 +13,7 @@
 
 namespace flexit::panel::met::live {
 
-// A frame's colours, 0xRRGGBB from 1 on. The aurora has the most, 17.
+// A frame's colours, 0xRRGGBB from 1 on
 struct Colours {
   static constexpr int MAX = 32;
   uint32_t rgb[MAX];
@@ -76,8 +76,6 @@ struct Fall {  // rain_tile and snow_tile: streak length or flake size, px a fra
   uint32_t col;
   float dens;
 };
-// The aurora's bend in px at x of a piece w wide in frame k, nothing at both ends
-int aur_wig(int x, int w, int k);
 
 // The box round the bolt through n points, 2 px wide: from 3 px left of the points and 2 px above them
 Box bolt_box(const int16_t *x, const int16_t *y, int n);

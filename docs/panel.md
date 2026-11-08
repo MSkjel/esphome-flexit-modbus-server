@@ -338,7 +338,7 @@ PSRAM.
 | `online_picture.yaml` | `name`, `url`, `update_interval` (like `10min`, `1.5h` or `1d`, `never` = only when shown), `format` (PNG, JPEG, BMP or AUTO), `resize` (160x120 default, blown up to the screen; 320x240 needs PSRAM), plus `encoding` and `quality`. A failed download is retried after 30 s, then twice as long each time. Before each download the ESP asks the server about the file and skips one it doesn't have the RAM for, with the reason in `Panel Picture Status`. A JPEG has to fit in RAM whole, so the server has to send its size; PNG and BMP are read a bit at a time. For a Home Assistant camera use `ha_picture.yaml` |
 | `ha_picture.yaml` | `name`, `entity_id` (a `camera.` or `image.` entity, with `kind: image` for the latter), `ha_url` (`http://homeassistant.local:8123`), `width` (320, HA scales the camera picture down to it when the camera can), plus `update_interval`, `resize`, `format`, `encoding` and `quality` as above. HA only hands out camera pictures with a token that changes now and then; the ESP follows the entity's `access_token` attribute, so nothing to set up. If the camera won't scale, the full picture is often too big for an ESP without PSRAM and is skipped; a Frigate camera's own `latest.jpg?h=120` through `online_picture.yaml` is the way round that |
 | `animation.yaml` | `name`, `file` (a GIF), `resize` (64x64 default), `x`, `y` (top left on the 320x240 screen), `scale` (1, or 2 to draw each pixel 2x), `frame_ms` (40 to 2550, the GIF's own timing isn't used), `drift_x`, `drift_y` (pixels per second it drifts, wrapping round the screen seamlessly), `fade_ms` (300, how long copies fade in and out), `clips` and `script` (see [animation scripts](#animation-scripts)). The panel plays all its animations from 8 KB, up to 6 at a time in up to 8 places, so keep them small: about 64x64 with a few frames, or more frames if little changes between them. A single frame goes as a still, which the panel keeps packed, so it takes only that, not w x h / 2 bytes. Too big at scale 1 and it's made at half size and drawn 2x. `Panel Animation Status` says what's shown and what didn't fit |
-| `met.yaml` | `latitude`, `longitude`, `scene` (hills, coast, mountains, city), `aurora` (auto, off, always), `facing` (the compass direction in the middle of the picture for the sun, moon and stars: 0 north, 90 east, 180 south by default, 270 west), `redraw_interval`, `name` (weather). The forecast is asked for again once MET says it has expired. `Panel Weather Scene`, `Panel Weather Aurora` and `Panel Weather Forecast` change it from Home Assistant, `Panel Animation Weather` brings it to life |
+| `met.yaml` | `latitude`, `longitude`, `scene` (hills, coast, mountains, city), `aurora` (auto, off, always, see below), `facing` (the compass direction in the middle of the picture for the sun, moon and stars: 0 north, 90 east, 180 south by default, 270 west), `redraw_interval`, `name` (weather). The forecast is asked for again once MET says it has expired. `Panel Weather Scene`, `Panel Weather Aurora` and `Panel Weather Forecast` change it from Home Assistant, `Panel Animation Weather` brings it to life |
 
 `met.yaml` draws the sky for the time of day and the next hour's weather from [MET Norway](https://api.met.no)
 (CC BY 4.0). The weather right now is also an item, so it can be a dashboard tile, and the cabin's chimney smokes
@@ -346,13 +346,23 @@ when the heater is on. `The forecast hasn't changed (HTTP 304)` in the log is fi
 MET is busy or down (HTTP 502, 503) the picture keeps the last forecast and asks again a minute later, then less
 often, up to every half hour.
 
-`Panel Animation Weather`, on unless you turn it off, adds slow animations that fit the picture, one show at a
-time: gulls over the cabin, rain and snow falling from under the clouds, the aurora glowing, a moose at dusk, the
+On a clear dark night the aurora follows the planetary Kp from
+[NOAA SWPC](https://www.swpc.noaa.gov/products/planetary-k-index), asked for every 3 hours while `Panel Weather
+Aurora` isn't off. On auto it shows once the Kp for those 3 hours reaches what it takes for the auroral oval to reach
+over you: about 0 in Tromsø, 2 in Trondheim, 3.3 in Oslo, 4 in Stockholm and 5.5 in Copenhagen. `Panel Weather Kp`
+says the Kp now and what your place needs. Its colours are what's usual at the Kp: a pale green arc when it's quiet,
+green under a violet top from about 3, a pink lower edge from 5, a red top from 6 and more red at 8. The further the
+Kp is over what your place needs the brighter it glows, and in a storm that only just reaches you it's mostly red.
+Until NOAA has answered it shows some clear nights north of 55 degrees.
+
+`Panel Animation Weather`, on unless you turn it off, adds slow animations that fit the picture, one show at a time:
+gulls over the cabin, rain and snow falling from under the clouds, the stars sparkling, a moose at dusk, the
 sailboat, the town's windows, the lights on the Christmas spruce, fireworks on New Year's Eve, the flag waving on
-flag days and more, some of them by chance now and then. Very seldom something stranger comes by. The picture
-leaves out what they draw, and tells the panel what in it is nearer, so they go behind it where they should: the
-sailboat behind the point and the flagpole, a roe deer out of the forest from behind a spruce. Your own animations
-are always in front of all of it. They take the panel's animations, so turn your other ones off with it.
+flag days and more, some of them by chance now and then. The aurora is part of the picture and shifts a little every
+hour. Very seldom something stranger comes by. The picture leaves out what they draw, and tells the panel what in it
+is nearer, so they go behind it where they should: the sailboat behind the point and the flagpole, a roe deer out of
+the forest from behind a spruce. Your own animations are always in front of all of it. They take the panel's
+animations, so turn your other ones off with it.
 
 ### Space pictures
 

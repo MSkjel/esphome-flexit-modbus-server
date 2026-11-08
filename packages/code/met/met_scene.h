@@ -84,12 +84,16 @@ enum Depth : uint8_t {
 };
 struct Options {
   Ground ground = G_HILLS;
-  Aurora aurora = A_AUTO;  // auto = some clear nights north of 55 degrees
+  Aurora aurora = A_AUTO;  // auto = when the Kp reaches kp_needed() here
   float facing = 180;      // azimuth in the picture's middle, clockwise from north: 0 north, 90 east, 180 south
   int heater_pct = 0;      // the unit's heater %, for the chimney smoke
   bool fireplace = false;  // more smoke
   uint32_t frame = 0;      // counts the redraws, for the lights that blink and the fireworks
+  float kp = NAN;          // NOAA's for now, NAN without it, see met_kp.h
 };
+
+// The Kp it takes for the auroral oval to reach over lat, lon, 0 where it's there even when it's quiet
+float kp_needed(double lat, double lon);
 
 // Local time minus UTC at t, in seconds
 using Offset = int (*)(uint32_t t);

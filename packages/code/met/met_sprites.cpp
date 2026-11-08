@@ -522,11 +522,6 @@ static void bus_pose(const Canvas &c, int f, bool night) {
 
 // ---------------------------------------------------------------- factories
 
-int aur_wig(int x, int w, int k) {
-  float s = sinf(kPiF * x / w);
-  return iround(1.8f * s * s * sinf(2 * kPiF * x / w + k * kPiF / 2));
-}
-
 // The least and the most of what's added
 struct Range {
   int lo = 9999, hi = -9999;

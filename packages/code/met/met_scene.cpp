@@ -533,13 +533,42 @@ static void sun_moon(Scene &s, const Now &n) {
   }
 }
 
-// Northern lights, some clear nights up north
+// The auroral oval's edge nearest the equator is at about 66.5 degrees geomagnetic latitude when it's quiet and
+// about 2 degrees further south with each Kp. Geomagnetic latitude from the dipole, its north pole at 80.8 N 72.7 W in
+// 2025.
+float kp_needed(double lat, double lon) {
+  const double pole_lat = 80.8 * kRad, pole_lon = -72.7 * kRad, la = lat * kRad;
+  double m = asin(sin(la) * sin(pole_lat) + cos(la) * cos(pole_lat) * cos(lon * kRad - pole_lon)) / kRad;
+  return std::max(0.0f, (float) ((66.5 - m) / 2.05));
+}
+
+// The aurora's colours as it mostly looks at a Kp: a pale green arc when it's quiet, green under a violet top from
+// about Kp 3, a pink lower edge in a minor storm, then a red top, redder still in a severe one
+struct AurHue {
+  float kp;
+  uint32_t main, top, edge;
+};
+static constexpr AurHue AUR_HUES[] = {{1, 0x5CB084, 0x4E8C78, 0x98D8B0},
+                                      {3.5f, 0x40B878, 0x7858A8, 0x98E0B8},
+                                      {5, 0x40C070, 0x9850A0, 0xE098C8},
+                                      {6.5f, 0x48C068, 0xC04050, 0xF0A0C0},
+                                      {8, 0x58C068, 0xD83030, 0xF098B0}};
+
+// Northern lights on a clear dark night once NOAA's Kp reaches what it takes here, or without it some nights up
+// north. Its colours go by the Kp and it glows brighter the further the Kp is over what it takes. A storm that only
+// just reaches here is red, with its green low down.
 static void aurora(Scene &s, const Now &n) {
   if (n.o.aurora == A_OFF || n.sun.el >= -9 || n.cover >= 40 || n.fog >= 30)
     return;
   Rng a{(uint32_t) ((n.local - 43200) / 86400) * 2246822519u + 3};  // from noon to noon, the same all night
-  if (n.o.aurora != A_ALWAYS && (n.lat < 55 || a.f() >= (n.lat >= 65 ? 0.6f : 0.35f)))
+  float need = kp_needed(n.lat, n.lon), kp = n.o.kp, chance = a.f();
+  if (std::isnan(kp)) {
+    if (n.o.aurora != A_ALWAYS && (n.lat < 55 || chance >= (n.lat >= 65 ? 0.6f : 0.35f)))
+      return;
+    kp = need + 1;  // a night like most there
+  } else if (n.o.aurora != A_ALWAYS && kp < need) {
     return;
+  }
   s.aurora = true;
   s.moon_glow = false;  // the ribbons take three of the 16 colours
   float p0 = a.f() * 2 * kPiF, p1 = a.f() * 2 * kPiF, p2 = a.f() * 2 * kPiF, lift = (float) ((n.t / 3600) % 7) * 2;
@@ -555,14 +584,19 @@ static void aurora(Scene &s, const Now &n) {
     s.aur_top[1][x] = (uint8_t) (th2 >= 1 ? (int) (mid2 - th2 / 2) : NONE);
     s.aur_bot[1][x] = (uint8_t) (th2 >= 1 ? (int) (mid2 + th2 / 2) : NONE);
   }
-  // mostly green under violet, some nights teal under pink, now and then green under red
-  static const uint32_t HUES[3][3] = {
-      {0x40B878, 0x7858A8, 0x98E0B8}, {0x38A8A0, 0xB05890, 0x90D8D0}, {0x58B860, 0xB04848, 0xA0E0A0}};
-  float pick = a.f();
-  const uint32_t *hue = HUES[pick < 0.6f ? 0 : pick < 0.85f ? 1 : 2];
-  s.rgb[C_AUR] = mix(s.rgb[C_SKY], hue[0], 0.42f);
-  s.rgb[C_AUR_TOP] = mix(s.rgb[C_SKY], hue[1], 0.4f);
-  s.rgb[C_AUR_EDGE] = mix(s.rgb[C_SKY], hue[2], 0.5f);
+  int i = 0;
+  while (i + 2 < (int) std::size(AUR_HUES) && kp > AUR_HUES[i + 1].kp)
+    i++;
+  const AurHue &lo = AUR_HUES[i], &hi = AUR_HUES[i + 1];
+  float t = (kp - lo.kp) / (hi.kp - lo.kp), over = std::clamp(kp - need, 0.0f, 3.0f), glow = 0.85f + 0.15f * over;
+  uint32_t main = mix(lo.main, hi.main, t), top = mix(lo.top, hi.top, t), edge = mix(lo.edge, hi.edge, t);
+  if (kp >= 6 && over < 1.5f) {  // a storm only just reaching here: its red top high up, its green low down
+    edge = main;
+    main = top;
+  }
+  s.rgb[C_AUR] = mix(s.rgb[C_SKY], main, 0.42f * glow);
+  s.rgb[C_AUR_TOP] = mix(s.rgb[C_SKY], top, 0.4f * glow);
+  s.rgb[C_AUR_EDGE] = mix(s.rgb[C_SKY], edge, 0.5f * glow);
 }
 
 // Faint random stars, and the catalogue ones where they really are. A figure is drawn as it looks from here: its

@@ -1,5 +1,5 @@
-// The sky's weather animations: rain, snow and thunder from under the clouds, the aurora, the stars, the clouds
-// and the fog, drawn the scene's own way in place of its still ones
+// The sky's weather animations: rain, snow and thunder from under the clouds, the stars, the clouds and the fog,
+// drawn the scene's own way in place of its still ones
 #pragma once
 #include "met_live.h"
 #include "met_live_land.h"
@@ -25,8 +25,6 @@ struct CloudCost {
 inline constexpr CloudCost CIRRUS_COST = {5, 330}, CUMULUS_COST = {6, 210};
 // The flag next to the clouds
 inline constexpr int FLAG_BYTES = 600;
-// Widths of the aurora's patches on the high and the low ribbon, what fits the pool on every night
-inline constexpr int AUR_HIGH_W = 52, AUR_LOW_W = 72;
 
 // What the sky shows keep between redraws
 struct Sky {
@@ -192,132 +190,6 @@ inline void prec_redo(const Scene &s) {
   }
   unload("prec");
   prec_start(s, SKY.tw, room);
-}
-
-// ---- the aurora
-
-// A patch of the scene's ribbon r in box at, drawn over the picture's own: its middle bends a px or two in each
-// frame and glows brighter, so a wave of its opacity brightens it. At its ends it's the picture's, so it meets the
-// still ribbon. Left out where it's the same as the picture or something is in front of the ribbon, a star, the
-// moon or a cloud.
-inline Frames aur_patch(const Scene &s, int r, const Box &at) {
-  struct Patch {
-    int w, oy, h;
-    std::vector<uint8_t> tb, front;  // top and bottom rows, a bit per px with something in front
-    uint32_t col[3][4], sky[5];      // C_AUR's three by glow, the picture's first
-  } p;
-  int w = at.w, x0 = at.x;
-  p.w = w;
-  p.oy = at.y;
-  p.h = at.h;
-  p.tb.resize(2 * w);
-  for (int i = 0; i < w; i++) {
-    p.tb[i] = s.aur_top[r][x0 + i];
-    p.tb[w + i] = s.aur_bot[r][x0 + i];
-  }
-  for (int b = 0; b < 3; b++) {  // a step of 17 at a time on its strongest channel, away from the sky
-    uint32_t c = s.pal[s.ix[C_AUR + b]];
-    int d[3], most = 1;
-    for (int k = 0; k < 3; k++)
-      most = std::max(most, abs(d[k] = (int) (c >> (16 - 8 * k) & 255) - (int) (s.rgb[C_SKY] >> (16 - 8 * k) & 255)));
-    for (int g = 0; g < 4; g++)
-      p.col[b][g] = rgb4((int) (c >> 16) + d[0] * g * 17 / most, (int) (c >> 8 & 255) + d[1] * g * 17 / most,
-                         (int) (c & 255) + d[2] * g * 17 / most);
-  }
-  for (int b = 0; b < 5; b++)
-    p.sky[b] = s.pal[s.ix[C_SKY + b]];
-  p.front.assign((size_t) (w * p.h + 7) / 8, 0);
-  uint8_t px[W];
-  for (int y = 0; y < p.h; y++) {
-    row(s, p.oy + y, px);
-    for (int i = 0, k = y * w; i < w; i++, k++) {
-      int t = p.tb[i], b = p.tb[w + i], yy = p.oy + y;
-      if (px[x0 + i] != s.ix[yy >= t && yy < b ? aur_band(yy, t, b) : C_SKY + band_of(yy)])
-        p.front[k / 8] |= (uint8_t) (1 << k % 8);
-    }
-  }
-  return {w, p.h, {8000, 7000, 8500, 7500}, [p](int f, const Canvas &c) {
-            for (int i = 0; i < p.w; i++) {
-              int t = p.tb[i], b = p.tb[p.w + i], g = std::min(3, std::min(i, p.w - 1 - i) * 12 / p.w);
-              int d = aur_wig(i, p.w, f), t2 = t + d, b2 = b + d;
-              for (int y = 0, k = i; y < p.h && t != NONE; y++, k += p.w) {
-                int yy = p.oy + y, was = yy >= t && yy < b ? aur_band(yy, t, b) - C_AUR : -1;
-                int now = yy >= t2 && yy < b2 ? aur_band(yy, t2, b2) - C_AUR : -1;
-                if (p.front[k / 8] >> k % 8 & 1 || (now == was && (now < 0 || !g)))
-                  continue;
-                c.put(i, y, now < 0 ? p.sky[band_of(yy)] : p.col[now][g]);
-              }
-            }
-          }};
-}
-
-// The rows ribbon r takes over columns x0..x0+w-1, 0 if it isn't there. top gets the first.
-inline int aur_rows(const Scene &s, int r, int x0, int w, int *top = nullptr) {
-  int lo = 255, hi = 0;
-  for (int x = x0; x < x0 + w; x++)
-    if (s.aur_top[r][x] != NONE) {
-      lo = std::min<int>(lo, s.aur_top[r][x]);
-      hi = std::max<int>(hi, s.aur_bot[r][x]);
-    }
-  if (top)
-    *top = lo;
-  return hi > lo ? hi - lo : 0;
-}
-
-// Where in a..b a patch w wide of ribbon r takes the fewest rows, the middle of it if they're the same. -1 if the
-// ribbon isn't there all the way.
-inline int aur_spot(const Scene &s, int r, int a, int b, int w) {
-  int best = -1, rows = 999, mid = (a + b - w) / 2;
-  for (int x = std::max(0, a); x + w <= std::min(W, b); x++) {
-    int n = s.aur_top[r][x] == NONE || s.aur_top[r][x + w - 1] == NONE ? 999 : aur_rows(s, r, x, w);
-    if (n < rows || (n == rows && abs(x - mid) < abs(best - mid)))
-      rows = n, best = x;
-  }
-  return rows < 999 ? best : -1;
-}
-
-// Where the patches go: one in each third of the high ribbon and the last on the low one, where they take the
-// fewest rows, with 2 rows above and below. w 0 where there's none.
-inline void aur_boxes(const Scene &s, Box (&b)[4]) {
-  for (int k = 0; k < 4; k++) {
-    int r = k == 3, w = r ? AUR_LOW_W : AUR_HIGH_W, top = 0;
-    int x = r ? aur_spot(s, 1, 0, W, w) : aur_spot(s, 0, k * W / 3, (k + 1) * W / 3, w);
-    int rows = x < 0 ? 0 : aur_rows(s, r, x, w, &top);
-    b[k] = x < 0 ? Box{} : Box{x, top - 2, w, rows + 4};
-  }
-}
-
-// What the patches are made of: the ribbons, which move up or down a little every hour, and the moon where it's at
-// a patch
-inline uint32_t aurora_shapes(const Scene &s) {
-  uint32_t h = 1;
-  for (int r = 0; r < 2; r++)
-    for (int x = 0; x < W; x++)
-      h = (h * 31 + s.aur_top[r][x]) * 31 + s.aur_bot[r][x];
-  Box b[4];
-  aur_boxes(s, b);
-  for (const Box &p : b)
-    if (s.moon && p.w && abs(s.moon_x - p.x - p.w / 2) < p.w / 2 + 10 && abs(s.moon_y - p.y - p.h / 2) < p.h / 2 + 10)
-      h = h * 31 + (uint32_t) (s.moon_x * 256 + s.moon_y);
-  return h;
-}
-
-// The picture keeps the ribbons. A patch of each third of the high one and one of the low one bend and glow, and a
-// slow wave brightens and fades them from left to right.
-inline void northern_lights(const Scene &s) {
-  Box b[4];
-  aur_boxes(s, b);
-  for (int k = 0, n = 0; k < 4; k++) {
-    if (!b[k].w)
-      continue;
-    int ahead = 0;
-    for (const Box &o : b)
-      ahead += o.w && o.x < b[k].x;
-    std::string name = "aur" + std::to_string(n++);
-    add(name, aur_patch(s, k == 3, b[k]));
-    place(name, 0, b[k].x, b[k].y, "wait after; wave opacity 15, 100, 7000, 7000 hold 1500, 1500 slow both",
-          {{"after", ahead * 1400 + 300}});
-  }
 }
 
 // ---- the stars

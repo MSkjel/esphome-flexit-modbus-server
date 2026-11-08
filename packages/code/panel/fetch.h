@@ -200,9 +200,10 @@ struct Schedule {
 // ---------------------------------------------------------------- the askers
 
 // A server asked again and again: every every_s, sooner again after a failure as Schedule has it, by tick() once
-// it's due. A round is steps requests, one after the other, each once the one before had what was asked for. make()
-// gives the request for a step, nullptr without the RAM, and got() takes its 2xx or 304 answer in the loop, true if
-// it had what was asked for. The status sensor says how it went, and got() what came.
+// it's due, while wanted() says what it asks for is needed. A round is steps requests, one after the other, each once
+// the one before had what was asked for. make() gives the request for a step, nullptr without the RAM, and got()
+// takes its 2xx or 304 answer in the loop, true if it had what was asked for. The status sensor says how it went,
+// and got() what came.
 struct Asker : Caller {
   const char *what = "";     // "forecast", for the status
   const char *server = "";   // "MET Norway"
@@ -218,6 +219,7 @@ struct Asker : Caller {
 
   virtual Request *make(int step) = 0;
   virtual bool got(Request &r) = 0;
+  virtual bool wanted() { return true; }
   void say(const std::string &s) {
     if (status)
       panel::status(*status, s);
@@ -319,10 +321,10 @@ inline void poll() {
   start_next();
 }
 
-// Each asker that's due asked, unless busy
+// Each asker that's due and wanted asked, unless busy
 inline void ask_due(bool busy) {
   for (Asker *a : askers)
-    if (!busy && !a->asking && a->schedule.due())
+    if (!busy && !a->asking && a->schedule.due() && a->wanted())
       a->ask();
 }
 
