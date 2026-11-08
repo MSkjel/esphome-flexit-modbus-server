@@ -19,6 +19,7 @@ struct EspHooks : Hooks {
   uint8_t server_address() override { return id(server).server_address(); }
   void set_updating(bool updating) override { id(server).set_updating(updating); }
   uint32_t quiet_min_us() override { return id(server).quiet_min_us(); }
+  uint32_t status_age_us() override { return id(server).status_age_us(); }
   void save_settings() override { settings::save(); }
   bool settings_saved() override { return settings::saved(); }
   void settings_flashed() override { settings::flashed(); }

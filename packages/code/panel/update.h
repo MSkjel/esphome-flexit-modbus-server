@@ -24,6 +24,7 @@ struct Hooks {
   virtual uint8_t server_address() = 0;                               // this ESP's
   virtual void set_updating(bool updating) = 0;                       // the bus is ours, and the panel away
   virtual uint32_t quiet_min_us() = 0;                                // since the last frame on the bus
+  virtual uint32_t status_age_us() = 0;                               // since the CX60's status broadcast ended
   virtual void save_settings() = 0;                                   // asks the panel for them
   virtual bool settings_saved() = 0;                                  // they're in, or there was no panel to ask
   virtual void settings_flashed() = 0;                                // they go back once the panel starts again
@@ -92,6 +93,13 @@ inline constexpr uint32_t TOTAL_TIMEOUT_MS = 20 * 60000;
 inline constexpr uint32_t SAVE_TIMEOUT_MS = 10000;  // for the panel's settings over the link
 inline constexpr uint32_t DOWNLOAD_TIMEOUT_MS = 5 * 60000;
 inline constexpr uint32_t BUS_QUIET_US = 2500;  // since the last frame on the bus before we send
+// The requests that go once a phase are short, so they wait for the CX60's quiet time after its status broadcast
+inline constexpr uint32_t ONE_SHOT_US = 4000;     // what's left of it for one and its answer
+inline constexpr uint32_t WINDOW_WAIT_MS = 1000;  // without one that long, any quiet will do
+inline constexpr uint8_t PROBE_TRIES = 4;         // at each address, the CX60's polls can run into a few
+inline constexpr uint8_t ENTER_TRIES = 4;         // for the loader to show after the kick or the reset
+inline constexpr uint8_t CLEAN_TRIES = 6;         // resets for a loader left waiting, a busy one misses some
+inline constexpr uint8_t RESET_TRIES = 6;         // resets after the firmware's in
 
 enum Phase {
   IDLE,

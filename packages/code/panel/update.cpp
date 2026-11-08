@@ -550,7 +550,7 @@ static void probe_wait(Reply got, bool timed_out) {
     F.probe_heard[F.probe_i] = true;
   } else if (!timed_out) {
     return;
-  } else if (++F.probe_tries < 2) {
+  } else if (++F.probe_tries < PROBE_TRIES) {
     enter_phase(PROBE);
     return;
   }
@@ -576,13 +576,13 @@ static void wait_bl(Reply got, uint32_t now) {
     } else if (F.bl_state == ST_IDLE) {
       enter_phase(ARM);
       status("Bootloader's ready...");
-    } else if (F.clean_tries < 4) {
+    } else if (F.clean_tries < CLEAN_TRIES) {
       enter_phase(CLEAN);  // busy and missed the reset, send it again
     } else {
       finish(false, "The panel's bootloader is stuck");
     }
   } else if (now - F.step_ms > ENTER_TIMEOUT_MS) {
-    if (++F.enter_tries > 2) {
+    if (++F.enter_tries >= ENTER_TRIES) {
       finish(false, "The panel didn't go into its bootloader");
       return;
     }
@@ -652,15 +652,15 @@ static void end_wait(Reply got, uint32_t now) {
     finish(false, "The panel didn't finish the update");
 }
 
-// Done once the loader says it's starting or goes quiet. Else reset again after 2 s and 4 s, and give up 5 s after
-// the third.
+// Done once the loader says it's starting or goes quiet. Else reset again 2 s, 4 s and then 5 s apart, and give up
+// 5 s after the last.
 static void reset_wait(Reply got, uint32_t now) {
   if (got == R_STATUS)
     F.answer_ms = now;
   if ((got == R_STATUS && F.bl_state == ST_BOOT) || now - F.answer_ms > RESTARTED_MS) {
     finish(true);
   } else if (now - F.step_ms >= std::min(RESET_AGAIN_MS << F.reset_tries, RESET_AGAIN_MAX_MS)) {
-    if (++F.reset_tries >= 3)  // the firmware's in already
+    if (++F.reset_tries >= RESET_TRIES)  // the firmware's in already
       finish(true, "The new firmware is in, but the panel didn't restart. Power it off and on");
     else
       enter_phase(RESET);
@@ -705,6 +705,27 @@ static void react(Reply got, bool timed_out, uint32_t now) {
     default:
       break;
   }
+}
+
+// The phases that send one short request, a probe, the kick, an arm, an end or a reset
+static bool one_shot(Phase p) {
+  return p == PROBE || p == ENTER || p == CLEAN || p == ARM || p == END || p == RESET || p == ABORT;
+}
+
+// Whether the bus is clear for the phase's request. A short one goes in the CX60's quiet time after its status
+// broadcast, so its next poll can't run into it or the answer, and after WINDOW_WAIT_MS without one it takes any
+// quiet, for a bus where that never comes. Pieces don't fit in it and status polls come too often, so they only
+// wait for a quiet bus.
+static bool clear_to_send(uint32_t now) {
+  uint32_t quiet = hooks->quiet_min_us();
+  if (!one_shot(F.phase))
+    return quiet >= BUS_QUIET_US;
+  if (!due(now))
+    return false;
+  uint32_t age = hooks->status_age_us();
+  if (age != UINT32_MAX && pbus_status_left(age, PBUS_END_US) >= ONE_SHOT_US && quiet >= PBUS_START_MIN_US)
+    return true;
+  return quiet >= BUS_QUIET_US && now - F.next_ms > WINDOW_WAIT_MS;
 }
 
 // The next request for the phase, if it's time
@@ -807,7 +828,7 @@ void pump() {
   Reply got = F.reply;
   F.reply = R_NONE;
   react(got, timed_out, now);
-  if (running() && hooks->quiet_min_us() >= BUS_QUIET_US)
+  if (running() && clear_to_send(millis()))
     request(millis());
 }
 
