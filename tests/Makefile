@@ -9,10 +9,11 @@ BUILD  := build
 CODE   := ../packages/code
 SERVER := ../esphome/components/flexit_modbus_server
 CAMERA := ../esphome/components/flexit_panel_camera
+MET    := $(CODE)/met
 SERVER_SRC := $(SERVER)/flexit_modbus_server.cpp $(MODBUS)/ModbusRTUServer.cpp $(CODE)/panel/pbus.c
 HEADERS := $(wildcard *.h stubs/*.h stubs/*/*.h stubs/*/*/*.h $(CODE)/*.h $(CODE)/*/*.h $(SERVER)/*.h $(CAMERA)/*.h \
   $(MODBUS)/*.h)
-TESTS  := update_test camera_test server_test restart_test humidity_boost_test summer_cooling_test
+TESTS  := update_test camera_test server_test restart_test humidity_boost_test summer_cooling_test met_coast_wave_test
 
 all: $(TESTS)
 $(TESTS): %: $(BUILD)/%
@@ -27,6 +28,8 @@ $(BUILD)/server_test: server_test.cpp $(SERVER_SRC)
 $(BUILD)/restart_test: restart_test.cpp $(SERVER_SRC)
 $(BUILD)/humidity_boost_test: humidity_boost_test.cpp $(SERVER_SRC)
 $(BUILD)/summer_cooling_test: summer_cooling_test.cpp $(SERVER_SRC)
+$(BUILD)/met_coast_wave_test: met_coast_wave_test.cpp $(MET)/met_scene.cpp $(MET)/met_raster.cpp \
+  $(MET)/met_forecast.cpp $(MET)/met_sky_math.cpp $(MET)/met_sprites.cpp
 $(BUILD)/%: $(HEADERS)
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) $(filter %.cpp %.c,$^) -o $@

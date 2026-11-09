@@ -355,6 +355,12 @@ green under a violet top from about 3, a pink lower edge from 5, a red top from 
 Kp is over what your place needs the brighter it glows, and in a storm that only just reaches you it's mostly red.
 Until NOAA has answered it shows some clear nights north of 55 degrees.
 
+On the coast, with `Panel Weather Forecast` on, MET's wave height from its ocean forecast (Oceanforecast 2.0) is
+written right of the lighthouse, just above the sea, in the forecast's lettering. It's only asked for then, after
+the forecast, and again once it expires. Nothing is written when it rounds to 0.0 m, as it mostly does in the fjords.
+Inland MET has no waves, and outside its area it answers 422; either way nothing is written and the ESP asks again
+the next day.
+
 `Panel Animation Weather`, on unless you turn it off, adds slow animations that fit the picture, one show at a time:
 gulls over the cabin, rain and snow falling from under the clouds, the stars sparkling, a moose at dusk, the
 sailboat, the town's windows, the lights on the Christmas spruce, fireworks on New Year's Eve, the flag waving on
