@@ -1295,8 +1295,8 @@ void build(Scene &s, const Weather &w, double lat, double lon, uint32_t t, bool 
   if (with_forecast && w.ok && s.ov) {
     overlay(s, n, offset);
     // and on the coast Oceanforecast's wave height with it, right of the lighthouse just above the sea, as the
-    // forecast's text
-    if (s.ground == G_COAST && w.wave >= 0) {
+    // forecast's text. Not when it would be 0.0 m, as it mostly is in the fjords.
+    if (s.ground == G_COAST && w.wave >= 0.05f) {
       char b[8];
       snprintf(b, sizeof b, w.wave < 9.95f ? "%.1fm" : "%.0fm", w.wave);
       stamp_text(s, (LH_X + 5 + W) / 2, s.sea_top - 17, b, 2, s.rgb[C_TEXT], s.rgb[C_OUTLINE]);

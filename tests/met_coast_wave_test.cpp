@@ -123,13 +123,13 @@ int main() {
   CHECK(wave_at(Sea{}, t15) == -1);
 
   // On the coast, with the forecast, right of the lighthouse and above the sea, in the forecast's text and
-  // outline. One decimal under 10 m, none from there: "10m" and "12m" are as wide, "1.8m", "0.0m" and "9.9m" wider.
+  // outline. One decimal under 10 m, none from there: "10m" and "12m" are as wide, "1.8m", "0.1m" and "9.9m" wider.
   build_at(-1);
   int without = scene.nstamps;
   CHECK(!text_stamp());
   int widths[5];
   uint64_t first[5];
-  float ms[] = {1.8f, 0.0f, 9.94f, 9.95f, 12.4f};
+  float ms[] = {1.8f, 0.06f, 9.94f, 9.95f, 12.4f};
   for (int i = 0; i < 5; i++) {
     build_at(ms[i]);
     CHECK(scene.nstamps == without + 2);
@@ -149,7 +149,12 @@ int main() {
   CHECK(widths[0] == widths[1] && widths[1] == widths[2]);
   CHECK(widths[3] == widths[4] && widths[3] < widths[0]);
 
-  // None inland, where Oceanforecast has no waves, without the forecast, and on the other landscapes
+  // None at 0.0 m, as in the fjords, inland, where Oceanforecast has no waves, without the forecast, and on the
+  // other landscapes
+  for (float m : {0.0f, 0.04f}) {
+    build_at(m);
+    CHECK(scene.nstamps == without && !text_stamp());
+  }
   build_at(1.8f, false);
   CHECK(!text_stamp());
   for (Ground g : {G_HILLS, G_MOUNTAINS, G_CITY}) {

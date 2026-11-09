@@ -76,7 +76,8 @@ struct Forecast : JsonScan {
 };
 
 // The waves from Oceanforecast 2.0: the significant wave height, hourly from about now. MET Norway has them for
-// points at sea, and points near the coast go to the nearest one; inland there are none.
+// points at sea, and points near the coast go to the nearest one; inland the timeseries is empty, and outside MET's
+// area it answers 422.
 inline constexpr int SEA_HOURS = 24;
 struct Sea {
   bool ok = false;

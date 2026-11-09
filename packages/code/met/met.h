@@ -22,7 +22,7 @@ extern "C" bool flexit_fireplace_active() __attribute__((weak));
 namespace flexit::panel::met {
 
 inline Weather weather;  // the forecast, from the coming hour on
-inline Sea sea;          // the waves, from Oceanforecast. Not ok inland, where MET Norway has none
+inline Sea sea;          // the waves, from Oceanforecast. Not ok where MET Norway has none: inland, or outside its area
 
 // The dashboard tile's label and icon for each Icon
 struct Kind {
@@ -88,8 +88,9 @@ struct SeaAsk : fetch::Request {
   bool feed(const char *p, size_t n) override { return f.feed(p, n); }
 };
 
-// MET Norway's Oceanforecast, asked through fetch.h after the forecast. Inland it has no waves, a 422, and is asked
-// again the next day. No status of its own, Panel Weather is the forecast's.
+// MET Norway's Oceanforecast, asked through fetch.h after the forecast. Inland in MET's area the answer is a 200 with
+// no hours, outside it a 422; either way it's asked again the next day. No status of its own, Panel Weather is the
+// forecast's.
 struct Seas : fetch::Asker {
   std::string modified;
   char url[128];
@@ -346,9 +347,8 @@ inline bool KpIndex::got(fetch::Request &r) {
 }
 
 inline fetch::Request *Seas::make(int) {
-  auto *r = new (std::nothrow) SeaAsk();
+  auto *r = fetch::request<SeaAsk>(url);
   if (r) {
-    r->url = url;
     r->header = "If-Modified-Since";
     r->value = modified;
   }
@@ -363,7 +363,7 @@ inline void Seas::none(int status) {
   sea = Sea{};
   if (had)
     redraw();
-  ESP_LOGI("met", "No waves here (HTTP %d), MET Norway has them for points at sea", status);
+  ESP_LOGI("met", "No waves here (HTTP %d): inland, or outside MET Norway's area", status);
 }
 
 // Oceanforecast's answer, as Forecasts::got() has the forecast's. One without waves is inland, see none().
@@ -385,9 +385,9 @@ inline bool Seas::got(fetch::Request &r) {
   return true;
 }
 
-// A 422 (or 400, 404) is a point inland, not a refusal to back off from
+// A 422 is a point outside MET Norway's area, land or sea: no waves, not a refusal to back off from
 inline void Seas::answered(fetch::Request *r) {
-  if (r->status == 422 || r->status == 400 || r->status == 404) {
+  if (r->status == 422) {
     asking = nullptr;
     none(r->status);
     schedule.got(*r, true, every_s);
