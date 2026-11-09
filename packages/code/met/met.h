@@ -415,8 +415,8 @@ void setup(double latitude, double longitude, const char *picture, const char *e
   kp_index.every_s = KP_BLOCK_S;
   kp_index.status = ptr_of(kp_status);
   fetch::add(kp_index);
-  snprintf(seas.url, sizeof seas.url,
-           "https://api.met.no/weatherapi/oceanforecast/2.0/complete?lat=%.4f&lon=%.4f", lat, lon);
+  snprintf(seas.url, sizeof seas.url, "https://api.met.no/weatherapi/oceanforecast/2.0/complete?lat=%.4f&lon=%.4f", lat,
+           lon);
   seas.what = "waves";
   seas.server = "MET Norway";
   fetch::add(seas);  // after the forecast, so that's asked first

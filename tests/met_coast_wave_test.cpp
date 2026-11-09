@@ -10,7 +10,7 @@ using namespace flexit::panel::met;
 
 static int utc(uint32_t) { return 0; }
 
-static Sprite sprites[SPRITES];
+static Stamps stamps;
 static uint8_t ov[OV_H][W / 4];
 static Land land;
 static Scene scene;
@@ -53,27 +53,27 @@ static void build_at(float waves, bool forecast = true, Ground g = G_COAST) {
   }
   Options o;
   o.ground = g;
-  scene.sprite = sprites;
+  scene.stamps = &stamps;
   scene.ov = forecast ? ov : nullptr;
   scene.land = &land;
   build(scene, w, 60.39, 5.32, w.time, forecast, utc, o);
   palette(scene, nullptr);
 }
 
-// The text sprite build() adds over its outline: the last one in the text's colour with one before it in the
+// The text stamp build() adds over its outline: the last one in the text's colour with one before it in the
 // outline's. Null if there's none.
-static const Sprite *text_sprite() {
-  for (int i = scene.nsprites - 1; i > 0; i--) {
-    const Sprite &t = scene.sprite[i], &o = scene.sprite[i - 1];
-    if (t.c == scene.rgb[C_TEXT] && o.c == scene.rgb[C_OUTLINE] && t.layer == 2 && o.layer == 2 && o.x == t.x - 1 &&
-        o.y == t.y - 1 && o.w == t.w + 2 && o.h == t.h + 2)
+static const Stamp *text_stamp() {
+  for (int i = scene.nstamps - 1; i > 0; i--) {
+    const Stamp &t = scene.stamps->at[i], &o = scene.stamps->at[i - 1];
+    if (t.c == scene.rgb[C_TEXT] && o.c == scene.rgb[C_OUTLINE] && t.layer == ON_TOP && o.layer == ON_TOP &&
+        o.x == t.x - 1 && o.y == t.y - 1 && o.w == t.w + 2 && o.h == t.h + 2)
       return &t;
   }
   return nullptr;
 }
 
 // How many of the text's pixels row() draws in its colour, and in which columns and rows
-static int drawn(const Sprite &t, int &l, int &r, int &top, int &bottom) {
+static int drawn(const Stamp &t, int &l, int &r, int &top, int &bottom) {
   uint8_t px[W];
   int n = 0;
   l = top = 9999;
@@ -96,8 +96,8 @@ int main() {
   // Oceanforecast's hours, in parts that cut the keys in two too. The last hour is read once the next one starts,
   // so it waits for one more, and an hour without the height is skipped.
   std::string answer = "{\"type\":\"Feature\",\"properties\":{\"timeseries\":[";
-  answer += hour(14, "\"sea_surface_wave_height\":1.2,") + hour(15, "\"sea_surface_wave_height\":1.8,") +
-            hour(16, "") + hour(17, "\"sea_surface_wave_height\":-0.3,") + hour(18, "\"sea_surface_wave_height\":2.0,");
+  answer += hour(14, "\"sea_surface_wave_height\":1.2,") + hour(15, "\"sea_surface_wave_height\":1.8,") + hour(16, "") +
+            hour(17, "\"sea_surface_wave_height\":-0.3,") + hour(18, "\"sea_surface_wave_height\":2.0,");
   answer += "{\"time\":\"2026-08-20T19:00:00Z\"}]}}";
   for (size_t k : {answer.size(), (size_t) 1, (size_t) 7, (size_t) 100}) {
     Sea sea = read_sea(answer, k);
@@ -125,21 +125,21 @@ int main() {
   // On the coast, with the forecast, right of the lighthouse and above the sea, in the forecast's text and
   // outline. One decimal under 10 m, none from there: "10m" and "12m" are as wide, "1.8m", "0.0m" and "9.9m" wider.
   build_at(-1);
-  int without = scene.nsprites;
-  CHECK(!text_sprite());
+  int without = scene.nstamps;
+  CHECK(!text_stamp());
   int widths[5];
   uint64_t first[5];
   float ms[] = {1.8f, 0.0f, 9.94f, 9.95f, 12.4f};
   for (int i = 0; i < 5; i++) {
     build_at(ms[i]);
-    CHECK(scene.nsprites == without + 2);
-    const Sprite *t = text_sprite();
+    CHECK(scene.nstamps == without + 2);
+    const Stamp *t = text_stamp();
     CHECK(t);
     if (!t)
       continue;
     int l, r, top, bottom;
     CHECK(drawn(*t, l, r, top, bottom) > 20);
-    CHECK(l > LH_X + 4 && r < W);  // clear of the lighthouse, on the screen
+    CHECK(l > LH_X + 4 && r < W);                     // clear of the lighthouse, on the screen
     CHECK(bottom < scene.sea_top - 1 && top > OV_H);  // above the sea, under the forecast
     widths[i] = t->w;
     first[i] = t->rows[7];
@@ -151,12 +151,12 @@ int main() {
 
   // None inland, where Oceanforecast has no waves, without the forecast, and on the other landscapes
   build_at(1.8f, false);
-  CHECK(!text_sprite());
+  CHECK(!text_stamp());
   for (Ground g : {G_HILLS, G_MOUNTAINS, G_CITY}) {
     build_at(-1, true, g);
-    int n = scene.nsprites;
+    int n = scene.nstamps;
     build_at(1.8f, true, g);
-    CHECK(scene.nsprites == n && !text_sprite());
+    CHECK(scene.nstamps == n && !text_stamp());
   }
 
   printf("%s\n", fails ? "FAILED" : "met_coast_wave_test: all passed");
