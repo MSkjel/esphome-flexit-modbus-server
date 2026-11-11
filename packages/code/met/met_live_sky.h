@@ -29,7 +29,7 @@ inline constexpr int BOLT_START = 170, BOLT_ROW = 5;
 struct CloudCost {
   int fifths, start;
 };
-inline constexpr CloudCost CIRRUS_COST = {5, 370}, CUMULUS_COST = {6, 210};
+inline constexpr CloudCost CIRRUS_COST = {5, 405}, CUMULUS_COST = {6, 235};
 // The flag next to the clouds
 inline constexpr int FLAG_BYTES = 600;
 

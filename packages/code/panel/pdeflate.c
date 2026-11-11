@@ -5,7 +5,6 @@
 // Copied into esphome-flexit-modbus-server by make -C sim esp_sync, edit it here.
 #include "pdeflate.h"
 #include <stdbool.h>
-#include <stdlib.h>
 #include <string.h>
 
 // Lengths 3..258 and distances 1..32768: base and extra bits of each code
@@ -29,28 +28,33 @@ static uint32_t at(uint32_t i, unsigned width, unsigned stride) { return i / wid
 #define R6(n) R4(n), R4(n + 2 * 4), R4(n + 1 * 4), R4(n + 3 * 4)
 static const uint8_t REV[256] = {R6(0), R6(2), R6(1), R6(3)};  // each byte with its bits the other way round
 
+// A code's symbols are kept as bytes, which halves what pinflate() has on the stack. The 30 from 256 up are told by
+// where they are: build() puts a length's symbols in rising order, so they are the last of each length's.
 typedef struct {
   uint16_t limit[17];  // codes up to l bits, filled out to 15 bits, are below limit[l]. limit[16] stops the search
   int16_t offs[16];    // a code of l bits is symbol[offs[l] + code]
+  uint16_t high[16];   // and 256 more than the byte there says from symbol[high[l]] on
   uint8_t start[16];   // the shortest code that starts with each 4 bits, where the search starts
-  const uint16_t *symbol;
+  const uint8_t *symbol;
 } huff_t;
 
 // The fixed codes. Literals and lengths: 7 bits for 256-279, 8 for 0-143 and 280-287, 9 for 144-255. Distances: 5
 // bits, the symbol is the code, from the 0-143 run.
 #define S4(n) n, n + 1, n + 2, n + 3
 #define S16(n) S4(n), S4(n + 4), S4(n + 8), S4(n + 12)
-static const uint16_t FIX_SYM[288] = {S16(256), S4(272),  S4(276),  S16(0),   S16(16),  S16(32),  S16(48),
-                                      S16(64),  S16(80),  S16(96),  S16(112), S16(128), S4(280),  S4(284),
-                                      S16(144), S16(160), S16(176), S16(192), S16(208), S16(224), S16(240)};
+static const uint8_t FIX_SYM[288] = {S16(0),   S4(16),   S4(20),   S16(0),   S16(16),  S16(32),  S16(48),
+                                     S16(64),  S16(80),  S16(96),  S16(112), S16(128), S4(24),   S4(28),
+                                     S16(144), S16(160), S16(176), S16(192), S16(208), S16(224), S16(240)};
 static const huff_t FIX_LIT = {
     {0, 0, 0, 0, 0, 0, 0, 24 << 8, 200 << 7, 32768, 32768, 32768, 32768, 32768, 32768, 32768, 32768},
     {0, 0, 0, 0, 0, 0, 0, 0, -24, -224},
+    {[7] = 0, [8] = 24 + 144, [9] = 288},
     {7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9},
     FIX_SYM};
 static const huff_t FIX_DIST = {{0, 0, 0, 0, 0, 30 << 10, 30 << 10, 30 << 10, 30 << 10, 30 << 10, 30 << 10, 30 << 10,
                                  30 << 10, 30 << 10, 30 << 10, 30 << 10, 32768},
                                 {0},
+                                {[5] = 288},
                                 {5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5},
                                 FIX_SYM + 24};
 
@@ -96,8 +100,8 @@ static inline void len_set(uint8_t *lens, int i, unsigned l) {
 }
 
 // Builds h from the n code lengths from the one at from on, its symbols into sym. < 0 = too many codes, 0 =
-// complete, > 0 = some left over.
-static int build(huff_t *h, uint16_t *sym, const uint8_t *lens, int from, int n) {
+// complete, > 0 = some left over. It and tables() run once a block, so they are built small.
+__attribute__((optimize("Os"))) static int build(huff_t *h, uint8_t *sym, const uint8_t *lens, int from, int n) {
   int16_t count[16] = {0}, offs[16];
   for (int i = 0; i < n; i++)
     count[len_at(lens, from + i)]++;
@@ -117,9 +121,14 @@ static int build(huff_t *h, uint16_t *sym, const uint8_t *lens, int from, int n)
   for (int p = 0, l = 1; p < 16; h->start[p++] = (uint8_t) l)
     while ((unsigned) p << 11 >= h->limit[l])
       l++;
-  for (int i = 0; i < n; i++)
+  for (int i = 0; i < n; i++) {
+    if (i == 256)
+      memcpy(h->high, offs, sizeof offs);  // where each length's symbols have got to
     if (len_at(lens, from + i))
-      sym[offs[len_at(lens, from + i)]++] = (uint16_t) i;
+      sym[offs[len_at(lens, from + i)]++] = (uint8_t) i;
+  }
+  if (n <= 256)
+    memcpy(h->high, offs, sizeof offs);  // past the last, none is from 256 up
   h->symbol = sym;
   return count[0] == n ? 0 : left;  // no codes: nothing will decode
 }
@@ -134,7 +143,8 @@ static inline int decode(inf_t *s, const huff_t *h) {
   if (l > 15)
     return -1;
   drop(s, (int) l);
-  return h->symbol[h->offs[l] + (int) (r >> (15 - l))];
+  int i = h->offs[l] + (int) (r >> (15 - l));
+  return h->symbol[i] + (i >= h->high[l] ? 256 : 0);
 }
 
 static inline void emit(inf_t *s, uint8_t b) {
@@ -222,7 +232,8 @@ static bool stored(inf_t *s) {
 
 // A dynamic block's two codes, read from its start. On its own, so the lengths are off the stack again before the
 // block is decoded.
-__attribute__((noinline)) static bool tables(inf_t *s, huff_t *lit, huff_t *dist, uint16_t *lsym, uint16_t *dsym) {
+__attribute__((noinline, optimize("Os"))) static bool tables(inf_t *s, huff_t *lit, huff_t *dist, uint8_t *lsym,
+                                                             uint8_t *dsym) {
   uint8_t lens[(288 + 32) / 2] = {0};
   int nlen = (int) getbits(s, 5) + 257, ndist = (int) getbits(s, 5) + 1, ncode = (int) getbits(s, 4) + 4;
   if (s->short_ || nlen > 286 || ndist > 30)
@@ -266,7 +277,7 @@ __attribute__((noinline)) static bool tables(inf_t *s, huff_t *lit, huff_t *dist
 
 uint32_t pinflate(const uint8_t *in, uint32_t n, uint8_t *out, unsigned width, unsigned stride, uint32_t len,
                   uint32_t hist) {
-  uint16_t lsym[288], dsym[30];
+  uint8_t lsym[286], dsym[30];
   huff_t lit, dist;
   inf_t s = {.in = in,
              .start = in,
@@ -638,17 +649,6 @@ uint32_t pdeflate_in(const pdeflate_work_t *wk, const uint8_t *in, unsigned widt
   }
   put(&w, 0, (8 - w.nbits) & 7);
   return w.len <= cap ? w.len : 0;
-}
-
-uint32_t pdeflate(const uint8_t *in, unsigned width, unsigned stride, uint32_t len, uint8_t *out, uint32_t cap) {
-  if (len > 65535)
-    return 0;
-  pdeflate_work_t wk = {malloc(PDEFLATE_ENC), malloc(PDEFLATE_TOK(len)), malloc(PDEFLATE_REST(len))};
-  uint32_t n = wk.enc && wk.tok && wk.rest ? pdeflate_in(&wk, in, width, stride, len, out, cap) : 0;
-  free(wk.rest);
-  free(wk.tok);
-  free(wk.enc);
-  return n;
 }
 
 // ---------------------------------------------------------------- pieces

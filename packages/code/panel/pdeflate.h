@@ -24,11 +24,9 @@ typedef struct {
 // Deflates the rectangle at in into out, len <= 65535, in wk's blocks. Returns the length, 0 if it doesn't fit cap.
 uint32_t pdeflate_in(const pdeflate_work_t *wk, const uint8_t *in, unsigned width, unsigned stride, uint32_t len,
                      uint8_t *out, uint32_t cap);
-// The same with the blocks malloc'd, 0 too if that fails
-uint32_t pdeflate(const uint8_t *in, unsigned width, unsigned stride, uint32_t len, uint8_t *out, uint32_t cap);
 // Inflates in[0..n) into the rectangle at out, or only checks the data if out is NULL. Matches may reach hist bytes
 // before out, which needs width == stride. Returns the bytes of in used, 0 if malformed or it doesn't make exactly
-// len bytes. Needs about 1.4 KiB of stack.
+// len bytes. Needs about 1 KiB of stack.
 uint32_t pinflate(const uint8_t *in, uint32_t n, uint8_t *out, unsigned width, unsigned stride, uint32_t len,
                   uint32_t hist);
 

@@ -131,8 +131,8 @@ enum {
 #define OVERLAY_BEGIN_SHADE (OVERLAY_BEGIN_GLOWS + 2)
 #define OVERLAY_BEGIN_CYCLES (OVERLAY_BEGIN_SHADE + 3)
 #define OVERLAY_BEGIN_LEN (OVERLAY_BEGIN_CYCLES + 2)
-// The data is records of OVERLAY_RECORD_HEAD bytes, delay, x / 2, y, w / 2 and h, then that rectangle of the frame's
-// bytes:
+// The data is records of OVERLAY_RECORD_HEAD bytes, delay, x / 2, y, w / 2, h and how many bytes follow (2), then
+// that rectangle of the frame's bytes. With the length the panel steps from one to the next without decoding it:
 //   OVERLAY_ANIMATED  a record a frame from plink_overlay_record, the rectangle that changed, deflated. The first is
 //                     the whole first frame, the last takes the last frame back to the first. An empty one with x
 //                     OVERLAY_RECORD_MORE only makes the frame before it longer, so it isn't a frame of its own. It
@@ -161,7 +161,8 @@ enum {
   OVERLAY_RECORD_Y,
   OVERLAY_RECORD_W,
   OVERLAY_RECORD_H,
-  OVERLAY_RECORD_HEAD
+  OVERLAY_RECORD_LEN,
+  OVERLAY_RECORD_HEAD = OVERLAY_RECORD_LEN + 2
 };
 #define OVERLAY_RECORD_MORE 0xFF
 #define OVERLAY_RECORD_FRAME 0xFE

@@ -68,13 +68,17 @@ uint32_t plink_crc32(uint32_t crc, const void *data, unsigned n);  // start with
 // PackBits for one picture row of 16-colour pixels, high nibble first. out needs n + n/128 + 1 bytes. A byte
 // c < 128 is followed by c + 1 literal bytes, c >= 128 by one byte to repeat c - 126 times.
 unsigned plink_pack_row(const uint8_t *row, unsigned n, uint8_t *out);
+static inline unsigned plink_run(uint8_t c) { return c < 128 ? c + 1u : c - 126u; }  // bytes of the row c makes
+static inline unsigned plink_run_bytes(uint8_t c) { return c < 128 ? c + 1u : 1u; }  // and the bytes after c
+// A record's head at out, see OVERLAY_RECORD_*: its delay, the rectangle in the frame's bytes and how many bytes of
+// it follow. All 0 after the delay for an empty one, or OVERLAY_RECORD_MORE or OVERLAY_RECORD_FRAME as its x.
+// Returns OVERLAY_RECORD_HEAD.
+unsigned plink_overlay_head(uint8_t *out, uint8_t delay, unsigned x, unsigned y, unsigned w, unsigned h, unsigned len);
 // An animated overlay's frame cur as the rectangle that changed since prev, or the whole frame if prev is NULL. w x h,
-// packed like picture rows, (w + 1) / 2 bytes each. The record is OVERLAY_RECORD_*: delay (in OVERLAY_TICK_MS), x / 2,
-// y, w / 2, h, then the rectangle's bytes deflated, nothing if it's empty. out needs OVERLAY_RECORD_HEAD +
-// PDEFLATE_BOUND of the frame's bytes. Returns the record's length, 0 if there wasn't memory to compress it. _in
-// deflates in work's blocks for the frame's bytes, so nothing is malloc'd.
-unsigned plink_overlay_record(const uint8_t *prev, const uint8_t *cur, unsigned w, unsigned h, uint8_t delay,
-                              uint8_t *out);
+// packed like picture rows, (w + 1) / 2 bytes each. The record is its head, delay in OVERLAY_TICK_MS, then the
+// rectangle's bytes deflated, nothing if it's empty. out needs OVERLAY_RECORD_HEAD +
+// PDEFLATE_BOUND of the frame's bytes. Returns the record's length, 0 if it couldn't be compressed. It deflates in
+// work's blocks for the frame's bytes, so nothing is malloc'd.
 unsigned plink_overlay_record_in(const pdeflate_work_t *work, const uint8_t *prev, const uint8_t *cur, unsigned w,
                                  unsigned h, uint8_t delay, uint8_t *out);
 // A still overlay's pieces from its frame, w x h packed like an animated one's, into out: one for each 8 rows of it

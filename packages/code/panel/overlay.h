@@ -634,6 +634,12 @@ inline void palette() {
 // ms in OVERLAY_TICK_MS, 1 at least
 inline uint32_t ticks_of(uint32_t ms) { return std::max<uint32_t>(1, (ms + OVERLAY_TICK_MS / 2) / OVERLAY_TICK_MS); }
 
+// An empty record that only waits. x says what for: OVERLAY_RECORD_MORE or OVERLAY_RECORD_FRAME.
+inline void waits(std::vector<uint8_t> &d, uint8_t delay, uint8_t x) {
+  d.resize(d.size() + OVERLAY_RECORD_HEAD);
+  plink_overlay_head(d.data() + d.size() - OVERLAY_RECORD_HEAD, delay, x, 0, 0, 0, 0);
+}
+
 // Records after one that waits its delay, so it waits ticks more, OVERLAY_DELAY_MAX each. False if they don't fit d's
 // capacity.
 inline bool longer(std::vector<uint8_t> &d, uint32_t ticks) {
@@ -641,7 +647,7 @@ inline bool longer(std::vector<uint8_t> &d, uint32_t ticks) {
     delay = (uint8_t) std::min<uint32_t>(ticks, OVERLAY_DELAY_MAX);
     if (d.size() + OVERLAY_RECORD_HEAD > d.capacity())
       return false;
-    d.insert(d.end(), {delay, OVERLAY_RECORD_MORE, 0, 0, 0});
+    waits(d, delay, OVERLAY_RECORD_MORE);
   }
   return true;
 }
@@ -680,7 +686,7 @@ inline void sheet_frame(uint32_t ms) {
   uint32_t ticks = ticks_of(ms), at = (uint32_t) d.size() + OVERLAY_RECORD_HEAD, n = 0;
   uint8_t delay = (uint8_t) std::min<uint32_t>(ticks, OVERLAY_DELAY_MAX);
   if (at <= d.capacity()) {
-    d.insert(d.end(), {delay, OVERLAY_RECORD_FRAME, 0, 0, 0});
+    waits(d, delay, OVERLAY_RECORD_FRAME);
     d.resize(d.capacity());
     n = plink_overlay_pieces(W.frame.data(), a.w, a.h, clear_colours(a.pal), 0, d.data() + at,
                              (uint32_t) d.size() - at);

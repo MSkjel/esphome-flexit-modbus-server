@@ -107,8 +107,18 @@ void pbulk_panel_init(pbulk_panel_t *p, uint16_t session) {
   p->psess = session ? session : 1;
 }
 
-static unsigned rx_room(const pbulk_panel_t *p) {
-  return (unsigned) (PBULK_RX_BUF - 1 - (p->head - p->tail + PBULK_RX_BUF) % PBULK_RX_BUF);
+// Where a batch of n bytes and its count go in buf, in one piece: at head, or from buf's start behind a 0 at head
+// when the end is too near. NULL if that would reach what the main loop hasn't taken.
+static uint8_t *rx_place(pbulk_panel_t *p, int n) {
+  uint16_t h = p->head, t = p->tail;
+  if (t > h)  // what's waiting runs on round the end
+    return t - h > 1 + n ? p->buf + h : NULL;
+  if (PBULK_RX_BUF - h > 1 + n)
+    return p->buf + h;
+  if (t <= 1 + n)
+    return NULL;
+  p->buf[h] = 0;
+  return p->buf;
 }
 
 // Offset in out of message `from`, and in *part the bytes of it the ESP has, only ever part of a DATA
@@ -203,23 +213,19 @@ static uint8_t take(pbulk_panel_t *p, const uint8_t *f) {
   uint16_t num = plink_get16(f + PBULK_NUM);
   follow(num, f[PBULK_N], &p->enext, &p->ahead, &p->resyncs);
   uint16_t next = p->enext;
-  uint8_t tmp[PBULK_MAX];
-  int n = skip(f + PBULK_PAYLOAD, f[PBULK_N], num, &next, tmp);
-  if (n > 0 && rx_room(p) < (unsigned) n + 1) {
-    p->busy++;
-    return PB_BUSY;
-  }
-  // Into the ring as n, then the messages. Nothing new in it means our last answer got lost.
+  int n = skip(f + PBULK_PAYLOAD, f[PBULK_N], num, &next, NULL);  // how much of it is new
+  // Into buf as n, then the messages. Nothing new in it means our last answer got lost.
   if (n > 0) {
-    uint16_t h = p->head;
-    p->buf[h] = (uint8_t) n;
-    h = (h + 1) % PBULK_RX_BUF;
-    for (int i = 0; i < n; i++) {
-      p->buf[h] = tmp[i];
-      h = (h + 1) % PBULK_RX_BUF;
+    uint8_t *at = rx_place(p, n);
+    if (!at) {
+      p->busy++;
+      return PB_BUSY;
     }
-    __sync_synchronize();  // the batch is in buf before head says so
-    p->head = h;           // set last, the main loop may be reading
+    next = p->enext;
+    skip(f + PBULK_PAYLOAD, f[PBULK_N], num, &next, at + 1);
+    at[0] = (uint8_t) n;
+    __sync_synchronize();                        // the batch is in buf before head says so
+    p->head = (uint16_t) (at + 1 + n - p->buf);  // set last, the main loop may be reading
   }
   p->enext = next;
   return PB_OK;
@@ -284,20 +290,22 @@ int pbulk_panel_frame(pbulk_panel_t *p, uint8_t addr, const uint8_t *f, int n, u
   return answer(p, a, left_us, st, end_us, out_from);
 }
 
-int pbulk_panel_take(pbulk_panel_t *p, uint8_t *out) {
-  uint16_t t = p->tail;
-  if (t == p->head)
-    return 0;
+// Where the batch at tail starts: there, or at buf's start when the interrupt left a 0 there, see rx_place()
+static const uint8_t *rx_batch(const pbulk_panel_t *p) { return p->buf[p->tail] ? p->buf + p->tail : p->buf; }
+
+const uint8_t *pbulk_panel_take(pbulk_panel_t *p, int *n) {
+  if (p->tail == p->head)
+    return NULL;
   __sync_synchronize();  // buf after head, which the interrupt sets last
-  int n = p->buf[t];
-  t = (t + 1) % PBULK_RX_BUF;
-  for (int i = 0; i < n; i++) {
-    out[i] = p->buf[t];
-    t = (t + 1) % PBULK_RX_BUF;
-  }
+  const uint8_t *b = rx_batch(p);
+  *n = b[0];
+  return b + 1;
+}
+
+void pbulk_panel_taken(pbulk_panel_t *p) {
+  const uint8_t *b = rx_batch(p);
   __sync_synchronize();  // done with buf before tail frees it for the interrupt
-  p->tail = t;
-  return n;
+  p->tail = (uint16_t) (b + 1 + b[0] - p->buf);
 }
 
 bool pbulk_panel_put(pbulk_panel_t *p, const uint8_t *payload, int n) {
