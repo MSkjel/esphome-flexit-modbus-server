@@ -645,7 +645,7 @@ static void stars(Scene &s, const Now &n) {
   if (n.sun.el >= -7 || n.grey >= 0.85f)
     return;
   Rng r{0x5EED5u};
-  s.nstars = (int) ((n.sun.el < -12 ? 90 : 40) * (1 - n.cover / 100));
+  s.nstars = std::clamp((int) ((n.sun.el < -12 ? 90 : 40) * (1 - n.cover / 100)), 0, (int) std::size(s.star_x));
   for (int i = 0; i < s.nstars; i++) {
     s.star_x[i] = (int16_t) r.in(0, W - 1);
     s.star_y[i] = (int16_t) r.in(2, 132);

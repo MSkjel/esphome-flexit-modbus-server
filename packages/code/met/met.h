@@ -291,9 +291,9 @@ inline uint32_t pixel(int x, int y) {
   return c.scene.pal[c.row[x < W ? x : W - 1]];
 }
 
-// With If-Modified-Since once we have a Last-Modified
-inline fetch::Request *Forecasts::make(int) {
-  auto *r = fetch::request<Ask>(url);
+// A request to MET that reads its answer as a T, with If-Modified-Since once there's a Last-Modified
+template<class T> fetch::Request *since(const std::string &url, const std::string &modified) {
+  auto *r = fetch::request<T>(url);
   if (r) {
     r->header = "If-Modified-Since";
     r->value = modified;
@@ -301,12 +301,19 @@ inline fetch::Request *Forecasts::make(int) {
   return r;
 }
 
-// api.met.no's answer, 2xx with the forecast read from it, or 304 if it hasn't changed. 203 is a product that's
-// deprecated, its data is still good. A 2xx without a forecast in it counts as a server error. Asked again at least
-// 10 min after Expires, in case our clock is off, or in an hour without one.
-inline bool Forecasts::got(fetch::Request &r) {
+// The seconds until MET is asked again: at least 10 min after the answer's Expires, in case our clock is off, or an
+// hour without one
+inline uint32_t again_s(const fetch::Request &r) {
   uint32_t now = fetch::now_s(), e = fetch::http_date(r.expires);
-  every_s = e ? std::max(e, now + 600) - now : 3600;
+  return e ? std::max(e, now + 600) - now : 3600;
+}
+
+inline fetch::Request *Forecasts::make(int) { return since<Ask>(url, modified); }
+
+// api.met.no's answer, 2xx with the forecast read from it, or 304 if it hasn't changed. 203 is a product that's
+// deprecated, its data is still good. A 2xx without a forecast in it counts as a server error.
+inline bool Forecasts::got(fetch::Request &r) {
+  every_s = again_s(r);
   if (r.status == 304) {
     ESP_LOGI("met", "The forecast hasn't changed (HTTP 304)");
     return true;
@@ -343,14 +350,7 @@ inline bool KpIndex::got(fetch::Request &r) {
   return true;
 }
 
-inline fetch::Request *Seas::make(int) {
-  auto *r = fetch::request<SeaAsk>(url);
-  if (r) {
-    r->header = "If-Modified-Since";
-    r->value = modified;
-  }
-  return r;
-}
+inline fetch::Request *Seas::make(int) { return since<SeaAsk>(url, modified); }
 
 // No waves here: none drawn, asked again tomorrow
 inline void Seas::none(int status) {
@@ -365,8 +365,7 @@ inline void Seas::none(int status) {
 
 // Oceanforecast's answer, as Forecasts::got() has the forecast's. One without waves is inland, see none().
 inline bool Seas::got(fetch::Request &r) {
-  uint32_t now = fetch::now_s(), e = fetch::http_date(r.expires);
-  every_s = e ? std::max(e, now + 600) - now : 3600;
+  every_s = again_s(r);
   if (r.status == 304)
     return true;
   const Sea &w = static_cast<SeaAsk &>(r).f.sea;
@@ -377,7 +376,7 @@ inline bool Seas::got(fetch::Request &r) {
   sea = w;
   if (!r.last_modified.empty())
     modified = r.last_modified;
-  ESP_LOGI("met", "Waves: %.1f m", wave_at(sea, now));
+  ESP_LOGI("met", "Waves: %.1f m", wave_at(sea, fetch::now_s()));
   redraw();
   return true;
 }

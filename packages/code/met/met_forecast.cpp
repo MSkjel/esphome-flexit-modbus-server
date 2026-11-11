@@ -1,11 +1,22 @@
 // MET Norway's forecast, see met_forecast.h
 #include "met_forecast.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include "../panel/dates.h"
 
 namespace flexit::panel::met {
+
+// v as a number from lo to hi into f. False for what isn't one, like null, and f is left as it was.
+static bool number(const char *v, float &f, float lo, float hi) {
+  char *end;
+  float x = strtof(v, &end);
+  if (end == v || *end || !std::isfinite(x))
+    return false;
+  f = std::clamp(x, lo, hi);
+  return true;
+}
 
 Icon icon_of(const char *s) {
   bool night = strstr(s, "_night") != nullptr || strstr(s, "_polartwilight") != nullptr;
@@ -44,28 +55,25 @@ void Forecast::value(int depth, const char *key, int, const char *v) {
     return;
   const char *in = parent(2);
   if (!strcmp(in, "instant")) {
-    if (!strcmp(key, "air_temperature")) {
-      temp = strtof(v, nullptr);
-      has_temp = true;
-    }
+    if (!strcmp(key, "air_temperature"))
+      has_temp = number(v, temp, -100, 100) || has_temp;
     if (w.ok)
       return;  // the rest is for the weather now
     static constexpr struct {
       const char *key;
       float Weather::*to;
-    } NOW[] = {{"cloud_area_fraction", &Weather::cloud},
-               {"cloud_area_fraction_low", &Weather::cloud_low},
-               {"cloud_area_fraction_medium", &Weather::cloud_mid},
-               {"cloud_area_fraction_high", &Weather::cloud_high},
-               {"fog_area_fraction", &Weather::fog},
-               {"wind_speed", &Weather::wind},
-               {"wind_speed_of_gust", &Weather::gust},
-               {"wind_from_direction", &Weather::wind_from}};
+      float most;  // percent, m/s and degrees
+    } NOW[] = {{"cloud_area_fraction", &Weather::cloud, 100},
+               {"cloud_area_fraction_low", &Weather::cloud_low, 100},
+               {"cloud_area_fraction_medium", &Weather::cloud_mid, 100},
+               {"cloud_area_fraction_high", &Weather::cloud_high, 100},
+               {"fog_area_fraction", &Weather::fog, 100},
+               {"wind_speed", &Weather::wind, 100},
+               {"wind_speed_of_gust", &Weather::gust, 100},
+               {"wind_from_direction", &Weather::wind_from, 360}};
     for (const auto &n : NOW)
-      if (!strcmp(key, n.key)) {
-        w.*n.to = strtof(v, nullptr);
+      if (!strcmp(key, n.key) && number(v, w.*n.to, 0, n.most))
         has_cloud = has_cloud || n.to == &Weather::cloud;
-      }
     return;
   }
   bool one = !strcmp(in, "next_1_hours");
@@ -77,15 +85,16 @@ void Forecast::value(int depth, const char *key, int, const char *v) {
     strncpy(n.symbol, v, SYMBOL - 1);
     n.symbol[SYMBOL - 1] = 0;
   } else if (!strcmp(key, "precipitation_amount")) {
-    n.rain = strtof(v, nullptr);
+    number(v, n.rain, 0, 1000);
   } else if (!strcmp(key, "probability_of_thunder")) {
-    n.thunder = strtof(v, nullptr);
+    number(v, n.thunder, 0, 100);
   }
 }
 
-// An hour's end: a later one without its time or temperature is skipped, without the first there's no forecast
+// An hour's end: a later one without its time or temperature is skipped, without the first there's no forecast.
+// Nothing after it has all it takes: the rest of the piece it came in is still scanned.
 void Forecast::end(int depth, const char *key) {
-  if (depth != 4 || strcmp(key, "timeseries"))
+  if (stop || depth != 4 || strcmp(key, "timeseries"))
     return;
   if (time && has_temp && (w.ok || has_cloud)) {
     if (!w.ok) {
@@ -122,15 +131,13 @@ float wave_at(const Sea &sea, uint32_t t) {
 void Waves::value(int depth, const char *key, int, const char *v) {
   if (depth == 4 && !*parent() && !strcmp(key, "time"))
     time = utc_of(v);
-  else if (depth == 7 && !strcmp(parent(2), "instant") && !strcmp(key, "sea_surface_wave_height")) {
-    height = std::max(0.0f, strtof(v, nullptr));
-    has = true;
-  }
+  else if (depth == 7 && !strcmp(parent(2), "instant") && !strcmp(key, "sea_surface_wave_height"))
+    has = number(v, height, 0, 100) || has;
 }
 
-// An hour's end: one without its time or waves is skipped
+// An hour's end: one without its time or waves is skipped, and nothing after it has all it keeps
 void Waves::end(int depth, const char *key) {
-  if (depth != 4 || strcmp(key, "timeseries"))
+  if (stop || depth != 4 || strcmp(key, "timeseries"))
     return;
   if (time && has) {
     sea.time[sea.hours] = time;

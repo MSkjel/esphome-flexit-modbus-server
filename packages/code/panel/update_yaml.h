@@ -112,8 +112,10 @@ template<typename Entity, typename Text> inline void attach(Entity *entity, Text
   check.what = "panel firmware version";
   check.server = "the Panel Firmware URL";
   check.url = &url->state;
-  check.every_s = std::max<uint32_t>(picture::interval_ms(every) / 1000, 60);
-  fetch::add(check);
+  uint32_t every_ms = picture::interval_ms(every);
+  check.every_s = std::max<uint32_t>(every_ms / 1000, 60);
+  if (every_ms)  // never: only when it's asked to look
+    fetch::add(check);
   entity->on_check([]() {
     if (!check.asking)
       check.ask();

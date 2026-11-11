@@ -22,6 +22,8 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include "pbulk.h"
 #include "plink.h"
 
@@ -336,15 +338,37 @@ inline constexpr Drift DRIFTS[] = {{"drift", OVERLAY_X, 2, 100},
                                    {"cycle", OVERLAY_PHASE, 1, 100}};
 
 // A part of what a script works out
+// A value is worked through from its top down, a call of fold(), make_fine() or emit() in another for each operator
+// or function on top of another, and read with a call of expr() and atom() for each bracket in another. An ESP32's
+// loop has 8 KB of stack for it all, and running out of it writes over the heap. So a value is no higher than
+// HIGHEST and its brackets no deeper than NESTED, and none of it starts with less of the stack left than it may
+// take: STACK for a script, where a statement takes 0.7 KB, a wave 1 KB more and what they call another, then DEEPER
+// at each bracket, 208 bytes, and each step up a value, 112.
+inline constexpr int HIGHEST = 12;
+inline constexpr int NESTED = 6;
+inline constexpr size_t STACK = 4608, DEEPER = 2048;
+inline bool stack_has(size_t bytes) {
+  return (uintptr_t) __builtin_frame_address(0) - (uintptr_t) pxTaskGetStackStart(nullptr) >= bytes;
+}
+
 struct Node {
   enum Kind { NUM, REG, GET, CALL, OP } kind = NUM;
   double v = 0;              // NUM's
   int reg = 0;               // REG's
   int get = 0;               // GET's OVERLAY_GET_*
   uint8_t op = 0;            // OP's OVERLAY_OP_*, which takes its args
+  uint8_t high = 1;          // how many of it are on top of each other, itself one
   const Func *fn = nullptr;  // CALL's
   std::vector<Node> args;
   std::vector<std::string> places;  // GET's, dist's and angle's copies, "" for its own
+  // high from its args. A clamp counts as 3 and a lerp as 4: the 2 and 3 they're made of on top of each other, and
+  // the making, see Compiler::made().
+  void rise() {
+    uint8_t under = 0;
+    for (const Node &a : args)
+      under = std::max(under, a.high);
+    high = (uint8_t) (under + (kind == CALL && !fn->op ? fn->least : 1));
+  }
   static Node num(double v) {
     Node n;
     n.v = v;
@@ -355,6 +379,7 @@ struct Node {
     n.kind = OP;
     n.op = op;
     n.args = std::move(args);
+    n.rise();
     return n;
   }
   static Node read(int get) {
@@ -369,6 +394,7 @@ struct Node {
     n.kind = CALL;
     n.fn = func(name);
     n.args = std::move(args);
+    n.rise();
     return n;
   }
 };
@@ -434,63 +460,77 @@ inline std::optional<double> fold(const Node &n) {
   return {};
 }
 
-// n times k, worked out as finely as that: a bind's value from a script's px, degrees and percent. What's a share
-// of one of its parts takes the k there, so the sine of a wave 3 px high isn't whole px but thousandths.
-inline Node fine(const Node &n, int k) {
-  if (k == 1)
-    return n;
-  if (auto c = fold(n))
-    return Node::num(std::round(*c * k));
-  auto with = [&](std::initializer_list<size_t> scaled) {
-    Node out = n;
-    for (size_t i : scaled)
-      if (i < out.args.size())
-        out.args[i] = fine(n.args[i], k);
-    return out;
-  };
+// What making n k times finer scales: a bit for each of its args, none if it's n as it is. What's a share of one of
+// its parts takes the k there, so the sine of a wave 3 px high isn't whole px but thousandths.
+__attribute__((noinline)) inline unsigned fine_args(const Node &n) {
+  static constexpr struct {
+    const char *name;
+    uint8_t args;
+  } CALLS[] = {{"sin", 2},  {"cos", 2},  {"min", 3},   {"max", 3}, {"abs", 3},  {"rand", 3},
+               {"lerp", 3}, {"ease", 3}, {"noise", 4}, {"if", 6},  {"wave", 6}, {"clamp", 7}};
   if (n.kind == Node::OP)
     switch (n.op) {
       case OVERLAY_OP_ADD:
       case OVERLAY_OP_SUB:
       case OVERLAY_OP_MOD:
-        return with({0, 1});
+        return 3;
       case OVERLAY_OP_NEG:
       case OVERLAY_OP_DIV:
-        return with({0});
+        return 1;
       case OVERLAY_OP_MUL:
       case OVERLAY_OP_SCALE:  // the part that isn't a number, which stays as it is
-        return with({fold(n.args[0]) ? 1u : 0u});
+        return fold(n.args[0]) ? 2 : 1;
     }
-  if (n.kind == Node::CALL) {
-    const std::string f = n.fn->name;
-    if (f == "sin" || f == "cos")
-      return with({1});
-    if (f == "min" || f == "max" || f == "abs" || f == "rand" || f == "lerp")
-      return with({0, 1});
-    if (f == "if" || f == "wave")
-      return with({1, 2});
-    if (f == "clamp")
-      return with({0, 1, 2});
-    if (f == "noise")
-      return with({2});
-    if (f == "ease")
-      return with({0, 1});
-    if (f == "scale")
-      return with({fold(n.args[0]) ? 1u : 0u});
-    if (f == "pick" || f == "curve") {  // its list, if that fits the panel's 16 bits
-      size_t first = f == "pick" ? 1 : 2;
-      bool fits = true;
-      for (size_t i = first; i < n.args.size(); i++)
-        fits &= std::fabs(n.args[i].v * k) <= 32767;
-      if (fits) {
-        Node out = n;
-        for (size_t i = first; i < out.args.size(); i++)
-          out.args[i].v = std::round(out.args[i].v * k);
-        return out;
-      }
-    }
+  if (n.kind != Node::CALL)
+    return 0;
+  if (n.fn->op == OVERLAY_OP_SCALE)
+    return fold(n.args[0]) ? 2 : 1;
+  for (const auto &c : CALLS)
+    if (!strcmp(n.fn->name, c.name))
+      return c.args;
+  return 0;
+}
+// n k times finer where that's all of it: a number, or a pick's or a curve's list if it fits the panel's 16 bits
+__attribute__((noinline)) inline bool fine_whole(Node &n, int k) {
+  if (auto c = fold(n)) {
+    n = Node::num(std::round(*c * k));
+    return true;
   }
-  return Node::of(OVERLAY_OP_MUL, {n, Node::num(k)});
+  if (n.kind != Node::CALL || (n.fn->op != OVERLAY_OP_PICK && n.fn->op != OVERLAY_OP_CURVE))
+    return false;
+  size_t first = n.fn->op == OVERLAY_OP_PICK ? 1 : 2;
+  for (size_t i = first; i < n.args.size(); i++)
+    if (std::fabs(n.args[i].v * k) > 32767)
+      return false;
+  for (size_t i = first; i < n.args.size(); i++)
+    n.args[i].v = std::round(n.args[i].v * k);
+  return true;
+}
+__attribute__((noinline)) inline void times(Node &n, int k) {
+  std::vector<Node> both;
+  both.push_back(std::move(n));
+  both.push_back(Node::num(k));
+  n = Node::of(OVERLAY_OP_MUL, std::move(both));
+}
+// n times k in place, worked out as finely as that: a bind's value from a script's px, degrees and percent
+inline void make_fine(Node &n, int k) {
+  if (fine_whole(n, k))
+    return;
+  unsigned args = fine_args(n);
+  if (!args) {
+    times(n, k);
+    return;
+  }
+  for (size_t i = 0; i < n.args.size(); i++)
+    if (args >> i & 1)
+      make_fine(n.args[i], k);
+  n.rise();
+}
+inline Node fine(const Node &n, int k) {
+  Node out = n;
+  if (k != 1)
+    make_fine(out, k);
+  return out;
 }
 
 // A value as a step takes it: what it's worked out from, and the number it is if it needs no working out
@@ -607,72 +647,122 @@ struct Compiler {
     return true;
   }
 
-  // What it works out, the ones that bind the least first: or, and, not, the six that compare, + and -, then * / %
-  bool expr(Node &n) { return binary(n, 0); }
-  bool binary(Node &n, int level) {
-    struct Op {
-      const char *text;
-      uint8_t op;
-    };
-    static const std::vector<Op> LEVELS[] = {{{"or", OVERLAY_OP_OR}},
-                                             {{"and", OVERLAY_OP_AND}},
-                                             {{"<=", OVERLAY_OP_LE},
-                                              {">=", OVERLAY_OP_GE},
-                                              {"==", OVERLAY_OP_EQ},
-                                              {"!=", OVERLAY_OP_NE},
-                                              {"<", OVERLAY_OP_LT},
-                                              {">", OVERLAY_OP_GT}},
-                                             {{"+", OVERLAY_OP_ADD}, {"-", OVERLAY_OP_SUB}},
-                                             {{"*", OVERLAY_OP_MUL}, {"/", OVERLAY_OP_DIV}, {"%", OVERLAY_OP_MOD}}};
-    if (level == (int) (sizeof LEVELS / sizeof *LEVELS))
-      return atom(n);
-    if (level == 2 && take("not")) {  // of all it compares
-      Node a;
-      if (!binary(a, level))
-        return false;
-      n = Node::of(OVERLAY_OP_NOT, {std::move(a)});
-      return true;
-    }
-    if (!binary(n, level + 1))
-      return false;
-    for (;;) {
-      const Op *found = nullptr;
-      for (const Op &o : LEVELS[level])
-        if (!found && is(o.text))
-          found = &o;
-      if (!found)
-        return true;
-      i++;
-      Node rhs;
-      if (!binary(rhs, level + 1))
-        return false;
-      // a * b / c in one go, so a * b can be more than a register holds
-      if (found->op == OVERLAY_OP_DIV && n.kind == Node::OP && n.op == OVERLAY_OP_MUL)
-        n = Node::of(OVERLAY_OP_SCALE, {n.args[0], n.args[1], std::move(rhs)});
-      else
-        n = Node::of(found->op, {std::move(n), std::move(rhs)});
-    }
+  // What it works out, the ones that bind the least first: or, and, not, the six that compare, + and -, then * / %.
+  // A not takes all that compares after it.
+  struct Op {
+    const char *text;
+    uint8_t op, level;
+  };
+  static constexpr Op OPS[] = {{"not", OVERLAY_OP_NOT, 2}, {"or", OVERLAY_OP_OR, 0}, {"and", OVERLAY_OP_AND, 1},
+                               {"<=", OVERLAY_OP_LE, 3},   {">=", OVERLAY_OP_GE, 3}, {"==", OVERLAY_OP_EQ, 3},
+                               {"!=", OVERLAY_OP_NE, 3},   {"<", OVERLAY_OP_LT, 3},  {">", OVERLAY_OP_GT, 3},
+                               {"+", OVERLAY_OP_ADD, 4},   {"-", OVERLAY_OP_SUB, 4}, {"*", OVERLAY_OP_MUL, 5},
+                               {"/", OVERLAY_OP_DIV, 5},   {"%", OVERLAY_OP_MOD, 5}};
+  static constexpr const Op *OP_NOT = &OPS[0];
+  int nested = 0;  // brackets and calls it's inside
+
+  // The same for a text that's there as it is, so the caller's stack doesn't hold a string for it
+  __attribute__((noinline)) bool fail(const char *why) { return fail(std::string(why)); }
+  bool low(const Node &n) { return n.high <= HIGHEST || fail("too much to work out at once, in parts it goes"); }
+  bool deeper() { return stack_has(DEEPER) || fail("no room on the stack to work it out"); }
+
+  // The operator between two values that comes next, nullptr if none does
+  const Op *between() const {
+    for (const Op *o = OP_NOT + 1; o < std::end(OPS); o++)
+      if (is(o->text))
+        return o;
+    return nullptr;
   }
-  bool atom(Node &n) {
-    const Tok &k = peek();
-    if (k.kind == 'n') {
-      n = Node::num(k.v);
-      i++;
-      return true;
+
+  // The last of ops takes its values off vals
+  __attribute__((noinline)) bool apply(std::vector<Node> &vals, std::vector<const Op *> &ops) {
+    uint8_t op = ops.back()->op;
+    ops.pop_back();
+    std::vector<Node> args;
+    if (op != OVERLAY_OP_NOT) {
+      Node rhs = std::move(vals.back());
+      vals.pop_back();
+      Node &n = vals.back();
+      // a * b / c in one go, so a * b can be more than a register holds
+      if (op == OVERLAY_OP_DIV && n.kind == Node::OP && n.op == OVERLAY_OP_MUL) {
+        op = OVERLAY_OP_SCALE;
+        args = std::move(n.args);
+      } else {
+        args.push_back(std::move(n));
+      }
+      args.push_back(std::move(rhs));
+    } else {
+      args.push_back(std::move(vals.back()));
     }
-    if (take("(")) {
-      return expr(n) && need(")");
-    }
-    if (take("-")) {
-      Node a;
-      if (!atom(a))
+    vals.back() = Node::of(op, std::move(args));
+    return low(vals.back());
+  }
+
+  // A value: what atom() reads with operators between, each applied once the one after it binds no tighter. They
+  // wait in lists of their own, so only brackets and calls go deeper in the processor's stack.
+  bool expr(Node &n) {
+    static_assert(NESTED == 6, "as the text says");
+    if (nested > NESTED)
+      return fail("more than 6 brackets inside each other");
+    if (!deeper())
+      return false;
+    nested++;
+    std::vector<Node> vals;
+    std::vector<const Op *> ops;
+    for (;;) {
+      while ((ops.empty() || ops.back()->level <= OP_NOT->level) && take("not"))
+        ops.push_back(OP_NOT);
+      vals.emplace_back();
+      if (!atom(vals.back()))
         return false;
-      n = Node::of(OVERLAY_OP_NEG, {std::move(a)});
-      return true;
+      const Op *next = between();
+      while (!ops.empty() && (!next || ops.back()->level >= next->level))
+        if (!apply(vals, ops))
+          return false;
+      if (!next)
+        break;
+      ops.push_back(next);
+      i++;
     }
-    std::string w;
-    if (peek().kind != 'w')
+    n = std::move(vals[0]);
+    nested--;
+    return true;
+  }
+
+  // A number, a name, a call or a value in brackets, with any minus signs before it
+  bool atom(Node &n) {
+    int minus = 0;
+    while (take("-"))
+      minus++;
+    const Func *f = nullptr;
+    if (peek().kind == 'n') {
+      n = Node::num(peek().v);
+      i++;
+    } else if (take("(")) {
+      if (!expr(n) || !need(")"))
+        return false;
+    } else if (peek().kind != 'w') {
       return fail("a number or a name expected");
+    } else if (!named(n, f) || (f && !call(n, *f))) {
+      return false;
+    }
+    return !minus || negate(n, minus);
+  }
+
+  __attribute__((noinline)) bool negate(Node &n, int times) {
+    for (; times; times--) {
+      std::vector<Node> of;
+      of.push_back(std::move(n));
+      n = Node::of(OVERLAY_OP_NEG, std::move(of));
+      if (!low(n))
+        return false;
+    }
+    return true;
+  }
+
+  // A name as a value: a number by name, a register or what the panel reads. A function's is f, with its ( read.
+  __attribute__((noinline)) bool named(Node &n, const Func *&f) {
+    std::string w;
     word(w);
     for (const Consts *named : {&consts, &NAMED})
       if (auto c = named->find(w); c != named->end()) {
@@ -689,13 +779,16 @@ struct Compiler {
       n = Node::read(g);
       return !take("(") || (place(n.places[0]) && need(")"));
     }
-    const Func *f = func(w);
+    f = func(w);
     if (!f)
       return fail("what's '" + w + "'?");
     n = Node::call(f->name, {});
-    if (!need("("))
-      return false;
-    bool places = f->op == OVERLAY_OP_DIST || f->op == OVERLAY_OP_ANGLE;
+    return need("(");
+  }
+
+  // A function's values or copies, up to its )
+  bool call(Node &n, const Func &f) {
+    bool places = f.op == OVERLAY_OP_DIST || f.op == OVERLAY_OP_ANGLE;
     for (int k = 0; !k || take(","); k++) {
       if (places) {
         n.places.emplace_back();
@@ -707,26 +800,30 @@ struct Compiler {
           return false;
       }
     }
-    if (!need(")"))
-      return false;
+    return need(")") && takes(n, f, places);
+  }
+
+  // Whether f takes what n got
+  __attribute__((noinline)) bool takes(Node &n, const Func &f, bool places) {
     int count = (int) (places ? n.places.size() : n.args.size());
-    if (count < f->least || (f->most >= 0 && count > f->most))
-      return fail(std::string(f->name) + " takes " + std::to_string(f->least) +
-                  (f->most < 0          ? " or more"
-                   : f->most > f->least ? " to " + std::to_string(f->most)
-                                        : ""));
-    if (f->op == OVERLAY_OP_PICK || f->op == OVERLAY_OP_CURVE) {  // its list is numbers the panel has 16 bits for
-      size_t first = f->op == OVERLAY_OP_PICK ? 1 : 2;
+    if (count < f.least || (f.most >= 0 && count > f.most))
+      return fail(std::string(f.name) + " takes " + std::to_string(f.least) +
+                  (f.most < 0         ? " or more"
+                   : f.most > f.least ? " to " + std::to_string(f.most)
+                                      : ""));
+    if (f.op == OVERLAY_OP_PICK || f.op == OVERLAY_OP_CURVE) {  // its list is numbers the panel has 16 bits for
+      size_t first = f.op == OVERLAY_OP_PICK ? 1 : 2;
       if (n.args.size() - first > 255)
-        return fail(std::string(f->name) + " takes 255 numbers at most");
+        return fail(std::string(f.name) + " takes 255 numbers at most");
       for (size_t a = first; a < n.args.size(); a++) {
         auto c = fold(n.args[a]);
         if (!c || *c != std::round(*c) || std::fabs(*c) > 32767)
-          return fail(std::string(f->name) + "'s list is whole numbers, -32767 to 32767");
+          return fail(std::string(f.name) + "'s list is whole numbers, -32767 to 32767");
         n.args[a] = Node::num(*c);
       }
     }
-    return true;
+    n.rise();
+    return low(n);
   }
 
   // ---- working it out
@@ -774,14 +871,31 @@ struct Compiler {
   };
 
   bool whole(double v, int32_t &out) {
+    out = 0;  // a value on every way out: a compiler can't tell that fail() is always false
     if (std::fabs(v) > 2147483647.0)
       return fail("a number too big for the panel");
     out = (int32_t) std::lround(v);
     return std::fabs(v - out) < 1e-9 || fail("only whole numbers there, the panel has no fractions");
   }
 
+  // clamp and lerp as the others they're made of: no less than its low and no more than its high, and from a to b
+  // as v goes from 0 to n
+  __attribute__((noinline)) static Node made(const Node &n) {
+    if (!strcmp(n.fn->name, "clamp"))
+      return Node::call("min", {Node::call("max", {n.args[0], n.args[1]}), n.args[2]});
+    return Node::of(OVERLAY_OP_ADD,
+                    {n.args[0], Node::of(OVERLAY_OP_SCALE,
+                                         {Node::of(OVERLAY_OP_SUB, {n.args[1], n.args[0]}), n.args[2], n.args[3]})});
+  }
+  __attribute__((noinline)) bool emit_made(const Node &n, Out &o) {
+    Node as = made(n);
+    return emit(as, o);
+  }
+
   // n's OPs into o, what it's made of first
   bool emit(const Node &n, Out &o) {
+    if (!deeper())
+      return false;
     if (auto c = fold(n)) {
       int32_t v;
       if (!whole(*c, v))
@@ -789,62 +903,46 @@ struct Compiler {
       o.number(v);
       return true;
     }
-    auto all = [&](const std::vector<Node> &args, size_t from = 0, size_t to = SIZE_MAX) {
-      for (size_t k = from; k < std::min(to, args.size()); k++)
-        if (!emit(args[k], o))
-          return false;
+    if (n.kind == Node::REG) {
+      o.op((uint8_t) (OVERLAY_VREG + n.reg), 0);
+      o.regs |= n.reg < OVERLAY_OWN_REGS;
       return true;
-    };
-    switch (n.kind) {
-      case Node::REG:
-        o.op((uint8_t) (OVERLAY_VREG + n.reg), 0);
-        o.regs |= n.reg < OVERLAY_OWN_REGS;
-        return true;
-      case Node::GET:
-        o.op(n.places[0].empty() ? OVERLAY_OP_OWN : OVERLAY_OP_GET, 0);
-        o.v.push_back((uint8_t) n.get);
-        if (!n.places[0].empty())
-          o.place(n.places[0]);
-        return true;
-      case Node::OP:
-        if (!all(n.args))
-          return false;
-        o.op(n.op, (int) n.args.size());
-        return true;
-      default:
-        break;
     }
-    const std::string f = n.fn->name;
-    if (f == "dist" || f == "angle") {
-      o.op(n.fn->op, 0);
+    if (n.kind == Node::GET) {
+      o.op(n.places[0].empty() ? OVERLAY_OP_OWN : OVERLAY_OP_GET, 0);
+      o.v.push_back((uint8_t) n.get);
+      if (!n.places[0].empty())
+        o.place(n.places[0]);
+      return true;
+    }
+    uint8_t op = n.kind == Node::OP ? n.op : n.fn->op;
+    bool list = n.kind == Node::CALL && (op == OVERLAY_OP_PICK || op == OVERLAY_OP_CURVE);
+    if (n.kind == Node::CALL && !op)
+      return emit_made(n, o);
+    if (n.kind == Node::CALL && (op == OVERLAY_OP_DIST || op == OVERLAY_OP_ANGLE)) {
+      o.op(op, 0);
       o.place(n.places[0]);
       o.place(n.places[1]);
       return true;
     }
-    if (f == "clamp")  // no less than its low, no more than its high
-      return emit(Node::call("min", {Node::call("max", {n.args[0], n.args[1]}), n.args[2]}), o);
-    if (f == "lerp")  // from a to b as v goes from 0 to n
-      return emit(Node::of(OVERLAY_OP_ADD,
-                           {n.args[0], Node::of(OVERLAY_OP_SCALE, {Node::of(OVERLAY_OP_SUB, {n.args[1], n.args[0]}),
-                                                                   n.args[2], n.args[3]})}),
-                  o);
-    if (f == "pick" || f == "curve") {
-      size_t first = f == "pick" ? 1 : 2;
-      if (!all(n.args, 0, first))
+    // a pick's and a curve's list goes as it is, after what picks from it
+    size_t worked = list ? std::min<size_t>(op == OVERLAY_OP_PICK ? 1 : 2, n.args.size()) : n.args.size();
+    for (size_t k = 0; k < worked; k++)
+      if (!emit(n.args[k], o))
         return false;
-      o.op(n.fn->op, (int) first);
-      o.v.push_back((uint8_t) (n.args.size() - first));
-      for (size_t k = first; k < n.args.size(); k++) {
+    if (list) {
+      o.op(op, (int) worked);
+      o.v.push_back((uint8_t) (n.args.size() - worked));
+      for (size_t k = worked; k < n.args.size(); k++) {
         o.v.push_back((uint8_t) (int) n.args[k].v);
         o.v.push_back((uint8_t) ((uint16_t) (int) n.args[k].v >> 8));
       }
       return true;
     }
-    if (!all(n.args))
-      return false;
-    for (int k = (int) n.args.size(); k < n.fn->most; k++)  // a wave's holds, jitter and how
+    int most = n.kind == Node::CALL ? n.fn->most : 0;
+    for (int k = (int) n.args.size(); k < most; k++)  // a wave's holds, jitter and how
       o.number(0);
-    o.op(n.fn->op, std::max(n.fn->most, (int) n.args.size()));
+    o.op(op, std::max(most, (int) n.args.size()));
     return true;
   }
 
@@ -1151,13 +1249,14 @@ struct Compiler {
   bool one() {
     static const char *const BINDS[] = {":=", "+=", "*=", "-="};  // OVERLAY_BIND_SET, _ADD and _MUL, and - as + of -
     std::string w;
-    if (peek().kind == 'w' && is(":", 1) && !target) {
+    while (peek().kind == 'w' && is(":", 1) && !target) {
       w = t[i].s;
       i += 2;
       if (labels.count(w))
         return fail("'" + w + "' twice");
       labels[w] = (int) b.size();
-      return peek().kind == ';' || one();
+      if (peek().kind == ';')
+        return true;
     }
     if (peek().kind == 'w' && peek(1).kind == 'o' && index(BINDS, peek(1).s) >= 0) {
       unsigned to;
@@ -1639,6 +1738,10 @@ struct Compiler {
 // error if it can't be.
 inline Program compile(const std::string &text, std::string &error, const Clips &clips = {},
                        const Consts &consts = {}) {
+  if (!text::stack_has(text::STACK)) {
+    error = "no room on the stack to read it";
+    return {};
+  }
   text::Compiler c(clips, consts);
   if (!c.run(text)) {
     error = c.err;

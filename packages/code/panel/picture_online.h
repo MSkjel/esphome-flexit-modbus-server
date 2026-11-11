@@ -70,7 +70,7 @@ inline uint32_t interval_ms(const char *s) {
     if (end != s && !strcmp(end, u.unit))
       return n > 0 ? (uint32_t) std::min(n * u.ms, 4e9) : 0;
   if (strcmp(s, "never"))
-    ESP_LOGE("panel", "update_interval '%s' isn't a time like 10min, so it's only downloaded when shown", s);
+    ESP_LOGE("panel", "'%s' isn't a time like 10min, 1.5h or never, so it's taken as never", s);
   return 0;
 }
 

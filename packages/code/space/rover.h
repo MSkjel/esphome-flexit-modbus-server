@@ -250,14 +250,15 @@ inline marks::Layer layer_of(const Map &m) {
     l.boxes.push_back({0, marks::H - 48, marks::W, marks::H});
   }
   std::vector<float> all, latest;
+  all.reserve(m.track.size() * 2);
   for (const Point &p : m.track) {
     all.insert(all.end(), {p.fx(), p.fy()});
     if (p.sol + r.recent >= m.last.sol)
       latest.insert(latest.end(), {p.fx(), p.fy()});
   }
-  l.line(all, 1.3f, marks::WARM, 0.8f);
+  l.line(std::move(all), 1.3f, marks::WARM, 0.8f);
   if (latest.size() >= 4)
-    l.line(latest, 1.8f, marks::CYAN, 1, 0.35f);
+    l.line(std::move(latest), 1.8f, marks::CYAN, 1, 0.35f);
   const Point &start = m.track.front(), &end = m.track.back();
   now_mark(l, end.fx(), end.fy(), m.last.yaw);
   l.ring(start.fx(), start.fy(), 2.6f, marks::WARM, 1.2f);

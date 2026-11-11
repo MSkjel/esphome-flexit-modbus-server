@@ -14,12 +14,12 @@ static Stamps stamps;
 static Land land;
 static Scene scene;
 
-// An Oceanforecast hour, as its timeseries has them
+// An Oceanforecast hour, as its timeseries has them: h hours into 20 August 2026
 static std::string hour(int h, const char *height) {
   char b[160];
   snprintf(b, sizeof b,
-           "{\"time\":\"2026-08-20T%02d:00:00Z\",\"data\":{\"instant\":{\"details\":{%s\"sea_water_speed\":0.1}}}},", h,
-           height);
+           "{\"time\":\"2026-08-%02dT%02d:00:00Z\",\"data\":{\"instant\":{\"details\":{%s\"sea_water_speed\":0.1}}}},",
+           20 + h / 24, h % 24, height);
   return b;
 }
 
@@ -104,6 +104,19 @@ int main() {
     CHECK(sea.time[3] == unix_of(2026, 8, 20, 18) && sea.height[3] == 2.0f);
   }
   CHECK(!read_sea("{\"type\":\"Feature\",\"properties\":{\"timeseries\":[]}}", 16).ok);  // inland
+  // More hours than it keeps, several of them in a piece as the ESP gets them, or all at once: the first SEA_HOURS,
+  // and one that isn't a number is no hour
+  std::string many = "{\"type\":\"Feature\",\"properties\":{\"timeseries\":[";
+  many += hour(0, "\"sea_surface_wave_height\":null,");
+  for (int h = 1; h < SEA_HOURS + 9; h++)
+    many += hour(h, "\"sea_surface_wave_height\":1.5,");
+  many += "{\"time\":\"2026-08-22T00:00:00Z\"}]}}";
+  for (size_t k : {many.size(), (size_t) 512, (size_t) 3}) {
+    Sea sea = read_sea(many, k);
+    CHECK(sea.ok && sea.hours == SEA_HOURS);
+    CHECK(sea.time[0] == unix_of(2026, 8, 20, 1) && sea.time[SEA_HOURS - 1] == unix_of(2026, 8, 21, 0));
+    CHECK(sea.height[0] == 1.5f && sea.height[SEA_HOURS - 1] == 1.5f);
+  }
 
   // The hour nearest t, if t's within three hours of it
   Sea sea = read_sea(answer, answer.size());

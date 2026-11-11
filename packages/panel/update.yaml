@@ -9,8 +9,8 @@
 # it goes.
 #
 # "Panel Firmware", the update entity, shows up under Settings > Updates in Home Assistant when the file at the URL
-# is newer than the panel, with its own install button. check_interval: how often it looks. Each look reads only the
-# start of the file.
+# is newer than the panel, with its own install button. check_interval: how often it looks, never for only when
+# it's asked to. Each look reads only the start of the file.
 #
 # The ESP downloads the file a few KB at a time into its spare app slot, where its own next OTA update goes, beside
 # the main loop, and streams it to the panel's ROM bootloader. What it checks and how the flash goes:

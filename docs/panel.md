@@ -623,9 +623,11 @@ A line is one statement, or several with `;` between them, and `#` starts a comm
 
 Numbers are whole. An expression is numbers, names and these, with brackets: `+`, `-`, `*`, `/`, `%`, the six that
 compare (`<`, `<=`, `==`, `!=`, `>=`, `>`, 1 if it holds and 0 if not), and `and`, `or` and `not`. Division drops the
-fraction and `/ 0` is 0, and `a * b / c` is worked out whole, so `a * b` can be bigger than a number holds. Speeds can
-have fractions: drifts to a hundredth, like `drift -0.55, 0`, spins and wanders to a tenth. These read a copy, its own
-when bare, or another one in brackets: `x(kite)` is copy 0 of kite, `x(kite.2)` its copy 2.
+fraction and `/ 0` is 0, and `a * b / c` is worked out whole, so `a * b` can be bigger than a number holds. Brackets
+and functions go 6 inside each other, and 12 of what's worked out on top of each other, as in a sum of 12: past that,
+work a part of it out into a number of its own first. Speeds can have fractions: drifts to a hundredth, like
+`drift -0.55, 0`, spins and wanders to a tenth. These read a copy, its own when bare, or another one in brackets:
+`x(kite)` is copy 0 of kite, `x(kite.2)` its copy 2.
 
 | Read | Is |
 |---|---|

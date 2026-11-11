@@ -98,8 +98,8 @@ inline void data(const uint8_t *b, int n) {
       S.in_left = plink_get16(S.head + SHOT_TILE_LEN);
       if (!S.in_left) {  // the zeros at the end
         S.head_n = 0;
-      } else if (S.head[SHOT_TILE_NUM] >= SHOT_TILES || S.in_left > TILE_BYTES) {
-        S.lost = true;  // the panel thinks we have the tiles from here on
+      } else if (S.head[SHOT_TILE_NUM] >= SHOT_TILES || S.in_left > TILE_BYTES || !has_ram((size_t) S.in_left, 0)) {
+        S.lost = true;  // the panel thinks we have the tiles from here on, also one there's no RAM to keep
         S.all = true;
       } else {
         S.in.reserve(S.in_left);
