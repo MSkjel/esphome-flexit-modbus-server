@@ -15,15 +15,18 @@ inline void sleigh(int y) {
   });
 }
 
-// The lights on the spruce glint one by one over the picture's, the star on top glitters, and a candle arch
-// stands in the cabin window
-inline void xmas(const Scene &s) {
+// The lights on the spruce glint one by one over the picture's and the star on top glitters
+inline void spruce_lights(const Scene &s) {
   int x0, y0;
   add("treelights", lights(s.light, s.nlights, &x0, &y0));
   place("treelights", 0, x0, y0);
   place("treestar", 0, s.star.x - 1, s.star.y - 1);  // its middle on the picture's star's
+}
+
+// And on Christmas Eve a candle of the arch in the window flickers and the sleigh comes over
+inline void xmas(const Scene &s) {
   if (s.cabin)
-    place("candles", 0, window_x(s), window_y(s) + 1);  // on the window's sill
+    place("candles", 0, stake_x(s), stake_y(s));  // over the picture's
   sleigh(s.overlay ? 84 : 60);
 }
 
@@ -65,6 +68,7 @@ inline uint32_t rocket(int lane, const NearHill &hill, int top) {
   const char *burst = chance(0.5f) ? "ring" : "peony";
   overlay::Consts k = {{"x", x}, {"y", y}, {"fly", fly}, {"lasts", ms_of(n, burst)}, {"colour", FW[(int) rnd(0, 3)]}};
   place(n, lane * 2, x - 1, hill.at(x) - 9, std::string(R"(
+    blend add
     clip rise
     move x - 1, y over fly ease out
     wait fly
@@ -76,6 +80,7 @@ inline uint32_t rocket(int lane, const NearHill &hill, int top) {
   )",
         k, {.fade = 60});
   place(n, lane * 2 + 1, x, y - 24, std::string(R"(
+    blend add
     flip x
     tint colour
     glide opacity 0
@@ -146,7 +151,7 @@ inline void easter(const Scene &s) {
 // wind
 inline void may17(const Scene &s) {
   int y = std::min(hill_low(s, 0, W) + 6, H - 14), wdir = s.at.wdir;  // below all of the near hill's top
-  sometimes(minutes(60), minutes(5, 40), [y] { return across("parade", -36, y - 4, 330, y, 60000); });
+  sometimes(minutes(60), minutes(5, 40), [y] { return across("parade", -42, y - 4, 330, y, 60000); });
   sometimes(minutes(15), minutes(3, 15), [hill = NearHill(s), wdir] {
     int x = wdir < 0 ? (int) rnd(90, 300) : (int) rnd(20, 230);
     place("balloon", 0, x, hill.at(x) + 8, R"(
@@ -177,11 +182,9 @@ inline void sankthans(const Scene &s) {
       wave x -6, 6, 1500, 1500 jitter 30 random slow both
     )" + (i ? "glide opacity 100 over 300" : ""),
           {{"x", x}, {"y", y}, {"i", i}, {"after", 1700 * i}});
-  // its smoke from over the cabin's roof, since the fire is in the meadow in front of it
-  if (s.cabin)
-    chimney("puffdusk", 4, x, s.cabin_y - 30, 30, 12, s.at.wdir);
-  else
-    chimney("puffdusk", 4, x, y - 36, 50, 12, s.at.wdir);
+  if (const Frames *puff = frames_of("puffdusk"))  // the bonfire's own, the chimney may smoke too
+    add("pyresmoke", Frames(*puff));
+  chimney("pyresmoke", 4, x, y - 36, 50, 12, s.at.wdir);
 }
 
 // ---- Halloween
@@ -196,44 +199,41 @@ inline void halloween(const Scene &s) {
     place("witch", 0, r.x[0], r.y[0], r.text(), {}, {.left = r.left()});
     return (uint32_t) r.all();
   });
-  // Where it perches, x and the row under its feet: the ridge, the town's flat roofs and the near spruces in the gap
-  // between the clock and the temperatures, or any near spruce if there's none of those
-  std::vector<int16_t> tops;
-  if (s.cabin)  // the ridge is the roof's top row, 25 above the floor, see cabin_row()
-    tops.insert(tops.end(), {(int16_t) (s.cabin_x - 1), (int16_t) (s.cabin_y - 26)});
-  for (int i = 0; i < s.nbld; i++) {
-    const Bld &b = s.bld[i];
-    int l = std::max<int>(b.x, GAP_L), r = std::min<int>(b.x + b.w - 1, GAP_R);
-    if (!b.back && b.kind == 0 && r - l >= 12)
-      tops.insert(tops.end(), {(int16_t) ((l + r) / 2), (int16_t) (b.top - 1)});
-  }
-  for (int i : near_trees(s, 0))
-    if (s.tree[i].x - 4 >= GAP_L && s.tree[i].x + 6 <= GAP_R)
-      tops.insert(tops.end(), {s.tree[i].x, s.tree[i].top});
-  if (tops.empty())
-    for (int i : near_trees(s, 0))
-      tops.insert(tops.end(), {s.tree[i].x, s.tree[i].top});
+  // It perches where the birds come down, see perches(), smaller on its way to one far off
+  std::vector<Perch> tops = perches(s, true);
   if (tops.empty())
     return;
   sometimes(minutes(12), minutes(2, 10), [tops] {
-    int k = (int) rnd(0, (float) (tops.size() / 2)) * 2, x = tops[k] - 4, y = tops[k + 1] - 9;  // its feet on top
-    int from = x < W / 2 ? W + 10 : -25, to = x < W / 2 ? -25 : W + 10;                         // in from the far side
+    Perch p = tops[(size_t) rnd(0, (float) tops.size())];
+    int x = p.x - 4, y = p.y - 9;                                        // its feet on top
+    int from = x < W / 2 ? W + 10 : -25, to = x < W / 2 ? -25 : W + 10;  // in from the far side
     int in = (int) (hypotf((float) (x - from), (float) (y - 70)) * 1000 / 7.5f);
     int off = (int) (hypotf((float) (to - x), 54) * 1000 / 9);
-    place("owl", 0, from, 70, R"(
+    bool far = p.size < 100;
+    place("owl", 0, from, 70, std::string(far ? "pivot 50, 100\nglide size far over in\n" : "") + R"(
       clip fly
-      move x - 3, y + 1 over in
+      move sx - 3, sy + 1 over in
       wait in
+      depth deep
       clip perch
-      move x, y
+      move sx, sy
       wait rounds 2
       clip fly
-      move x - 3, y + 1
-      move away, y - 54 over off ease in
+      depth out
+      glide size 100 over off
+      move sx - 3, sy + 1
+      move away, sy - 54 over off ease in
       wait off
       end
     )",
-          {{"x", x}, {"y", y}, {"in", in}, {"away", to}, {"off", off}});
+          {{"sx", x},
+           {"sy", y},
+           {"in", in},
+           {"away", to},
+           {"off", off},
+           {"far", p.size},
+           {"deep", p.depth},
+           {"out", D_AIR}});
     return (uint32_t) (in + 2 * ms_of("owl", "perch") + off);
   });
 }

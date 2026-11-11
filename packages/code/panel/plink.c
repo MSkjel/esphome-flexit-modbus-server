@@ -43,6 +43,16 @@ unsigned plink_pack_row(const uint8_t *in, unsigned n, uint8_t *out) {
   return o;
 }
 
+unsigned plink_overlay_head(uint8_t *out, uint8_t delay, unsigned x, unsigned y, unsigned w, unsigned h, unsigned len) {
+  out[OVERLAY_RECORD_DELAY] = delay;
+  out[OVERLAY_RECORD_X] = (uint8_t) x;
+  out[OVERLAY_RECORD_Y] = (uint8_t) y;
+  out[OVERLAY_RECORD_W] = (uint8_t) w;
+  out[OVERLAY_RECORD_H] = (uint8_t) h;
+  plink_put16(out + OVERLAY_RECORD_LEN, (uint16_t) len);
+  return OVERLAY_RECORD_HEAD;
+}
+
 unsigned plink_overlay_record_in(const pdeflate_work_t *work, const uint8_t *prev, const uint8_t *cur, unsigned w,
                                  unsigned h, uint8_t delay, uint8_t *out) {
   unsigned rb = (w + 1) / 2, x0 = rb, x1 = 0, y0 = h, y1 = 0;
@@ -55,36 +65,20 @@ unsigned plink_overlay_record_in(const pdeflate_work_t *work, const uint8_t *pre
         y1 = y + 1;
       }
   if (y0 >= y1)
-    x0 = x1 = y0 = y1 = 0;  // nothing changed, empty rectangle
-  out[OVERLAY_RECORD_DELAY] = delay;
-  out[OVERLAY_RECORD_X] = (uint8_t) x0;
-  out[OVERLAY_RECORD_Y] = (uint8_t) y0;
-  out[OVERLAY_RECORD_W] = (uint8_t) (x1 - x0);
-  out[OVERLAY_RECORD_H] = (uint8_t) (y1 - y0);
-  if (y0 == y1)
-    return OVERLAY_RECORD_HEAD;
-  uint32_t size = (x1 - x0) * (y1 - y0), n;
-  if (work)
-    n = pdeflate_in(work, cur + y0 * rb + x0, x1 - x0, rb, size, out + OVERLAY_RECORD_HEAD, PDEFLATE_BOUND(size));
-  else
-    n = pdeflate(cur + y0 * rb + x0, x1 - x0, rb, size, out + OVERLAY_RECORD_HEAD, PDEFLATE_BOUND(size));
-  return n ? OVERLAY_RECORD_HEAD + n : 0;
+    return plink_overlay_head(out, delay, 0, 0, 0, 0, 0);  // nothing changed, empty rectangle
+  uint32_t size = (x1 - x0) * (y1 - y0);
+  uint32_t n =
+      pdeflate_in(work, cur + y0 * rb + x0, x1 - x0, rb, size, out + OVERLAY_RECORD_HEAD, PDEFLATE_BOUND(size));
+  return n ? plink_overlay_head(out, delay, x0, y0, x1 - x0, y1 - y0, n) + n : 0;
 }
-
-unsigned plink_overlay_record(const uint8_t *prev, const uint8_t *cur, unsigned w, unsigned h, uint8_t delay,
-                              uint8_t *out) {
-  return plink_overlay_record_in(NULL, prev, cur, w, h, delay, out);
-}
-
-#define PIECE_ROWS (OVERLAY_PIECE_MAX / (PIC_MAX_W / 2))  // a piece's rows, as wide as the screen at most
 
 uint32_t plink_overlay_pieces(const uint8_t *frame, unsigned w, unsigned h, uint16_t clear, uint8_t delay, uint8_t *out,
                               uint32_t cap) {
   unsigned rb = (w + 1) / 2;
   uint32_t n = 0;
-  for (unsigned y0 = 0; y0 < h; y0 += PIECE_ROWS) {
+  for (unsigned y0 = 0; y0 < h; y0 += OVERLAY_PIECE_ROWS) {
     unsigned x0 = rb, x1 = 0, top = h, bottom = 0;  // bytes x0..x1 - 1 of rows top..bottom - 1 have a colour
-    for (unsigned y = y0; y < y0 + PIECE_ROWS && y < h; y++)
+    for (unsigned y = y0; y < y0 + OVERLAY_PIECE_ROWS && y < h; y++)
       for (unsigned x = 0; x < rb; x++) {
         uint8_t b = frame[y * rb + x];
         if (!(clear >> (b >> 4) & 1) || !(clear >> (b & 15) & 1)) {
@@ -99,22 +93,15 @@ uint32_t plink_overlay_pieces(const uint8_t *frame, unsigned w, unsigned h, uint
     unsigned pw = x1 - x0;
     if (n + OVERLAY_RECORD_HEAD + (bottom - top) * (pw + pw / 128 + 1) > cap)
       return 0;
-    out[n + OVERLAY_RECORD_DELAY] = delay;
-    out[n + OVERLAY_RECORD_X] = (uint8_t) x0;
-    out[n + OVERLAY_RECORD_Y] = (uint8_t) top;
-    out[n + OVERLAY_RECORD_W] = (uint8_t) pw;
-    out[n + OVERLAY_RECORD_H] = (uint8_t) (bottom - top);
+    uint32_t head = n;
     n += OVERLAY_RECORD_HEAD;
     for (unsigned y = top; y < bottom; y++)
       n += plink_pack_row(frame + y * rb + x0, pw, out + n);
+    plink_overlay_head(out + head, delay, x0, top, pw, bottom - top, n - head - OVERLAY_RECORD_HEAD);
   }
   if (n)
     return n;
-  if (cap < OVERLAY_RECORD_HEAD)
-    return 0;
-  memset(out, 0, OVERLAY_RECORD_HEAD);
-  out[OVERLAY_RECORD_DELAY] = delay;
-  return OVERLAY_RECORD_HEAD;
+  return cap < OVERLAY_RECORD_HEAD ? 0 : plink_overlay_head(out, delay, 0, 0, 0, 0, 0);
 }
 
 void plink_put_palette(uint8_t *b, const uint32_t *pal) {
@@ -152,7 +139,7 @@ int plink_pic_patch(uint8_t *b, uint8_t id, uint16_t y, uint16_t count, uint32_t
 }
 
 int plink_overlay_begin(uint8_t *b, uint8_t id, uint8_t slot, uint8_t kind, uint16_t w, uint16_t h, uint8_t scale,
-                        uint32_t size, const uint32_t *pal, uint16_t glows, uint32_t shade) {
+                        uint32_t size, const uint32_t *pal, uint16_t glows, uint32_t shade, uint16_t cycles) {
   b[PIC_MSG_ID] = id;
   b[OVERLAY_BEGIN_SLOT] = slot;
   plink_put16(b + OVERLAY_BEGIN_W, w);
@@ -168,6 +155,7 @@ int plink_overlay_begin(uint8_t *b, uint8_t id, uint8_t slot, uint8_t kind, uint
   plink_put16(b + OVERLAY_BEGIN_GLOWS, glows);
   for (int i = 0; i < 3; i++)
     b[OVERLAY_BEGIN_SHADE + i] = (uint8_t) (shade >> (16 - 8 * i));
+  plink_put16(b + OVERLAY_BEGIN_CYCLES, cycles);
   return OVERLAY_BEGIN_LEN;
 }
 
@@ -191,8 +179,6 @@ int plink_kind(uint16_t key) {
     case K_PIC_DATA:
     case K_PIC_PART:
     case K_OVERLAY_BEGIN:
-    case K_OVERLAY_DEPTH:
-    case K_OVERLAY_TINT:
     case K_LOG:
       return PLINK_BYTES;
   }

@@ -130,10 +130,10 @@ class Item {
   }
   int add();  // index on the panel, -1 once N_ITEMS are taken
 
-  // In the panel's units. Never INT32_MIN, that's ITEM_UNKNOWN.
+  // In the panel's units. Never INT32_MIN, that's ITEM_UNKNOWN, and 0 for what isn't a number yet.
   int32_t scaled(float v) const {
     float x = roundf(v * powf(10, dec_));
-    return x >= 2147483648.0f ? INT32_MAX : x <= -2147483648.0f ? -INT32_MAX : (int32_t) x;
+    return std::isnan(x) ? 0 : x >= 2147483648.0f ? INT32_MAX : x <= -2147483648.0f ? -INT32_MAX : (int32_t) x;
   }
   // What goes again in the panel's new language. An ITEM_TEXT's value is a text too.
   uint8_t text_needs() const {

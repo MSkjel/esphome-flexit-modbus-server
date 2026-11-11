@@ -1,0 +1,51 @@
+# Light, haze or a shade the panel works out itself rather than plays from frames, over the screensaver picture like
+# an animation: a glow, a beam, a gradient or drifting cloud, soft at any size and turn, and nearly free of the
+# panel's 8.75 KB. It gets a "Panel Animation <name>" switch, and the animation actions and scripts move, size, turn,
+# blend and bind it like any other. See docs/panel.md#fields.
+#   - path: packages/panel/field.yaml
+#     vars: {name: glow, kind: radial, w: 60, h: 60, x: 200, y: 20, colours: "00FFF4D8, FFFFF4D8", script: "blend add"}
+# name: letters, digits and _ only
+# kind: linear (from its left to its right), radial (from its middle out), cone (a wedge from the middle of its left
+#   side) or noise (cloudy)
+# w, h: its box, x, y its top left corner on the 320x240 screen
+# colours: what it's drawn in from where there's none of it to where there's most: 2 to 16 colours in hex, RRGGBB or
+#   AARRGGBB with how opaque first, spread evenly with those between worked out
+# mirror, down: a linear one up to the middle and back, and from its top to its bottom
+# apex: how wide a cone is at its left, percent of its height
+# layers, grain: a noise's detail, 1 to 3, and the pixels between its bumps, 4 to 1024
+# fade_ms, script: as animation.yaml's
+defaults:
+  kind: radial
+  w: "64"
+  h: "64"
+  x: "16"
+  y: "16"
+  colours: "00FFFFFF, FFFFFFFF"
+  mirror: "false"
+  down: "false"
+  apex: "0"
+  layers: "2"
+  grain: "24"
+  fade_ms: "300"
+  script: ""
+
+switch:
+  - platform: template
+    id: panel_anim_${name}
+    name: "Panel Animation ${name}"
+    icon: "mdi:animation-play"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - lambda: flexit::panel::overlay::switched_on("${name}");
+    turn_off_action:
+      - lambda: flexit::panel::overlay::clear("${name}");
+
+esphome:
+  on_boot:
+    - priority: -100
+      then:
+        - lambda: |-
+            flexit::panel::overlay::add_field("${name}", id(panel_anim_${name}), "${kind}", ${w}, ${h}, ${x}, ${y},
+                                              ${mirror}, ${down}, ${apex}, ${layers}, ${grain}, "${colours}",
+                                              ${fade_ms}, R"SCRIPT(${script})SCRIPT");

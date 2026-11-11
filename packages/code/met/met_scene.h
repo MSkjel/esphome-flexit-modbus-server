@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <iterator>
 #include <type_traits>
+#include "../panel/marks.h"
 #include "../panel/rgb.h"
 #include "met_forecast.h"
 #include "met_sky_math.h"
@@ -14,22 +15,35 @@ namespace flexit::panel::met {
 
 inline constexpr int W = 320, H = 240;
 inline constexpr int HORIZON = 156;  // just above the panel's clock band, the bottom 74 rows
-inline constexpr int CABIN_X = 178;  // in the band's gap between the clock and the temperatures
+inline constexpr int CABIN_X = 184;  // in the band's gap between the clock and the temperatures
+// The cabin from the corner of its gable end: the gable on the left with a window and the loft's over it, the long
+// wall on the right with the door and another window, on a foundation. Columns from its middle, cabin_x: the
+// gable's left edge, the corner between the walls and the long wall's right edge, the ends of the eaves and of the
+// ridge, and the chimney's two middle columns' left one. Rows above the foundation's, cabin_y: the eaves, the ridge
+// and the chimney's top. Its pole is POLE_H tall.
+inline constexpr int CABIN_L = -29, CABIN_CORNER = -7, CABIN_R = 28, EAVES_L = -30, EAVES_R = 30;
+inline constexpr int RIDGE_L = -16, RIDGE_R = 19, CHIMNEY_X = 12;
+inline constexpr int CABIN_EAVES = 21, CABIN_RIDGE = 32, CABIN_TOP = 38, POLE_H = 56;
 // The panel's clock and date go over the bottom left of the picture, its temperatures over the bottom right, with
-// the texts where most have them. What a show parks on the land goes in the gap between them, or under the
+// the texts where most have them. What an act parks on the land goes in the gap between them, or under the
 // temperatures right of the date.
 inline constexpr int GAP_L = 126, GAP_R = 228, DATE_R = 154, TEMPS_BOT = 222;
-inline constexpr int OV_H = 64;                            // rows of the forecast overlay, at the top
-inline constexpr int16_t BAND[5] = {0, 52, 92, 118, 138};  // first row of each sky band
-inline constexpr int RB_RX = 100, RB_RY = 96;              // the rainbow's outer radii
-inline constexpr int LH_X = 268;                           // the lighthouse, on the coast's point
-inline constexpr int PENNANT_MAX = 36;                     // the pennant's length in a strong wind
-inline constexpr int PENNANT_LEFT = PENNANT_MAX + 1;       // how far from the pole it reaches blown left,
-inline constexpr int PENNANT_RIGHT = PENNANT_MAX + 3;      // and right
-inline constexpr uint8_t NONE = 255;                       // a row in the per-column arrays: none in this column
-// Radii of the sun's disc and its rings, and of the moon's disc and its glow
-inline constexpr int SUN_R = 13, RING1_R = 21, RING2_R = 30;
+inline constexpr int TEXTS_TOP = 168;  // the first row a text has, what's wholly above it is clear of them
+inline constexpr int OV_H = 64;        // rows of the forecast overlay, at the top
+inline constexpr int BANDS = 3;        // of sky, each shading into the next
+inline constexpr int16_t BAND[BANDS] = {0, 56, 120};   // first row of each
+inline constexpr int RB_RX = 100, RB_RY = 96;          // the rainbow's outer radii
+inline constexpr int LH_X = 268;                       // the lighthouse, on the coast's point
+inline constexpr int PENNANT_H = 9;                    // the pennant's rows at its hoist
+inline constexpr int PENNANT_MAX = 36;                 // the pennant's length in a strong wind
+inline constexpr int PENNANT_LEFT = PENNANT_MAX + 1;   // how far from the pole it reaches blown left,
+inline constexpr int PENNANT_RIGHT = PENNANT_MAX + 3;  // and right
+inline constexpr uint8_t NONE = 255;                   // a row in the per-column arrays: none in this column
+// Radii of the sun's disc and its halo, and of the moon's disc and its glow
+inline constexpr int SUN_R = 13, HALO_R = 24;
 inline constexpr int MOON_R = 9, MOON_GLOW_R = 15;
+// Rows the sun's halo, the moon's glow and the glow round a low sun shade out over at their rims
+inline constexpr int HALO_SOFT = 14, MOON_SOFT = 8, GLOW_SOFT = 24;
 // The lamps' and windows' warm light, the same so they share one of the 16 colours, and the animations' lit windows
 // the same again. rgb4(255, 210, 122)
 inline constexpr uint32_t WARM_LIGHT = 0xFFCC77;
@@ -44,7 +58,7 @@ static_assert(std::size(GROUNDS) == G_CITY + 1 && std::size(AURORAS) == A_ALWAYS
 struct Baseline {
   int16_t mid, near;
 };
-inline constexpr Baseline BASELINES[] = {{174, 204}, {184, 206}, {186, 206}, {178, 204}};  // by Ground
+inline constexpr Baseline BASELINES[] = {{174, 204}, {184, 213}, {186, 206}, {178, 204}};  // by Ground
 // The city's middle ground, flat. The buildings stand on it and the near windows end 4 rows above it.
 // Thick fog lies at this row in every landscape.
 inline constexpr int CITY_GROUND_Y = BASELINES[G_CITY].mid;
@@ -69,8 +83,8 @@ enum : uint16_t {
   L_ANTENNA = 1 << 11,  // its red light
   L_BOAT = 1 << 12,
 };
-// How far off things are, for the panel's K_PIC_PART and K_OVERLAY_DEPTH. The picture's parts are the land's layers,
-// each in front of the animations farther off than it. An animation without a depth is in front of them all.
+// How far off things are, for the panel's K_PIC_PART and a copy's depth. The picture's parts are the land's layers,
+// each in front of the animations farther off than it. The forecast is in front of them all.
 enum Depth : uint8_t {
   D_SKY = 0,        // behind the land
   D_RIDGE = 20,     // the mountains' far ridge
@@ -81,6 +95,7 @@ enum Depth : uint8_t {
   D_NEAR = 120,     // the near hill
   D_NEAR_ON = 130,  // on the near hill, in front of it, behind its trees, the cabin and the pole
   D_FRONT = 160,    // the near hill's trees, the cabin and the pole
+  D_AIR = 200,      // in the open, in front of all the land and behind the forecast
 };
 struct Options {
   Ground ground = G_HILLS;
@@ -90,7 +105,20 @@ struct Options {
   bool fireplace = false;  // more smoke
   uint32_t frame = 0;      // counts the redraws, for the lights that blink and the fireworks
   float kp = NAN;          // NOAA's for now, NAN without it, see met_kp.h
+  float snow_cm = NAN;     // snow on the ground, NAN to go by the temperature and the month, see SnowCover
 };
+
+// Snow on the ground in cm, which MET's forecast doesn't give, kept from one picture to the next: it builds up
+// while it snows and melts by the hour above zero, faster in rain. A cold clear night leaves the ground bare, and
+// a mild hour in January leaves it white.
+struct SnowCover {
+  float cm = NAN;   // NAN before the first weather
+  uint32_t at = 0;  // the UTC it's for
+  // On to t in weather w. After half a day without any it starts again from snow_likely().
+  void step(const Weather &w, uint32_t t);
+};
+// Whether snow lies in weather w that month, as far as the weather alone can say
+bool snow_likely(const Weather &w, int month);
 
 // The Kp it takes for the auroral oval to reach over lat, lon, 0 where it's there even when it's quiet
 float kp_needed(double lat, double lon);
@@ -116,12 +144,11 @@ inline uint32_t mix(uint32_t a, uint32_t b, float t) {
 // The scene's colours, a slot each in Scene::rgb. The ones in threes are for each cloud layer (high, middle, low),
 // hill layer (far, middle, near) or rainbow band (outermost first).
 enum : uint8_t {
-  C_SKY,               // 5 bands from BAND, top to the horizon
-  C_GLOW = C_SKY + 5,  // around a low sun, and the wide faint ring around that
-  C_GLOW_OUT,
+  C_SKY,                      // BANDS of it, from the top
+  C_LOW = C_SKY + BANDS - 1,  // the sky at the horizon
+  C_GLOW,                     // around a low sun
   C_SUN,
-  C_RING1,
-  C_RING2,
+  C_HALO,
   C_MOON,
   C_MOON_GLOW,
   C_STAR,  // catalogue stars
@@ -137,8 +164,8 @@ enum : uint8_t {
   C_BOLT,
   C_FOG,
   C_HILL,
-  C_TREE = C_HILL + 3,  // spruces on the middle and near hills, the hill's colour but dark green on snow
-  C_DARK = C_TREE + 1,  // the near ones', for the dark small things too
+  C_TREE = C_HILL + 3,  // spruces on the middle hills, a little hazy, and on the near one, as the cabin's door
+  C_DARK = C_TREE + 2,  // slate: the cabin's roof and panes and the other dark things
   C_SNOWCAP,
   C_BIRCH,
   C_SEA,
@@ -146,7 +173,8 @@ enum : uint8_t {
   C_BLD,
   C_BLD_BACK,
   C_BLD_EDGE,
-  C_ROAD,  // the road's asphalt, its kerbs and dashes, and the bike lane
+  C_OCHRE,  // the plaster of an old town house
+  C_ROAD,   // the road's asphalt, its kerbs and dashes, and the bike lane
   C_KERB,
   C_LANE,
   C_RIDGE,
@@ -154,16 +182,17 @@ enum : uint8_t {
   C_LH_BAND,
   C_WINDOW,
   C_CABIN,
-  C_WHITE,  // for small things and the cabin's trim, borrowed from a lit cloud or the sun
-  C_TEXT,
-  C_OUTLINE,
+  C_CABIN_SHADE,  // its wall that faces away from the sun
+  C_STRAW,        // the julenek's oats
+  C_WHITE,        // for small things and the cabin's trim, borrowed from a lit cloud or the sun
   COLOURS
 };
 static_assert(COLOURS <= 64, "a bit each in drawn() and KEY_COLOURS");
 
-// Small things that would vanish if their colour went to their surroundings', besides the stamps
+// Small things that would vanish if their colour went to their surroundings', besides the stamps, and the near
+// spruces, which would go slate grey
 inline constexpr uint64_t KEY_COLOURS = 1ull << C_STAR | 1ull << C_DIM | 7ull << C_RB | 1ull << C_BOLT |
-                                        1ull << C_BIRCH | 1ull << C_WINDOW | 1ull << C_TEXT | 1ull << C_OUTLINE;
+                                        1ull << C_BIRCH | 1ull << C_WINDOW | 1ull << (C_TREE + 1) | 1ull << C_STRAW;
 
 // ---------------------------------------------------------------- the scene
 
@@ -190,7 +219,7 @@ struct Stamp {
   uint32_t c : 24, ix : 8;       // 0xRRGGBB, and its place in the palette
   uint64_t *rows;                // h of Stamps::rows, the leftmost pixel in the highest of w bits
 };
-// The stamps and their rows. A year of scenes takes at most 27 stamps and 209 rows.
+// The stamps and their rows. A year of scenes takes at most 27 stamps and 245 rows, with the pennant hanging.
 inline constexpr int STAMPS = 32, STAMP_ROWS = 256;
 struct Stamps {
   Stamp at[STAMPS];
@@ -220,8 +249,11 @@ struct Tree {
 
 struct Bld {  // a city building
   int16_t x, w, top;
-  uint8_t back, kind;  // back: in the hazy far row. kind 0 flat roof, 1 a box on it, 2 antenna, 3 spire
+  uint8_t back, kind;  // back: in the hazy far row. kind 0 flat roof, 1 a box on it, 2 antenna, 3 spire, 4 pitched
+  uint8_t paint;       // its walls: 0 concrete, 1 red, 2 ochre, 3 white
 };
+// How far what a building has on its roof reaches up, by its kind
+inline constexpr int8_t ROOF_UP[] = {0, 5, 12, 14, 5};
 
 struct Light {  // one of the Christmas spruce's
   int16_t x, y;
@@ -235,8 +267,10 @@ struct At {
   bool fair;   // sunny enough for birds
   bool north;  // from Nordland and north, from 65 degrees
   bool xmas, newyear, easter_days, midsummer, halloween, valentine, may17, flag_up, fireplace;
-  int8_t wdir;                                // which way the wind blows things, 1 to the right
+  bool yule;    // from 1 December, or the first Sunday in Advent before it, to the twentieth day of Christmas
+  int8_t wdir;  // which way the wind blows things, 1 to the right
   uint8_t season, hour, month, day, weekday;  // weekday 0 Sunday, season see season_of()
+  uint32_t clock;                             // minutes of local time, for the turns the features take
   float light;                                // 0 night .. 1 day
   float fog, cover, wind, gust, sun_el;       // gust 0 if MET didn't say
 };
@@ -249,7 +283,7 @@ struct Scene {
   uint8_t folded;         // colours that didn't fit in 16, drawn in the nearest that did
   bool glow;              // sunrise or sunset light around the sun, low in the sky
   int16_t glow_x, glow_rx, glow_ry;
-  bool sun, sun_rings, moon, moon_glow;
+  bool sun, sun_halo, moon, moon_glow;
   int16_t sun_x, sun_y, moon_x, moon_y;
   float moon_phase;
   int nstars;  // faint background stars at made-up positions
@@ -284,18 +318,22 @@ struct Scene {
   int16_t shine_x;  // the sun's or moon's reflection on the water, -1 = none
   int nbld;         // city buildings, a hazy far row and a near row with windows
   Bld bld[28];
-  uint32_t win_seed;  // picks the lit windows
-  bool ridge;         // mountains, the land's ridge
-  bool lighthouse;    // coast only, at LH_X
-  int16_t lh_y;       // its base
-  bool cabin;
-  int16_t cabin_x, cabin_y;  // centre, and floor on the near hill
+  uint32_t win_seed;         // picks the lit windows
+  bool ridge;                // mountains, the land's ridge
+  bool lighthouse;           // coast only, at LH_X
+  int16_t lh_y;              // its base
+  bool cabin, gable_lit;     // gable_lit: the sun is on the gable's side, so the long wall is in the shade
+  int16_t cabin_x, cabin_y;  // its middle, and its foundation's row in the near hill
   bool window_lit;
   int16_t pole_x, pole_top, pole_base;  // flagpole, by the cabin or by the city's road
   int16_t home_x;                       // where the holidays happen, the cabin or the pole
   // where things are, for the weather animations, x -1 for none: the chimney's top, the bonfire's base, the
   // pumpkin, the boat, the antenna's top, the star on the Christmas spruce, the eggs and the spruce's lights
   Pt chimney, fire, pumpkin, boat, antenna, star;
+  // and what stands about the cabin or in the park in winter, see yard_row(): the middle of the top of the
+  // julenek's sheaf, the snowman's hat and the snow lantern
+  Pt nek, snowman, lantern;
+  bool yule_lights;  // the string of lights along the cabin's eaves and gable is lit
   Pt egg[5];
   Light light[14];
   uint8_t neggs, nlights;
@@ -304,11 +342,10 @@ struct Scene {
   uint16_t tag;   // L_*, what the stamps made now are left out for
   At at;
   int nstamps, nrows;  // the stamps made and the rows they took
-  bool overlay;        // the forecast drawn over the picture
+  bool overlay;        // the forecast shown over it, see forecast_marks()
   // The caller's, kept apart so the scene needs no big block
   Stamps *stamps;
-  uint8_t (*ov)[W / 4];  // OV_H rows, 2 bits per pixel. 0 shows the picture, 1 outline, 2 text. Or null
-  Land *land;            // made again when the place or landscape changes
+  Land *land;  // made again when the place or landscape changes
 };
 
 inline constexpr int FIELD = W + 200;  // clouds drift through a field wider than the screen
@@ -329,11 +366,25 @@ inline Rng seeded(uint32_t n) { return {n * 2654435761u | 1}; }
 
 // The sky band of a row
 inline int band_of(int y) {
-  int b = 4;
+  int b = BANDS - 1;
   while (b > 0 && y < BAND[b])
     b--;
   return b;
 }
+// 0..15 spread evenly over a 4 x 4 tile, to shade one colour into another: a pixel takes the other where its number
+// is under how many sixteenths of it there should be
+inline constexpr uint8_t BAYER[4][4] = {{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}};
+// The sky band of a pixel. A band shades into the next over SHADE rows either side of the next one's first, by
+// BAYER's tile: a sixteenth more of the next every two rows. Half of those rows pack as one run, like a row of one
+// colour, the rest as they are.
+inline constexpr int SHADE = 15;
+inline int band_at(int x, int y) {
+  int b = band_of(y + SHADE), in = y - BAND[b] + SHADE;  // rows into the shading above band b
+  if (b == 0 || in >= 2 * SHADE)
+    return b;
+  return BAYER[y & 3][x & 3] <= in / 2 ? b : b - 1;
+}
+static_assert(BAND[1] >= SHADE && BAND[2] - BAND[1] >= 2 * SHADE, "a band's two shadings apart");
 
 // ---------------------------------------------------------------- where row() draws things, for the animations too
 
@@ -362,9 +413,48 @@ inline int half(int dy, int rx, int ry) {
   return lo;
 }
 
-// A spruce's half width d rows below its top, a narrow cone with ragged tiers, and whether snow lies on it there
-inline int spruce_hw(int d) { return std::max(d / 4, d * 2 / 5 - d % 6 / 2); }
-inline bool snow_tier(int d) { return d % 6 == 1 && d > 2; }
+// A wisp of high cloud from one of its ellipses, on the row dy below its middle: a thin streak that leans, with a
+// hook up at its end. Its spans as columns from its middle, n of them: none, the streak, the hook or both. wide
+// stretches it, for the animations.
+struct Wisp {
+  static constexpr int LEFT = 8, RIGHT = 13, UP = 3, DOWN = 2;  // how far it reaches past its ellipse's ends at most
+  int16_t a[2], b[2];
+  int n;
+};
+inline Wisp wisp(const Ellipse &e, int dy, int wide = 0) {
+  Wisp w{};
+  int rx = e.rx + wide, hw = half(dy, rx, (e.ry + 1) / 2);
+  if (hw >= 0)
+    w.a[w.n] = (int16_t) (-2 * dy - hw), w.b[w.n++] = (int16_t) (-2 * dy + hw);
+  if (dy < 0 && dy >= -Wisp::UP)
+    w.a[w.n] = (int16_t) (rx - 3 * dy - 3), w.b[w.n++] = (int16_t) (rx - 3 * dy);
+  return w;
+}
+
+// A spruce from its top row to its base h rows down: a leader, then tiers that flare out downward and step in under
+// each other, the lowest the widest, on a trunk. A small one has as many, shorter.
+struct Spruce {
+  int crown, tier, wide, lead, trunk;  // rows of crown and of a tier, half width at the crown's foot and of the trunk
+  explicit constexpr Spruce(int h)
+      : crown(h + 1 -
+              (h < 14   ? 1
+               : h < 28 ? 2
+                        : 3)),
+        tier(std::clamp(crown / 4, 3, 6)),
+        wide(std::max(2, (h * 38 + 50) / 100)),
+        lead(h / 8),
+        trunk(h >= 28) {}
+  constexpr int cone(int d) const { return ((d + 1) * wide * 2 + crown) / (2 * crown); }
+  constexpr int up(int d) const { return (crown - 1 - d) % tier; }  // rows above its tier's lowest
+  // Its half width d rows below its top
+  constexpr int hw(int d) const {
+    if (d >= crown)
+      return trunk;
+    return d < lead ? 0 : std::max(cone(d + up(d)) - up(d), cone(d) * 6 / 10);
+  }
+  // Whether snow lies there, on each tier's top row
+  constexpr bool snow(int d) const { return d > 1 && d < crown && up(d) == tier - 1; }
+};
 
 // The near hill's trees of a kind (0 spruce, 1 birch, 2 bare birch, -1 any) as indexes into s.tree
 struct NearTrees {
@@ -386,12 +476,13 @@ inline NearTrees near_trees(const Scene &s, int kind) {
 struct Edge {
   static constexpr int FLOOR = 4;  // rows of the hill under the spruces' bases in front of what walks in the forest
   int16_t x = -1, y = 0, tx = 0, top = 0;
-  // The left column that has a thing w by h, its bottom row at bottom, all behind the spruce or the floor under it,
-  // -1 if it's too big for it
+  // The left column that has a thing w by h, its bottom row at bottom, all behind the spruce's crown or the hill
+  // its trunk stands in and the floor under it, -1 if it's too big for it
   int hide(int w, int h, int bottom) const {
+    Spruce spruce(y - top);
     int l = tx - w / 2;
-    for (int r = std::min(bottom, (int) y); r > bottom - h; r--)
-      if (r < top || l < tx - spruce_hw(r - top) || l + w - 1 > tx + spruce_hw(r - top))
+    for (int r = std::min(bottom, top + spruce.crown - 1); r > bottom - h; r--)
+      if (r < top || l < tx - spruce.hw(r - top) || l + w - 1 > tx + spruce.hw(r - top))
         return -1;
     return l >= 0 && bottom <= y + FLOOR ? l : -1;
   }
@@ -405,7 +496,7 @@ inline Edge forest_edge(const Scene &s) {
   Edge e;
   for (int i : near_trees(s, 0)) {
     const Tree &t = s.tree[i];
-    int x = t.x + spruce_hw(t.base - t.top) + 1;
+    int x = t.x + Spruce(t.base - t.top).wide + 1;
     if (x <= GAP_L + 10 && x > e.x)
       e = {(int16_t) x, t.base, t.x, t.top};
   }
@@ -421,10 +512,13 @@ inline Crown crown_of(const Scene &s, int i) {
   return {height * 6 / 10, std::max(3, height / 4)};
 }
 
-// The glow around a low sun on the horizon, the wide faint one or the smaller strong one
-inline Ellipse glow_of(const Scene &s, bool strong) {
-  return {s.glow_x, HORIZON, (int16_t) (strong ? s.glow_rx * 3 / 5 : s.glow_rx * 3 / 2),
-          (int16_t) (strong ? s.glow_ry * 3 / 5 : s.glow_ry)};
+// The glow around a low sun on the horizon, to the middle of its rim
+inline Ellipse glow_of(const Scene &s) { return {s.glow_x, HORIZON, s.glow_rx, (int16_t) (s.glow_ry * 4 / 5)}; }
+
+// The colour of a building's walls: the far row's haze, or its paint
+inline int wall_of(const Bld &b) {
+  static constexpr uint8_t PAINT[] = {C_BLD, C_CABIN, C_OCHRE, C_WHITE, C_BLD_BACK};
+  return PAINT[b.back ? 4 : b.paint];
 }
 
 // The near buildings' windows, 2 wide and 5 apart, in rows 2 tall and 5 apart from 3 below the roof, up to 4 rows
@@ -438,9 +532,19 @@ inline int win_row(int y, int top) {
 // The left x of window k on building b, -1 past its last
 inline int win_x(const Bld &b, int k) { return k * 5 + 6 < b.w ? b.x + 3 + k * 5 : -1; }
 
-// The top left of the cabin window's glass, 7 by 6 with a bar down its middle and one across
-inline int window_x(const Scene &s) { return s.cabin_x - 9; }
-inline int window_y(const Scene &s) { return s.cabin_y - 12; }
+// The top left of the glass of the cabin's gable window, 7 by 6 with a bar down its middle and one across. The long
+// wall's is WINDOW_2 to its right, and the door's opening is DOOR_W by DOOR_H from the foundation up, DOOR_X from
+// the cabin's middle.
+inline constexpr int WINDOW_2 = 35, DOOR_X = -1, DOOR_W = 6, DOOR_H = 16;
+inline int window_x(const Scene &s) { return s.cabin_x - 22; }
+inline int window_y(const Scene &s) { return s.cabin_y - 16; }
+// The top left of the advent candles' arch, 7 by 5 on the sill of the long wall's window
+inline int stake_x(const Scene &s) { return window_x(s) + WINDOW_2; }
+inline int stake_y(const Scene &s) { return window_y(s) + 1; }
+// The julenek: its sheaf's rows, and the rows from its top down to the ground its pole stands in
+inline constexpr int NEK_ROWS = 9, NEK_UP = 23;
+// The row over the cabin's ridge, where a bird's feet go
+inline int ridge_y(const Scene &s) { return s.cabin_y - CABIN_RIDGE - 1; }
 
 // The aurora's colour at row y of a ribbon from top to bot: its top 3 tenths, its light lower edge (a fifth, 2
 // rows at least) and the main colour between
@@ -458,7 +562,7 @@ inline int local_hour(uint32_t t, Offset offset) { return (int) ((t + (uint32_t)
 
 // The forecast hours the overlay shows, the next four on 3-hour marks of local time after t, as indexes into
 // w.hour. Returns how many.
-int marks(const Weather &w, uint32_t t, Offset offset, int *at);
+int hour_marks(const Weather &w, uint32_t t, Offset offset, int *at);
 
 // The light, weather and date the parts of the scene go by, and At for the animations. utc_offset is local time
 // minus UTC in seconds.
@@ -471,15 +575,19 @@ struct Now : At {
   float moon_phase, grey, glow;  // grey how overcast, glow see sky()
   int year;
   bool flag_day;
+  bool leaves;  // the birches are in leaf
 
   Now(const Weather &weather, const Options &options, double la, double lo, uint32_t utc, int utc_offset);
 };
 
 // The whole scene at t, UTC, but its colours' places: palette() gives them, after s.live is set. Without w.ok
-// there's no weather in it. s.stamps, s.ov and s.land are the caller's and stay, s.ov may be null without the
-// forecast.
+// there's no weather in it. s.stamps and s.land are the caller's and stay.
 void build(Scene &s, const Weather &w, double lat, double lon, uint32_t t, bool with_forecast, Offset offset,
            const Options &o);
+
+// The forecast over s for marks.h: the weather now at top left, the next four 3-hour marks at top right and on the
+// coast the wave height, in a 5x7 font and 9x9 icons, white with a dark outline. None without s.overlay.
+marks::Layer forecast_marks(const Scene &s, const Weather &w, uint32_t t, Offset offset);
 
 // A one-colour bitmap H rows high from string art: rows split by '|', 'x' a pixel, anything else none.
 // The leftmost pixel is the highest of w bits.

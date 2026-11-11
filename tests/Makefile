@@ -29,7 +29,7 @@ $(BUILD)/restart_test: restart_test.cpp $(SERVER_SRC)
 $(BUILD)/humidity_boost_test: humidity_boost_test.cpp $(SERVER_SRC)
 $(BUILD)/summer_cooling_test: summer_cooling_test.cpp $(SERVER_SRC)
 $(BUILD)/met_coast_wave_test: met_coast_wave_test.cpp $(MET)/met_scene.cpp $(MET)/met_raster.cpp \
-  $(MET)/met_forecast.cpp $(MET)/met_sky_math.cpp $(MET)/met_sprites.cpp
+  $(MET)/met_forecast.cpp $(MET)/met_sky_math.cpp $(MET)/met_sprites.cpp $(CODE)/panel/marks_font.cpp
 $(BUILD)/%: $(HEADERS)
 	@mkdir -p $(BUILD)
 	$(CXX) $(CXXFLAGS) $(filter %.cpp %.c,$^) -o $@

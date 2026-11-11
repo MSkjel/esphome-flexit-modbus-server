@@ -111,7 +111,10 @@ inline void task(void *arg) {
       r.status = esp_http_client_get_status_code(c);
       r.length = (size_t) n;
       bool moved = r.status == 301 || r.status == 302 || r.status == 307 || r.status == 308;
-      if (!moved || hops == 3 || esp_http_client_set_redirection(c) != ESP_OK)
+      // a redirect's own page is read to its end first: to the same server the connection is kept, and what's left
+      // of the page would come ahead of the next answer
+      if (!moved || hops == 3 || esp_http_client_flush_response(c, nullptr) != ESP_OK ||
+          esp_http_client_set_redirection(c) != ESP_OK)
         break;
     }
     if (r.status >= 200 && r.status < 300 && r.body && !read(c, r))

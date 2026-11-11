@@ -243,7 +243,7 @@ api:
       then: &do_clear_picture
         - lambda: flexit::panel::picture::clear();
     # an animation from packages/panel/animation.yaml, over the picture, where its yaml puts it, like its switch.
-    # The panel holds 6 at a time in 8 KB and shows them in up to 8 places. No name clears them all.
+    # The panel holds 7 at a time in 8.75 KB and shows them in up to 9 places. No name clears them all.
     - action: panel_show_animation
       variables: *by_name
       then: &do_show_animation
@@ -253,7 +253,7 @@ api:
       then: &do_clear_animation
         - lambda: flexit::panel::overlay::clear(name);
     # copy 0 is the one panel_show_animation shows. Another copy at x, y plays in step with it, unless own = true
-    # gives it a frame of its own (w x h / 2 bytes more of the 8 KB) that starts `start` frames in.
+    # gives it a frame of its own (w x h / 2 bytes more of the 8.75 KB) that starts `start` frames in.
     - action: panel_place_animation
       variables: &place_animation {name: string, copy: int, x: int, y: int, own: bool, start: int}
       then: &do_place_animation
@@ -272,19 +272,11 @@ api:
       variables: &drift_animation {name: string, copy: int, vx: float, vy: float}
       then: &do_drift_animation
         - lambda: flexit::panel::overlay::drift(name, copy, vx, vy);
-    # what: x, y, turn, size, opacity, speed or light
+    # what: x, y, pan_x, pan_y, w, h, turn, size, size_x, size_y, opacity, speed or light
     - action: panel_glide_animation
       variables: &glide_animation {name: string, copy: int, what: string, to: int, ms: int, ease: string}
       then: &do_glide_animation
         - lambda: flexit::panel::overlay::glide(name, copy, what, to, ms, ease);
-    - action: panel_spin_animation
-      variables: &spin_animation {name: string, copy: int, speed: float}
-      then: &do_spin_animation
-        - lambda: flexit::panel::overlay::spin(name, copy, speed);
-    - action: panel_flip_animation
-      variables: &flip_animation {name: string, copy: int, horizontal: bool, vertical: bool}
-      then: &do_flip_animation
-        - lambda: flexit::panel::overlay::flip(name, copy, horizontal, vertical);
     # colour: like FF77BB, the copy's colours as shades of it. "" or none for its own.
     - action: panel_tint_animation
       variables: &tint_animation {name: string, copy: int, colour: string}
@@ -308,23 +300,17 @@ api:
       variables: &face_animation {name: string, copy: int, facing: int, mirror: bool, tilt: int, rate: int, level: bool}
       then: &do_face_animation
         - lambda: flexit::panel::overlay::face(name, copy, facing, mirror, tilt, rate, level);
-    # slow: none, low, high or both
-    - action: panel_wave_animation
-      variables: &wave_animation
-        {name: string, copy: int, what: string, low: int, high: int, rise: int, fall: int, hold_high: int,
-         hold_low: int, jitter: int, random: bool, slow: string}
-      then: &do_wave_animation
-        - lambda: |-
-            flexit::panel::overlay::wave(name, copy, what, low, high, rise, fall, hold_high, hold_low, jitter, random,
-                                      slow);
-    - action: panel_map_animation
-      variables: &map_animation {name: string, copy: int, what: string, left: int, right: int, top: int, bottom: int}
-      then: &do_map_animation
-        - lambda: flexit::panel::overlay::map(name, copy, what, left, right, top, bottom);
     - action: panel_rounds_animation
       variables: &rounds_animation {name: string, copy: int, rounds: int}
       then: &do_rounds_animation
         - lambda: flexit::panel::overlay::rounds(name, copy, rounds);
+    # one statement of a script, told the copy while its script runs on: what moves, shows or binds it, like
+    # "spin 90", "flip x", "blend add", "pivot 50, 100", "wave size 90, 110, 800, 800", "smooth on" or
+    # "opacity *= 50 + sin(ms / 9, 50)", see docs/panel.md#animation-scripts
+    - action: panel_tell_animation
+      variables: &tell_animation {name: string, copy: int, statement: string}
+      then: &do_tell_animation
+        - lambda: flexit::panel::overlay::told(name, copy, statement);
     # a script the copy runs on the panel, see docs/panel.md#animation-scripts. One that plays frames needs own.
     - action: panel_script_animation
       variables: &script_animation {name: string, copy: int, code: string}
@@ -355,14 +341,11 @@ script:
   - {id: panel_move_animation, parameters: *move_animation, then: *do_move_animation}
   - {id: panel_drift_animation, parameters: *drift_animation, then: *do_drift_animation}
   - {id: panel_glide_animation, parameters: *glide_animation, then: *do_glide_animation}
-  - {id: panel_spin_animation, parameters: *spin_animation, then: *do_spin_animation}
-  - {id: panel_flip_animation, parameters: *flip_animation, then: *do_flip_animation}
   - {id: panel_tint_animation, parameters: *tint_animation, then: *do_tint_animation}
   - {id: panel_area_animation, parameters: *area_animation, then: *do_area_animation}
   - {id: panel_wander_animation, parameters: *wander_animation, then: *do_wander_animation}
   - {id: panel_face_animation, parameters: *face_animation, then: *do_face_animation}
-  - {id: panel_wave_animation, parameters: *wave_animation, then: *do_wave_animation}
-  - {id: panel_map_animation, parameters: *map_animation, then: *do_map_animation}
   - {id: panel_rounds_animation, parameters: *rounds_animation, then: *do_rounds_animation}
+  - {id: panel_tell_animation, parameters: *tell_animation, then: *do_tell_animation}
   - {id: panel_script_animation, parameters: *script_animation, then: *do_script_animation}
   - {id: panel_frame_rate_animation, parameters: *frame_rate_animation, then: *do_frame_rate_animation}

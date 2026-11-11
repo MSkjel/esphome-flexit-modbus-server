@@ -1,5 +1,5 @@
-// The coast's wave height: Oceanforecast's answer read as it comes in, the hour wave_at() takes, and the text build()
-// puts right of the lighthouse above the sea and row() draws, or doesn't. make -C tests met_coast_wave_test
+// The coast's wave height: Oceanforecast's answer read as it comes in, the hour wave_at() takes, and the text
+// forecast_marks() puts right of the lighthouse above the sea, or doesn't. make -C tests met_coast_wave_test
 #include <cstring>
 #include <string>
 #include "check.h"
@@ -11,16 +11,15 @@ using namespace flexit::panel::met;
 static int utc(uint32_t) { return 0; }
 
 static Stamps stamps;
-static uint8_t ov[OV_H][W / 4];
 static Land land;
 static Scene scene;
 
-// An Oceanforecast hour, as its timeseries has them
+// An Oceanforecast hour, as its timeseries has them: h hours into 20 August 2026
 static std::string hour(int h, const char *height) {
   char b[160];
   snprintf(b, sizeof b,
-           "{\"time\":\"2026-08-20T%02d:00:00Z\",\"data\":{\"instant\":{\"details\":{%s\"sea_water_speed\":0.1}}}},", h,
-           height);
+           "{\"time\":\"2026-08-%02dT%02d:00:00Z\",\"data\":{\"instant\":{\"details\":{%s\"sea_water_speed\":0.1}}}},",
+           20 + h / 24, h % 24, height);
   return b;
 }
 
@@ -33,8 +32,8 @@ static Sea read_sea(const std::string &s, size_t k) {
   return r.sea;
 }
 
-// The landscape at 15:00 UTC on 20 August 2026 in Bergen, with the forecast, waves m high
-static void build_at(float waves, bool forecast = true, Ground g = G_COAST) {
+// The forecast over the landscape at 15:00 UTC on 20 August 2026 in Bergen, waves m high
+static marks::Layer build_at(float waves, bool forecast = true, Ground g = G_COAST) {
   Weather w;
   w.ok = true;
   w.time = unix_of(2026, 8, 20, 15);
@@ -54,40 +53,36 @@ static void build_at(float waves, bool forecast = true, Ground g = G_COAST) {
   Options o;
   o.ground = g;
   scene.stamps = &stamps;
-  scene.ov = forecast ? ov : nullptr;
   scene.land = &land;
   build(scene, w, 60.39, 5.32, w.time, forecast, utc, o);
-  palette(scene, nullptr);
+  return forecast_marks(scene, w, w.time, utc);
 }
 
-// The text stamp build() adds over its outline: the last one in the text's colour with one before it in the
-// outline's. Null if there's none.
-static const Stamp *text_stamp() {
-  for (int i = scene.nstamps - 1; i > 0; i--) {
-    const Stamp &t = scene.stamps->at[i], &o = scene.stamps->at[i - 1];
-    if (t.c == scene.rgb[C_TEXT] && o.c == scene.rgb[C_OUTLINE] && t.layer == ON_TOP && o.layer == ON_TOP &&
-        o.x == t.x - 1 && o.y == t.y - 1 && o.w == t.w + 2 && o.h == t.h + 2)
-      return &t;
-  }
-  return nullptr;
+// The wave height: a line of text, the one op more than without, last. Null if there's none.
+static const marks::Op *wave_text(const marks::Layer &l, size_t without) {
+  const marks::Op *t = l.ops.size() == without + 1 ? &l.ops.back() : nullptr;
+  return t && t->kind == marks::Op::BITMAP && t->rows.size() == 7 && t->outline ? t : nullptr;
 }
 
-// How many of the text's pixels row() draws in its colour, and in which columns and rows
-static int drawn(const Stamp &t, int &l, int &r, int &top, int &bottom) {
-  uint8_t px[W];
+// How many of t's pixels are drawn in its colour, and in which columns and rows
+static int drawn(const marks::Op &t, int &l, int &r, int &top, int &bottom) {
+  marks::Layer only;
+  only.ops = {t};
+  static marks::Sharp sharp;
   int n = 0;
   l = top = 9999;
   r = bottom = -1;
-  for (int y = t.y; y < t.y + t.h; y++) {
-    row(scene, y, px);
-    for (int c = 0; c < t.w; c++)
-      if (t.rows[y - t.y] >> (t.w - 1 - c) & 1 && px[t.x + c] == t.ix) {
-        n++;
-        l = std::min(l, t.x + c);
-        r = std::max(r, t.x + c);
-        top = std::min(top, y);
-        bottom = std::max(bottom, y);
-      }
+  for (int y0 = 0; y0 < H; y0 += marks::BAND) {
+    marks::draw_sharp(only, sharp, y0);
+    for (int y = y0; y < std::min(H, y0 + marks::BAND); y++)
+      for (int x = 0; x < W; x++)
+        if (sharp.px[(y - y0) * W + x] == (0xFF000000 | t.rgb)) {
+          n++;
+          l = std::min(l, x);
+          r = std::max(r, x);
+          top = std::min(top, y);
+          bottom = std::max(bottom, y);
+        }
   }
   return n;
 }
@@ -109,6 +104,19 @@ int main() {
     CHECK(sea.time[3] == unix_of(2026, 8, 20, 18) && sea.height[3] == 2.0f);
   }
   CHECK(!read_sea("{\"type\":\"Feature\",\"properties\":{\"timeseries\":[]}}", 16).ok);  // inland
+  // More hours than it keeps, several of them in a piece as the ESP gets them, or all at once: the first SEA_HOURS,
+  // and one that isn't a number is no hour
+  std::string many = "{\"type\":\"Feature\",\"properties\":{\"timeseries\":[";
+  many += hour(0, "\"sea_surface_wave_height\":null,");
+  for (int h = 1; h < SEA_HOURS + 9; h++)
+    many += hour(h, "\"sea_surface_wave_height\":1.5,");
+  many += "{\"time\":\"2026-08-22T00:00:00Z\"}]}}";
+  for (size_t k : {many.size(), (size_t) 512, (size_t) 3}) {
+    Sea sea = read_sea(many, k);
+    CHECK(sea.ok && sea.hours == SEA_HOURS);
+    CHECK(sea.time[0] == unix_of(2026, 8, 20, 1) && sea.time[SEA_HOURS - 1] == unix_of(2026, 8, 21, 0));
+    CHECK(sea.height[0] == 1.5f && sea.height[SEA_HOURS - 1] == 1.5f);
+  }
 
   // The hour nearest t, if t's within three hours of it
   Sea sea = read_sea(answer, answer.size());
@@ -124,16 +132,13 @@ int main() {
 
   // On the coast, with the forecast, right of the lighthouse and above the sea, in the forecast's text and
   // outline. One decimal under 10 m, none from there: "10m" and "12m" are as wide, "1.8m", "0.1m" and "9.9m" wider.
-  build_at(-1);
-  int without = scene.nstamps;
-  CHECK(!text_stamp());
+  size_t without = build_at(-1).ops.size();
   int widths[5];
-  uint64_t first[5];
+  uint64_t middle[5];
   float ms[] = {1.8f, 0.06f, 9.94f, 9.95f, 12.4f};
   for (int i = 0; i < 5; i++) {
-    build_at(ms[i]);
-    CHECK(scene.nstamps == without + 2);
-    const Stamp *t = text_stamp();
+    marks::Layer f = build_at(ms[i]);
+    const marks::Op *t = wave_text(f, without);
     CHECK(t);
     if (!t)
       continue;
@@ -141,28 +146,21 @@ int main() {
     CHECK(drawn(*t, l, r, top, bottom) > 20);
     CHECK(l > LH_X + 4 && r < W);                     // clear of the lighthouse, on the screen
     CHECK(bottom < scene.sea_top - 1 && top > OV_H);  // above the sea, under the forecast
-    widths[i] = t->w;
-    first[i] = t->rows[7];
+    widths[i] = t->cols;
+    middle[i] = t->rows[3];
     for (int j = 0; j < i; j++)
-      CHECK(first[i] != first[j] || widths[i] != widths[j]);
+      CHECK(middle[i] != middle[j] || widths[i] != widths[j]);
   }
   CHECK(widths[0] == widths[1] && widths[1] == widths[2]);
   CHECK(widths[3] == widths[4] && widths[3] < widths[0]);
 
   // None at 0.0 m, as in the fjords, inland, where Oceanforecast has no waves, without the forecast, and on the
   // other landscapes
-  for (float m : {0.0f, 0.04f}) {
-    build_at(m);
-    CHECK(scene.nstamps == without && !text_stamp());
-  }
-  build_at(1.8f, false);
-  CHECK(!text_stamp());
-  for (Ground g : {G_HILLS, G_MOUNTAINS, G_CITY}) {
-    build_at(-1, true, g);
-    int n = scene.nstamps;
-    build_at(1.8f, true, g);
-    CHECK(scene.nstamps == n && !text_stamp());
-  }
+  for (float m : {0.0f, 0.04f})
+    CHECK(build_at(m).ops.size() == without);
+  CHECK(build_at(1.8f, false).ops.empty());
+  for (Ground g : {G_HILLS, G_MOUNTAINS, G_CITY})
+    CHECK(build_at(1.8f, true, g).ops.size() == build_at(-1, true, g).ops.size());
 
   printf("%s\n", fails ? "FAILED" : "met_coast_wave_test: all passed");
   return fails != 0;

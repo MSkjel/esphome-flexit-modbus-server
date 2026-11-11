@@ -53,7 +53,6 @@ enum { PBULK_A_WANT = 12, PBULK_A_PAYLOAD = 13 };
 #define PBULK_ANSWER_MAX 160  // the panel's stream went fastest with this in bulk_test, of 113, 160 and 200
 #define PBULK_ANSWER(n) (PBULK_A_PAYLOAD + (n) + 2)
 #define PBULK_ANSWER_FRAME_MAX PBULK_ANSWER(PBULK_ANSWER_MAX)
-#define PBULK_PAYLOAD_MAX (PBULK_ANSWER_MAX > PBULK_MAX ? PBULK_ANSWER_MAX : PBULK_MAX)  // either way's longest
 
 // Answer status. The bus status from pbus.h, or PB_BUSY when the panel had no room for the ESP's messages
 enum { PB_OK = PBUS_OK, PB_REFUSED = PBUS_REFUSED, PB_NO_GAPS = PBUS_NO_GAPS, PB_BUSY };
@@ -66,7 +65,7 @@ bool pbulk_parse(const uint8_t *p, int n, void (*f)(void *u, uint16_t key, const
 #define PBULK_RX_BUF 512
 
 typedef struct {
-  uint8_t buf[PBULK_RX_BUF];     // ring of ESP messages for the main loop, each batch as n, payload[n]
+  uint8_t buf[PBULK_RX_BUF];     // ring of ESP messages for the main loop, each batch in one piece as n, payload[n]
   volatile uint16_t head, tail;  // the interrupt writes at head, the main loop reads at tail
   uint16_t esess;                // the ESP's session and the number of its next message we want
   uint16_t enext;
@@ -94,7 +93,10 @@ void pbulk_panel_init(pbulk_panel_t *p, uint16_t session);  // session: a random
 // bus in time or it's for another panel.
 int pbulk_panel_frame(pbulk_panel_t *p, uint8_t addr, const uint8_t *f, int n, uint32_t left_us, uint8_t say,
                       uint32_t end_us, uint8_t *answer);
-int pbulk_panel_take(pbulk_panel_t *p, uint8_t *out);  // next batch of ESP messages, out is PBULK_MAX bytes. 0 = none
+// The next batch of the ESP's messages where it lies, *n bytes, NULL for none. It's there until
+// pbulk_panel_taken() gives its room back, which the main loop calls when it's done with it.
+const uint8_t *pbulk_panel_take(pbulk_panel_t *p, int *n);
+void pbulk_panel_taken(pbulk_panel_t *p);
 // Queues a payload from plink_pack, in out or else in next. False while both are full. DATA in it is a multiple of
 // 4 bytes, an answer takes as much of it as fits.
 bool pbulk_panel_put(pbulk_panel_t *p, const uint8_t *payload, int n);

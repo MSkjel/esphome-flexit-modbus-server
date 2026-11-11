@@ -55,7 +55,7 @@ bool pbus_is_cx60(const uint8_t *f, int n, bool crc_ok);
 int pbus_status_part(const uint8_t *buf, int n);  // length of an unfinished status frame at the end of buf, 0 = none
 
 // Upper bound on how long ago the status broadcast ended, for an ESP that reads its UART from a loop. The
-// component's status_age_us() does the same. dt_us is the time since the previous loop's read, which had k bytes
+// component's status_age_us() goes by it. dt_us is the time since the previous loop's read, which had k bytes
 // of the frame but not its end (pbus_status_part). The UART hands bytes over once rx_threshold have arrived, or 2
 // byte times after the line goes quiet. isr_us is the worst-case interrupt latency.
 uint32_t pbus_since_status(uint32_t dt_us, int k, int rx_threshold, uint32_t isr_us);

@@ -40,7 +40,6 @@ text_sensor:
 esphome:
   # Only here, so builds without the space pictures don't compile their code
   includes:
-    - ../code/marks
     - ../code/space
   on_boot:
     - priority: 590  # after online_picture.yaml's

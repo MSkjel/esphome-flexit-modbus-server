@@ -56,6 +56,7 @@ uint32_t pjpeg_tile(uint8_t *out, uint32_t cap, int quality, int drop, pjpeg_pix
                     int mcus);
 #define PJPEG_DC_ONLY 0x7FFF  // a drop that leaves each block only its average
 // Mean squared error per pixel, Y + Cb + Cr. The ESP compares it with the 16-colour version to pick the better one.
+// 0 where PJPEG_ALSO is 0: the sums are left out there.
 double pjpeg_mse(const pjpeg_t *j);
 
 #ifdef __cplusplus

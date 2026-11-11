@@ -9,6 +9,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "pbus.h"
 
 namespace flexit::panel {
 
@@ -41,10 +42,13 @@ inline uint32_t slice_deadline_us() {
 
 // Whether a piece of work that can't stop halfway may start, cost_us what it took last time, UINT32_MAX if not known.
 // It fits what's left of the slice, or as the first such piece in the loop it can't reach the status broadcast: past
-// the slice, but the main loop only waits once. One of a cost not known waits for the quiet right after a broadcast.
+// the slice, but the main loop only waits once. One of a cost not known waits for the quiet right after a broadcast,
+// and so does one that took as long as the bus is ever quiet, as one timed while something else held the processor
+// did: it would never fit again.
 inline bool fits(uint32_t deadline_us, uint32_t cost_us, bool first) {
   uint32_t now = micros(), left = (int32_t) (deadline_us - now) > 0 ? deadline_us - now : 0;
-  return cost_us <= left || (first && quiet_us() >= (cost_us == UINT32_MAX ? QUIET_LONG_US : cost_us));
+  uint32_t quiet = cost_us >= PBUS_CYCLE_US - STATUS_MARGIN_US ? QUIET_LONG_US : cost_us;
+  return cost_us <= left || (first && quiet_us() >= quiet);
 }
 
 // id() is a pointer in ESPHome's lambdas and a reference in the sim's harness
@@ -87,13 +91,17 @@ inline bool psram_has(size_t bytes, size_t block) {
   return left >= bytes && piece >= block;
 }
 
-// Whether the ESP has `bytes` of internal RAM free with some to spare, `block` of it in one piece: vectors and new
-// come from there. `big` more, `big_block` the biggest, are RAMAllocator's blocks, which go in PSRAM if it has room
+// What has_ram() leaves free of internal RAM: some for the rest of the ESP, and a request's while one runs
+inline size_t ram_spare() { return 8192 + requests * REQUEST_RAM; }
+
+// Whether the ESP has `bytes` of internal RAM free with ram_spare() left, `block` of it in one piece: vectors and
+// new come from there. `big` more, `big_block` the biggest, are RAMAllocator's blocks, which go in PSRAM if it has
+// room
 inline bool has_ram(size_t bytes, size_t block, size_t big = 0, size_t big_block = 0) {
   if (big && psram_has(big, big_block))
     big = big_block = 0;
   RAMAllocator<uint8_t> ram(RAMAllocator<uint8_t>::ALLOC_INTERNAL);
-  return ram.get_free_heap_size() >= bytes + big + 8192 + requests * REQUEST_RAM &&
+  return ram.get_free_heap_size() >= bytes + big + ram_spare() &&
          ram.get_max_free_block_size() >= std::max(block, big_block);
 }
 
@@ -121,8 +129,9 @@ template<typename T> void status(T &sensor, const std::string &s) {
 }
 
 // The status for a K_PIC_ACK's progress, len bytes in all
+inline int percent(uint32_t ack, uint32_t len) { return (int) std::min<uint32_t>(99, (ack & 0xFFFF) * 100 / len); }
 inline std::string progress(const std::string &name, uint32_t ack, uint32_t len) {
-  return "Sending " + name + ": " + std::to_string(std::min<uint32_t>(99, (ack & 0xFFFF) * 100 / len)) + " %";
+  return "Sending " + name + ": " + std::to_string(percent(ack, len)) + " %";
 }
 
 // Also in picture::, where met's code uses them

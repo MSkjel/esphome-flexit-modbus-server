@@ -144,6 +144,7 @@ inline void picked(const std::string &name) {
     S.redo = true;
     S.to_clear = true;  // K_PIC_CLEAR also stops an animation on its way, so loop() waits for that
     S.shown = Pic();    // so a show() before the next loop sends all of it
+    S.t.head = false;   // and what the panel answers a piece on its way isn't for anything
     return;
   }
   auto it = sources.find(name);

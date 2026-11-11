@@ -5,7 +5,7 @@
 #include <cmath>
 #include <functional>
 #include <string>
-#include "../marks/marks.h"
+#include "../panel/picture_marks.h"
 #include "../panel/fetch.h"
 #include "../panel/json_scan.h"
 #include "../panel/picture_online.h"
@@ -23,9 +23,11 @@ template<typename L> struct Listing : fetch::Asker {
   fetch::Request *make(int) override { return fetch::request<L>(url); }
 };
 
-// From a package's setup: a asked every `every`, like 6h, at least every least_s, with status saying how it went
+// From a package's setup: a asked every `every`, like 6h, at least every least_s, with status saying how it went.
+// With never it's asked once, for something to show.
 template<typename S> void ask_every(fetch::Asker &a, const char *every, S &&status, uint32_t least_s = 600) {
-  a.every_s = std::max<uint32_t>(picture::interval_ms(every) / 1000, least_s);
+  uint32_t every_ms = picture::interval_ms(every);
+  a.every_s = every_ms ? std::max<uint32_t>(every_ms / 1000, least_s) : 10 * 365 * 86400u;
   a.status = ptr_of(status);
   fetch::add(a);
 }
