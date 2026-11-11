@@ -118,9 +118,24 @@ GPIO will do.
 Other server options go in with `!extend server`: `persist_settings` and `persist_runtime_counters` (see
 [Saved settings and counters](#saved-settings-and-counters)) and the [TCP bridge](#optional-extras).
 
-`flexit_ref` selects the branch or tag for both the packages and the component, e.g. `dev` to test a
-branch or a release tag to pin a version. While testing a branch you keep pushing to, set
-`flexit_refresh: 0s` so every build fetches the latest commit.
+Without a `ref` the packages come from the latest release: the `release` branch, the repo's default, moves to
+each new one, and ESPHome looks for it once a day. For a branch or a tag instead, `dev` to test what's coming,
+`main` for what's merged since the release or a tag like `v2.1.1` to stay on a version, set `flexit_ref`. It
+goes for the component too, so give it to the packages as their `ref`:
+
+```yaml
+substitutions:
+  flexit_ref: dev
+  flexit_refresh: 0s   # every build fetches the latest commit, for a branch that keeps changing
+
+packages:
+  flexit:
+    url: https://github.com/MSkjel/esphome-flexit-modbus-server
+    ref: ${flexit_ref}
+    refresh: ${flexit_refresh}
+    files:
+      - packages/core.yaml
+```
 
 `modbus_library_ref` does the same for [ESP-ModbusRTUServer](https://github.com/MSkjel/ESP-ModbusRTUServer),
 the Modbus library the component is built on (default `main`). `flexit_refresh` doesn't apply to it: ESPHome

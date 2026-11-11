@@ -361,6 +361,24 @@ void stage_end(int code, bool no_ram) {
   begin();
 }
 
+std::string release_list(const std::string &url, std::string *file) {
+  static const std::string GITHUB = "https://github.com/", LATEST = "/releases/latest/download/";
+  size_t at = url.find(LATEST);
+  if (url.compare(0, GITHUB.size(), GITHUB) || at == std::string::npos)
+    return "";
+  std::string repo = url.substr(GITHUB.size(), at - GITHUB.size());  // OWNER/REPO
+  *file = url.substr(at + LATEST.size());
+  if (std::count(repo.begin(), repo.end(), '/') != 1 || file->empty() || file->find('/') != std::string::npos)
+    return "";
+  return "https://api.github.com/repos/" + repo + "/releases?per_page=5";
+}
+
+void Newest::value(int, const char *key, int, const char *v) {
+  size_t n = strlen(v), f = file.size();
+  if (url.empty() && !strcmp(key, "browser_download_url") && n > f && v[n - f - 1] == '/' && file == v + n - f)
+    url = v;
+}
+
 bool check_head(const uint8_t *head, size_t n) {
   int32_t v = name_version(head, n);
   if (v < 0)
