@@ -121,8 +121,9 @@ template<typename T> void status(T &sensor, const std::string &s) {
 }
 
 // The status for a K_PIC_ACK's progress, len bytes in all
+inline int percent(uint32_t ack, uint32_t len) { return (int) std::min<uint32_t>(99, (ack & 0xFFFF) * 100 / len); }
 inline std::string progress(const std::string &name, uint32_t ack, uint32_t len) {
-  return "Sending " + name + ": " + std::to_string(std::min<uint32_t>(99, (ack & 0xFFFF) * 100 / len)) + " %";
+  return "Sending " + name + ": " + std::to_string(percent(ack, len)) + " %";
 }
 
 // Also in picture::, where met's code uses them

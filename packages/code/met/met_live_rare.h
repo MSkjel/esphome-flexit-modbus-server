@@ -18,6 +18,14 @@ inline constexpr uint32_t RARE_WAIT = 15000;
 
 inline constexpr int JUMP_TOP = 72;  // the row the ski jumper flies in at
 
+// Where the jumper is u of the way, 0 to 1, down to landing at column land, row low: in from the right, ever steeper
+struct Flight {
+  int x, y;
+};
+inline Flight flight(int land, int low, float u) {
+  return {322 - (int) ((322 - land) * u), JUMP_TOP + (int) ((low - JUMP_TOP) * u * u * u * u)};
+}
+
 // What the encounters keep of the picture, from the last apply()
 struct Seen {
   At at;
@@ -26,7 +34,7 @@ struct Seen {
   int16_t moon_up = -1;         // the moon's x when it's up at all
   float moon_phase;             // 0 new, 0.5 full
   bool town;
-  int16_t roof_x = -1, roof_y;       // the middle of the cabin's ridge, -1 without the cabin
+  int16_t cabin_x = -1, cabin_y;     // the cabin's middle and its foundation's row, -1 without the cabin
   int16_t sea_l, sea_r = -1, sea_y;  // open water along row sea_y, the 8 above it and 2 under, sea_r < sea_l without
   NearHill hill;
   NearHill ridge;                 // the skyline, the land's top against the sky
@@ -50,14 +58,14 @@ inline void rare_seen(const Scene &s) {
   e.town = s.ground == G_CITY;
   e.coast = s.ground == G_COAST;
   e.edge = e.town ? Edge() : forest_edge(s);
-  e.roof_x = (int16_t) (s.cabin ? s.cabin_x : -1);
-  e.roof_y = (int16_t) (s.cabin_y - 25);
+  e.cabin_x = (int16_t) (s.cabin ? s.cabin_x : -1);
+  e.cabin_y = s.cabin_y;
   e.hill = NearHill(s);
   // The land's longest stretch under the forecast that's no steeper than 45 degrees and has nothing above it but the
   // sky and the far mountains: no sea behind, nothing standing up out of it that should be in front of what walks
   // along it
   uint8_t top[W], sky[W];
-  skyline(s, sky, false);
+  skyline(s, sky, 1);
   Cols walk;
   for (int x = 0; x < W; x++) {
     top[x] = std::min({s.land->hill[0][x], s.land->hill[1][x], s.land->hill[2][x]});
@@ -77,14 +85,13 @@ inline void rare_seen(const Scene &s) {
   e.jump_x = -1;
   if (s.ground == G_HILLS && e.edge.x >= 0) {
     uint8_t stands[W];
-    skyline(s, stands, false);
+    skyline(s, stands, 1);
     int land = e.edge.x + 15, low = e.hill.at(land + 11) - 12;
     bool clear = true;
     for (int k = 0; k <= 16 && clear; k++) {
-      float u = k / 20.0f;
-      int x = 322 - (int) ((322 - land) * u), y = JUMP_TOP + (int) ((low - JUMP_TOP) * u * u * u * u);
-      for (int c = std::max(0, x); c < std::min(W, x + 22); c++)
-        clear = clear && y + 13 < stands[c];
+      Flight f = flight(land, low, k / 20.0f);
+      for (int c = std::max(0, f.x); c < std::min(W, f.x + 22); c++)
+        clear = clear && f.y + 13 < stands[c];
     }
     if (clear)
       e.jump_x = (int16_t) land;
@@ -108,10 +115,7 @@ inline void rare_seen(const Scene &s) {
     return;
   // Its waterline as near as there's 100 px of open water from there up to its head, or up to the horizon, which it
   // may stand out against, and two rows under it, so it isn't sitting on something nearer
-  int shore = H, sea = s.sea_top;
-  for (int x = 0; x < W; x++)
-    if (s.land->hill[1][x] >= sea + 20)
-      shore = std::min<int>(shore, s.land->hill[1][x]);
+  int shore = shore_row(s), sea = s.sea_top;
   std::vector<Cols> open;
   for (int y = sea; y <= shore - 3; y++)
     open.push_back(water(s, y, y, false));
@@ -210,8 +214,8 @@ inline void blown(const char *n, float turn) {
 // while, shines its beam down and is off up and away in a moment
 inline void saucer() {
   const Seen &e = SEEN;
-  int x = e.roof_x - 10, base = e.roof_y;  // the beam's end
-  if (e.roof_x < 0 || (e.moon_up >= 0 && abs(e.roof_x - e.moon_up) < 40)) {
+  int x = e.cabin_x + (RIDGE_L + RIDGE_R) / 2 - 10, base = e.cabin_y - CABIN_RIDGE;  // the beam's end, on the ridge
+  if (e.cabin_x < 0 || (e.moon_up >= 0 && abs(x + 10 - e.moon_up) < 40)) {
     for (int k = 0; k < 8; k++) {
       x = (int) rnd(20, W - 41);
       if (e.moon_up < 0 || abs(x + 10 - e.moon_up) >= 40)
@@ -303,10 +307,10 @@ inline void huldra() {
 }
 
 // A nisse walks along the snow below the cabin toward it with his lantern, stops to hold it up and look about, and
-// walks on up round the cabin's corner, out of sight, his feet on its floor's row
+// walks on up round the cabin's corner, out of sight, his feet on its foundation's row
 inline void nisse() {
   const Seen &e = SEEN;
-  int x1 = e.roof_x - 15, y1 = e.roof_y + 18, x = x1 - 28, y = e.roof_y + 31, on = ms_of("nisse", 0, 17);
+  int x1 = e.cabin_x + CABIN_L - 2, y1 = e.cabin_y - 7, x = x1 - 28, y = y1 + 13, on = ms_of("nisse", 0, 17);
   rare_on("nisse", 0.35f, x, y, R"(
     move x + 13, y over walk
     wait on
@@ -325,26 +329,27 @@ inline void nisse() {
 }
 
 // Draugen rows his half boat along the open water on a windy night, rising and falling on the swell
-inline void draugen() { on_the_water("draugen", 12, 7, 2, 70, 0.35f); }
+inline void draugen() { on_the_water("draugen", 20, 11, 2, 70, 0.35f); }
 
 // Two orcas surface in turn off the coast in the north in winter, drifting along at 2 px/s, a round of their frames
 inline void orcas() { on_the_water("orcas", 24, 7, 2, ms_of("orcas") * 2 / 1000, 0.5f, true); }
 
 // A lynx walks out of the forest from behind the spruce at its edge along the near hill at twilight, stopping to look
 // at you and behind it, short of the cabin, then turns and walks back into the trees: a stride a round of its frames
+inline constexpr int LYNX_UP = 9;  // its top over the hill it walks on
 inline void lynx() {
   const Seen &e = SEEN;
-  int x = in_forest(e, "lynx", 6), walks = 2;
-  if (e.roof_x >= 0)
-    walks = std::clamp((e.roof_x - 29 - x) / 13, 1, 2);
+  int x = in_forest(e, "lynx", LYNX_UP), walks = 2;
+  if (e.cabin_x >= 0)
+    walks = std::clamp((e.cabin_x + CABIN_L - 20 - x) / 13, 1, 2);
   std::string t;
   for (int i = 0; i < 2 * walks; i++) {
     bool back = i >= walks;
     int to = x + 13 * (back ? 2 * walks - i - 1 : i + 1);
-    t += std::string(i == walks ? "flip x\n" : "") + "move " + num(to) + ", " + num(e.hill.at(to + 6) - 6) +
+    t += std::string(i == walks ? "flip x\n" : "") + "move " + num(to) + ", " + num(e.hill.at(to + 8) - LYNX_UP) +
          " over 2600\n" + (i < 2 * walks - 1 ? "wait rounds 1\n" : "wait walk\n");
   }
-  rare_on("lynx", 0.5f, x, e.hill.at(x + 6) - 6, t + "end fade 0", {{"walk", ms_of("lynx", 0, 12)}},
+  rare_on("lynx", 0.5f, x, e.hill.at(x + 8) - LYNX_UP, t + "end fade 0", {{"walk", ms_of("lynx", 0, 12)}},
           {.fade = 0, .depth = D_NEAR_ON});
 }
 
@@ -382,9 +387,8 @@ inline void ski_jump() {
   int land = e.jump_x, low = e.hill.at(land + 11) - 12, fly = ms_of("skijumper", 0, 8), all = ms_of("skijumper");
   std::string t;
   for (int k = 1; k <= 10; k++) {  // down the curve a tenth of the flight at a time
-    float u = k / 10.0f;
-    int x = 322 - (int) ((322 - land) * u), y = JUMP_TOP + (int) ((low - JUMP_TOP) * u * u * u * u);
-    t += path({{x, y, fly / 10}});
+    Flight f = flight(land, low, k / 10.0f);
+    t += path({{f.x, f.y, fly / 10}});
   }
   rare_on("skijumper", 0, 322, JUMP_TOP, t + R"(
     move x, low over rest ease out
@@ -440,7 +444,7 @@ inline const Rare RARE[] = {
      huldra},
     {"a nisse", 0.05f, 13000,
      [](const Seen &e) {
-       return e.roof_x >= 0 && e.at.month == 12 && e.at.day < 24 && e.at.dark && e.at.white && dry(e);
+       return e.cabin_x >= 0 && e.at.month == 12 && e.at.day < 24 && e.at.dark && e.at.white && dry(e);
      },
      nisse},
     {"draugen", 0.03f, 42000,
@@ -451,7 +455,8 @@ inline const Rare RARE[] = {
               e.at.wind < 8 && dry(e);
      },
      orcas},
-    {"a lynx", 0.03f, 24000, [](const Seen &e) { return twilight(e) && dry(e) && in_forest(e, "lynx", 6) >= 0; }, lynx},
+    {"a lynx", 0.03f, 24000, [](const Seen &e) { return twilight(e) && dry(e) && in_forest(e, "lynx", LYNX_UP) >= 0; },
+     lynx},
     {"a sea eagle's catch", 0.04f, 10000,
      [](const Seen &e) {
        return e.sea_r > e.sea_l && e.at.sun_el > 0 && e.at.light > 0.5f && e.at.wind < 10 && dry(e);

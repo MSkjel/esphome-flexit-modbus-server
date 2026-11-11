@@ -10,12 +10,12 @@ namespace flexit::panel::met::live {
 inline int smoke_drift(const Scene &s) { return std::min(60, 10 + (int) (s.at.wind * 4)); }
 
 // What the land shows are made of, so they start again when it changes: the cabin, so the landscape, then the way
-// the wind blows, then the smoke's puffs, drift and colour and December
+// the wind blows, then the smoke's puffs, drift and colour and Christmas
 inline uint32_t cabin_at(const Scene &s) { return (uint32_t) s.cabin_x << 8 | (uint32_t) s.cabin_y; }
 inline uint32_t cabin_wind(const Scene &s) { return cabin_at(s) | (uint32_t) (s.at.wdir > 0) << 17; }
 inline uint32_t cabin_smoke(const Scene &s) {
   return cabin_wind(s) | (uint32_t) s.puffs << 18 | (uint32_t) smoke_drift(s) / 8 << 21 |
-         (uint32_t) (s.at.dark + (s.at.light < 0.5f)) << 25 | (uint32_t) (s.at.month == 12) << 27;
+         (uint32_t) (s.at.dark + (s.at.light < 0.5f)) << 25 | (uint32_t) s.at.yule << 27;
 }
 
 inline constexpr int GLIDE_IN = 21000, FLY_OFF = 17000;  // a visiting gull's glide in and flight off, ms
@@ -65,31 +65,35 @@ inline uint32_t crow_visit(int x, int y) {
   return (uint32_t) (4300 + 2200 + ms_of("crow", "sit") + 5000);
 }
 
-// A red squirrel's visit to the roof: it bounds along the hill from off the left through the forest, up the roof's
-// left side to the ridge, sits there nibbling a nut, and runs back down and off the way it came, the chimney being
-// on the right. cx, cy are the cabin's. The ms it takes.
+// A red squirrel's visit to the roof: it bounds along the hill from off the left through the forest, up the gable's
+// left side to the ridge and along it, sits there nibbling a nut, and runs back down and off the way it came, the
+// chimney being on the right. cx, cy are the cabin's. The ms it takes.
 inline uint32_t squirrel_visit(const NearHill &h, int cx, int cy) {
   in_light("squirrel");
   const Frames *f = frames_of("squirrel");
-  int x0 = -(f ? f->w : 0) - 2, foot = cx - 24, run = (foot - x0) * 1000 / 14;
+  int x0 = -(f ? f->w : 0) - 2, foot = cx + EAVES_L - 9, run = (foot - x0) * 1000 / 14;
   Walk up = walk(h, x0, foot, 14, 4, 4);
   place("squirrel", 0, x0, up.y[0], R"(
     clip run
     b = n; d = 1; t = leg
   )" + up.loop("up") + R"(
     depth 255              # up onto the eaves, in front of the roof
-    move cx - 18, cy - 21 over 300
+    move eaves, ey over 300
     wait 300
-    move cx - 4, cy - 29 over 1400
-    wait 1400
+    move top, ry over 900
+    wait 900
+    move nut - 2, ry over 500
+    wait 500
     clip nut
-    move cx - 2, cy - 32
+    move nut, ry - 3
     wait rounds 1
     flip x
     clip run
-    move cx - 5, cy - 29
-    move cx - 18, cy - 21 over 1400
-    wait 1400
+    move nut - 3, ry
+    move top, ry over 500
+    wait 500
+    move eaves, ey over 900
+    wait 900
     move foot, fy over 300
     wait 300
     depth behind           # behind the trees
@@ -99,8 +103,11 @@ inline uint32_t squirrel_visit(const NearHill &h, int cx, int cy) {
   )",
         {{"n", up.n},
          {"leg", up.leg(14)},
-         {"cx", cx},
-         {"cy", cy},
+         {"eaves", cx + EAVES_L - 3},
+         {"ey", cy - CABIN_EAVES - 5},  // its 5 rows on the eaves' end, then on the ridge
+         {"top", cx + RIDGE_L - 6},
+         {"ry", cy - CABIN_RIDGE - 5},
+         {"nut", cx + RIDGE_L + 5},
          {"foot", foot},
          {"fy", up.y[up.n]},
          {"behind", D_NEAR_ON},
@@ -108,23 +115,28 @@ inline uint32_t squirrel_visit(const NearHill &h, int cx, int cy) {
          {"y0", up.y[0]},
          {"run", run}},
         {.depth = D_NEAR_ON});
-  return (uint32_t) (up.n * up.leg(14) + 1700 + ms_of("squirrel", "nut") + 1700 + run);
+  return (uint32_t) (up.n * up.leg(14) + 2 * (300 + 900 + 500) + ms_of("squirrel", "nut") + run);
 }
 
-// Gulls, and about every 7 minutes a visitor on the cabin's ridge: a gull glides in against the wind, lands, looks
-// about, preens and takes off again, a hooded crow comes to caw, or a red squirrel runs up over the roof
-inline void gulls(const Scene &s) {
-  flock({{60, 120, 6, 10, 100, 150}, {230, 105, 5, 8, 95, 140}});
-  bool from_right = s.at.wdir > 0;
-  int x = s.cabin_x - (from_right ? 6 : 8), y = s.cabin_y - 40;  // the roof's top row under its feet
-  int cx = s.cabin_x, cy = s.cabin_y;
+// Gulls by the sea and hooded crows inland, and about every 7 minutes a visitor on the cabin's ridge: a crow comes
+// to caw, a red squirrel runs up over the roof, or by the sea a gull glides in against the wind, lands, looks about,
+// preens and takes off again
+inline void roof_birds(const Scene &s) {
+  bool sea = s.ground == G_COAST, from_right = s.at.wdir > 0;
+  if (sea) {
+    flock("gull", 0, "", {{60, 120, 6, 10, 100, 150}, {230, 105, 5, 8, 95, 140}});
+  } else {  // the crow that visits is copy 0
+    in_light("crow");
+    flock("crow", 1, "fly", {{70, 112, 8, 12, 96, 140}, {240, 100, 7, 11, 92, 134}});
+  }
+  int cx = s.cabin_x, cy = s.cabin_y, x = cx + RIDGE_L, ry = ridge_y(s);  // they stand on the ridge left of the chimney
   NearHill h(s);
-  visitors(minutes(7), minutes(0.5f, 3), 3, [=](int k) {
+  visitors(minutes(7), minutes(0.5f, 3), sea ? 3 : 2, [=](int k) {
+    if (k == 0)
+      return crow_visit(x + 7, ry - 8);
     if (k == 1)
-      return crow_visit(cx - 5, cy - 34);
-    if (k == 2)
       return squirrel_visit(h, cx, cy);
-    return gull_visit(x, y, from_right);
+    return gull_visit(x + (from_right ? 6 : 4), ry - 14, from_right);
   });
 }
 
@@ -133,12 +145,12 @@ inline void stove_smoke(const Scene &s, const char *name) {
   chimney(name, s.puffs, s.chimney.x, s.chimney.y, 52, smoke_drift(s), s.at.wdir);
 }
 
-// A magpie hops about the meadow in front of the cabin a while, in the gap between the date and the temperatures,
-// from row top, its hops in step with its frames. The ms it's there.
-inline uint32_t magpie(int top) {
-  in_light("magpie");
+// A magpie or a wagtail, n, hops about the meadow in front of the cabin a while, in the gap between the date and the
+// temperatures, from row top, its hops in step with its frames. The ms it's there.
+inline uint32_t lawn_bird(const char *n, int top) {
+  in_light(n);
   int l = DATE_R + 2, r = GAP_R;
-  place("magpie", 0, (int) rnd((float) l, (float) (r - 10)), (int) rnd((float) (top - 2), (float) (top + 8)), R"(
+  place(n, 0, (int) rnd((float) l, (float) (r - 10)), (int) rnd((float) (top - 2), (float) (top + 8)), R"(
     area l, top - 2, r, top + 15 bounce
     face 0 mirror level
     wander 8, 8, 0, 180, hop, hop, rest, rest
@@ -146,18 +158,18 @@ inline uint32_t magpie(int top) {
     wait 60000
     end
   )",
-        {{"l", l}, {"r", r}, {"top", top}, {"hop", ms_of("magpie", 0, 5)}, {"rest", ms_of("magpie", 5)}});
+        {{"l", l}, {"r", r}, {"top", top}, {"hop", ms_of(n, 0, 5)}, {"rest", ms_of(n, 5)}});
   return 60000;
 }
 
-// Smoke from the stove, by the heat, in December a paper star in the window, and by day now and then a magpie
+// Smoke from the stove, by the heat, through Christmas a paper star in the window, and by day now and then a magpie
 inline void smoke(const Scene &s) {
   stove_smoke(s, s.at.dark ? "puffnight" : s.at.light < 0.5f ? "puffdusk" : "puff");
-  if (s.at.month == 12)
+  if (s.at.yule)
     place("adventstar", 0, window_x(s), window_y(s));
   int top = meadow(s);
   if (!s.at.dark)
-    visitors(minutes(6), minutes(1, 4), 1, [top](int) { return magpie(top); });
+    visitors(minutes(6), minutes(1, 4), 1, [top](int) { return lawn_bird("magpie", top); });
 }
 
 // Copy 0 of n walks in from off one side along row y at speed px/s to stop, its walk clip's frames, where it's a
@@ -210,42 +222,48 @@ inline void cosy(const Scene &s) {
   });
 }
 
-// A moose comes in along the meadow from x0 to x1, grazes there and goes back. MOOSE_DY puts it in the meadow in
-// front of the cabin, its back a little under the cabin's floor. The ms it takes.
+// A moose, n, comes in along the meadow from x0 to x1, grazes there and goes back, a cow with her calf behind her,
+// which is her at three fifths the size. MOOSE_DY puts it in the meadow in front of the cabin, its back a little
+// under the cabin's floor. The ms it takes.
 inline constexpr int MOOSE_DY = -6;
-inline uint32_t moose_visit(const NearHill &h, int x0, int x1) {
+inline uint32_t moose_visit(const NearHill &h, const char *n, bool calf, int x0, int x1) {
   bool right = x1 < x0;  // it came from the right
-  in_light("moose");
-  Walk w = walk(h, x0, x1, 3, 10, MOOSE_DY);
-  place("moose", 0, x0, w.y[0],
-        R"(
-    clip walk
-    b = n; d = 1; t = in
-  )" + w.loop("go") +
-            R"(
-    if k == 0 goto gone
-    clip graze
-    move x1, v
-    wait 24000
-    flip )" +
-            (right ? "none" : "x") + R"(
-    clip walk
-    b = 0; d = -1; t = back
-    goto go
-  gone:
-    end
-  )",
-        {{"n", w.n}, {"in", w.leg(3)}, {"back", w.leg(2.9f)}, {"x1", x1}}, {.left = right});
-  return (uint32_t) (w.n * (w.leg(3) + w.leg(2.9f)) + 24000);
+  in_light(n, 0.6f);     // not as dark as the dusk, or it's lost against the hill
+  uint32_t ms = 0;
+  for (int i = 0; i <= calf; i++) {
+    int behind = i * (right ? 20 : -20);
+    Walk w = walk(h, x0 + behind, x1 + behind, 3, 10, MOOSE_DY);
+    place(n, i, x0 + behind, w.y[0],
+          std::string(i ? "pivot 50, 100\nglide size 60\n" : "") + R"(
+      clip walk
+      b = n; d = 1; t = in
+    )" + w.loop("go") +
+              R"(
+      if k == 0 goto gone
+      clip graze
+      move x1, v
+      wait 24000
+      flip )" +
+              (right ? "none" : "x") + R"(
+      clip walk
+      b = 0; d = -1; t = back
+      goto go
+    gone:
+      end
+    )",
+          {{"n", w.n}, {"in", w.leg(3)}, {"back", w.leg(2.9f)}, {"x1", x1 + behind}}, {.left = right});
+    ms = std::max(ms, (uint32_t) (w.n * (w.leg(3) + w.leg(2.9f)) + 24000));
+  }
+  return ms;
 }
 
 // A roe deer bounds out of the forest at its edge, e, and grazes, lifting its head to look about, then bounds back
 // into the trees. The ms it takes.
-inline uint32_t roe_deer(Edge e) {
-  in_light("roedeer");
-  int x = e.x + 11, y = e.y - 6;
-  int in = out_of(e, "roedeer", y - 1), run = (x - in) * 1000 / 29;  // its bounds at 29 px/s
-  place("roedeer", 0, in, y - 1, R"(
+inline uint32_t roe_deer(const char *n, Edge e) {
+  in_light(n, 0.6f);  // as the moose
+  int x = e.x + 11, y = e.y - 10;
+  int in = out_of(e, n, y - 1), run = (x - in) * 1000 / 29;  // its bounds at 29 px/s
+  place(n, 0, in, y - 1, R"(
     clip run
     move x - 1, y - 1 over run
     wait run
@@ -260,19 +278,25 @@ inline uint32_t roe_deer(Edge e) {
     end
   )",
         {{"x", x}, {"y", y}, {"run", run}, {"in", in}}, {.depth = D_NEAR_ON});
-  return (uint32_t) (2 * run + 2 * ms_of("roedeer", "graze"));
+  return (uint32_t) (2 * run + 2 * ms_of(n, "graze"));
 }
 
 // Now and then at dusk a moose comes along the meadow from off one side, grazes a while in front of the cabin, in the
-// gap between the clock and the temperatures, and goes back. And a roe deer at the forest's edge.
+// gap between the clock and the temperatures, and goes back: a bull with his antlers from June till the year is out,
+// in summer as often a cow with her calf, and from January one without antlers. And a roe deer at the forest's edge,
+// grey from November to April.
 inline void moose(const Scene &s) {
   Edge e = forest_edge(s);
+  const char *roe = s.at.month >= 11 || s.at.month <= 4 ? "roedeerw" : "roedeer";
   if (e.x >= 0)
-    visitors(minutes(9), minutes(1, 6), 1, [e](int) { return roe_deer(e); });
+    visitors(minutes(9), minutes(1, 6), 1, [roe, e](int) { return roe_deer(roe, e); });
   int graze = std::clamp<int>(s.cabin_x - 51, DATE_R, GAP_R - 62);  // the 62 px it takes, centred on the cabin
+  bool antlers = s.at.month >= 6, summer = antlers && s.at.month <= 8;
   NearHill h(s);
-  sometimes(minutes(12), (uint32_t) rnd(20000, 240000),
-            [=] { return moose_visit(h, chance(0.5f) ? W + 2 : -26, graze); });
+  sometimes(minutes(12), (uint32_t) rnd(20000, 240000), [=] {
+    bool calf = summer && chance(0.5f);
+    return moose_visit(h, antlers && !calf ? "moose" : "moosecow", calf, chance(0.5f) ? W + 2 : -26, graze);
+  });
 }
 
 // Three reindeer, each in its own patch of the meadow along the bottom, in front of everything and under the
@@ -345,8 +369,9 @@ inline void reindeer(const Scene &s) {
   Herd h = herd(s);
   graze(h);
   int y = s.cabin_y + 2, top = std::min(s.cabin_y + 20, H - 12);
+  bool white = s.at.white;  // not s, which a [=] would keep whole
   visitors(minutes(8), minutes(1, 6), 2,
-           [=](int k) { return k ? ptarmigan(s.at.white ? "ptarmiganw" : "ptarmigan", top) : hike(y); });
+           [=](int k) { return k ? ptarmigan(white ? "ptarmiganw" : "ptarmigan", top) : hike(y); });
   sometimes(minutes(10), minutes(1, 8), [] { return soar("eagle", 42, 40, 10); });
 }
 
@@ -431,15 +456,16 @@ inline void skier(const Scene &s) {
       ends[(int) rnd(0, 16)] = end;
     }
   };
-  if (s.cabin) {  // the eaves, the roof's lowest row
-    end_at(s.cabin_x - 16, s.cabin_y - 16, -1);
-    end_at(s.cabin_x + 16, s.cabin_y - 16, 1);
-  }
-  for (int i : near_trees(s, 0))
-    for (int d = 13; s.tree[i].top + d <= s.tree[i].base; d++)  // the snowy tiers but the top one
-      if (snow_tier(d))
+  if (s.cabin)  // the eaves' ends
+    for (int side = -1; side <= 1; side += 2)
+      end_at(s.cabin_x + (side < 0 ? EAVES_L : EAVES_R), s.cabin_y - CABIN_EAVES, side);
+  for (int i : near_trees(s, 0)) {
+    Spruce spruce(s.tree[i].base - s.tree[i].top);
+    for (int d = 13; d < spruce.crown; d++)  // the snowy tiers that are wide enough
+      if (spruce.snow(d))
         for (int side = -1; side <= 1; side += 2)
-          end_at(s.tree[i].x + side * spruce_hw(d), s.tree[i].top + d, side);
+          end_at(s.tree[i].x + side * spruce.hw(d), s.tree[i].top + d, side);
+  }
   if (g) {
     std::copy(gap, gap + g, ends);
     n = g;
@@ -461,7 +487,7 @@ inline void skier(const Scene &s) {
     if (k == 2)
       return edge.x >= 0 ? hare_out(h, edge) : 0;
     if (k == 3)
-      return magpie(top);
+      return lawn_bird("magpie", top);
     return kick_sled(kick);
   });
 }
@@ -496,26 +522,29 @@ inline uint32_t mow(int y) {
 }
 
 // Three sheep grazing on the middle hill's face for the while the show's on, shifting a little now and then, but
-// for the town
-inline void sheep(const Scene &s) {
+// for the town. With lambs there are three more beside them at half the size.
+inline void sheep(const Scene &s, bool lambs) {
   int x = GAP_L + 5, mid = s.land->hill[1][x + 14], near = s.land->hill[2][x + 14];
   if (s.ground == G_CITY || near - mid < 12)
     return;
   int y = (mid + near) / 2 - 3;
   in_light("sheep");
-  place("sheep", 0, x, y, "area x - 4, y, x + 33, y + 6 bounce; wander 0.3, 0.3, 0, 180, 3000, 3000, 6000, 12000",
-        {{"x", x}, {"y", y}}, {.fade = 2000, .depth = D_MID_ON});
+  for (int i = 0; i <= lambs; i++)
+    place("sheep", i, x + 5 * i, y + 3 * i,
+          std::string(i ? "pivot 50, 100; glide size 50; flip x; " : "") +
+              "area x - 4, y, x + 33, y + 6 bounce; wander 0.3, 0.3, 0, 180, 3000, 3000, 6000, 12000",
+          {{"x", x + 5 * i}, {"y", y + 3 * i}}, {.fade = 2000, .depth = D_MID_ON});
 }
 
-// Two small tortoiseshells and a brimstone over the meadow in front of home, under the near hill's top and between
-// the date and the temperatures. They flutter for as long as their frames do and sit for as long as they sit. Sheep
-// on the hillside, and now and then swallows swooping by or the mower out on the lawn.
-inline void butterflies(const Scene &s) {
+// Butterflies over the meadow in front of home, under the near hill's top and between the date and the
+// temperatures, a little after one another: n of them, the first tortoises small tortoiseshells and the rest
+// brimstones. They flutter for as long as their frames do and sit for as long as they sit. The meadow's top row.
+inline int flutter(const Scene &s, int tortoises, int n) {
   int l = DATE_R + 2, r = GAP_R - 2;
   int top = std::max(s.cabin_y + 1, hill_low(s, l, r) + 3), bot = std::min(H - 2, top + 28);
-  for (int k = 0; k < 3; k++) {  // a little after one another
-    const char *n = k < 2 ? "butterfly" : "brimstone";
-    place(n, k & 1, l + (r - l) * (2 * k + 1) / 6, (int) rnd(top, bot - 6),
+  for (int k = 0; k < n; k++) {
+    const char *name = k < tortoises ? "butterfly" : "brimstone";
+    place(name, k < tortoises ? k : k - tortoises, l + (r - l) * (2 * k + 1) / (2 * n), (int) rnd(top, bot - 6),
           std::string(k ? "glide opacity 0\n" : "") + R"(
       area l, top, r, bot bounce
       wait after
@@ -527,13 +556,78 @@ inline void butterflies(const Scene &s) {
            {"r", r},
            {"bot", bot},
            {"after", k * 2300},
-           {"fly", ms_of(n, 0, 24)},
-           {"sit", ms_of(n, 24)}});  // its 24 fluttering frames, then sitting
+           {"fly", ms_of(name, 0, 24)},
+           {"sit", ms_of(name, 24)}});  // its 24 fluttering frames, then sitting
   }
-  sheep(s);
-  bool lawn = s.cabin;
-  int y = s.cabin_y + 1, low = std::min(top + 2, H - 28);
-  visitors(minutes(6), minutes(1, 5), 2, [=](int k) -> uint32_t { return k ? (lawn ? mow(y) : 0) : swallows(low); });
+  return top;
+}
+
+// Two small tortoiseshells and a brimstone over the meadow, sheep on the hillside, and now and then swallows
+// swooping by or the mower out on the lawn
+inline void butterflies(const Scene &s) {
+  int top = flutter(s, 2, 3), y = s.cabin_y + 1, low = std::min(top + 2, H - 28);
+  sheep(s, false);
+  visitors(minutes(6), minutes(1, 5), 2, [=](int k) { return k ? mow(y) : swallows(low); });
+}
+
+// A V of geese far up, small, slow and hazy, across to the right, or to the left. The ms it takes.
+inline uint32_t geese_by(bool left) {
+  int x0 = left ? W + 10 : -30, x1 = left ? -30 : W + 10;
+  std::initializer_list<Leg> legs = {{x0 + (x1 - x0) / 4, 28, 35000},
+                                     {x0 + (x1 - x0) / 2, 26, 35000},
+                                     {x0 + (x1 - x0) * 3 / 4, 24, 35000},
+                                     {x1, 22, 35000}};
+  place("geese", 0, x0, 30, "glide opacity 70\nwave y -2, 2, 6000, 6000 jitter 20 slow both\n" + path(legs) + "end", {},
+        {.left = left});
+  return (uint32_t) path_ms(legs);
+}
+
+// Spring: the ewes have their lambs with them on the hillside and a brimstone is out over the meadow. Now and then
+// a wagtail runs about the lawn wagging its tail, or the geese come back north
+inline void spring(const Scene &s) {
+  flutter(s, 0, 1);
+  sheep(s, true);
+  int lawn = meadow(s);
+  visitors(minutes(5), minutes(0.5f, 3), 2, [lawn](int k) { return k ? geese_by(true) : lawn_bird("wagtail", lawn); });
+}
+
+// A small bird, n, comes to the julenek at nek after a while: it flies in from off one side to the sheaf, dx from
+// its middle and dy rows down, pecks at the oats, flits across to the other side of it, pecks on and flies off the
+// way it came. The ms it takes.
+inline uint32_t to_the_nek(const char *n, Pt nek, int dx, int dy, bool left, int after) {
+  in_light(n);
+  int y = nek.y + dy - 5, x0 = left ? W + 4 : -10, in = 4500, hop = 400, off = 4000;
+  place(n, 0, x0, y - 34, "wait after\nclip fly\n" + path({{nek.x + dx - 3, y, in, "out"}}) + R"(
+    clip sit
+    wait rounds 2
+    clip fly
+    move over, y over hop
+    wait hop
+    clip sit
+    wait rounds 2
+    flip x
+    clip fly
+    move x0, y - 44 over off ease in
+    wait off
+    end
+  )",
+        {{"after", after}, {"over", nek.x - dx - 3}, {"y", y}, {"hop", hop}, {"x0", x0}, {"off", off}}, {.left = left});
+  return (uint32_t) (after + in + hop + off + 4 * ms_of(n, "sit"));
+}
+
+// Through Christmas the small birds come to the julenek: a bullfinch cock and his hen and a great tit fly in one
+// after the other, peck at the oats and fly off again, and now and then a magpie is about under it
+inline void julenek(const Scene &s) {
+  Pt nek = s.nek;
+  int top = meadow(s);
+  visitors(minutes(2), minutes(0.1f, 0.5f), 3, [nek, top](int k) {
+    if (k == 2)
+      return lawn_bird("magpie", top);
+    bool left = chance(0.5f);
+    uint32_t ms = to_the_nek("bullfinch", nek, -4, 2, left, 0);
+    ms = std::max(ms, to_the_nek("finchhen", nek, 4, 2, !left, 2500));
+    return std::max(ms, to_the_nek("tit", nek, -3, 7, left, 6000));
+  });
 }
 
 // A leaf lies on the grass and a gust now and then tumbles it along, low, in rows top to bot, its tumbles in step
@@ -617,19 +711,12 @@ inline void leaves(const Scene &s) {
             k);
       return (uint32_t) FALL;
     });
-  sometimes(minutes(15), minutes(1, 10), [] {
-    std::initializer_list<Leg> legs = {{-30 + (W + 40) / 4, 28, 35000},
-                                       {-30 + (W + 40) / 2, 26, 35000},
-                                       {-30 + (W + 40) * 3 / 4, 24, 35000},
-                                       {W + 10, 22, 35000}};
-    place("geese", 0, -30, 30, "glide opacity 70\nwave y -2, 2, 6000, 6000 jitter 20 slow both\n" + path(legs) + "end");
-    return (uint32_t) path_ms(legs);
-  });
+  sometimes(minutes(15), minutes(1, 10), [] { return geese_by(false); });
   NearHill h(s);
   Edge edge = forest_edge(s);
   const Frames *f = frames_of("mushroomer");
   int x0 = edge.x >= 0 && f ? edge.hide(f->w, f->h, h.at(edge.tx) + f->h - 9) : -1, y = std::min(top + 1, H - 6);
-  if (!s.cabin || x0 + 26 + (f ? f->w : 0) > s.cabin_x - 17)  // its strides clear of the cabin
+  if (!s.cabin || x0 + 26 + (f ? f->w : 0) >= s.cabin_x + EAVES_L)  // its strides clear of the cabin
     x0 = -1;
   visitors(minutes(6), minutes(1, 5), 2,
            [=](int k) -> uint32_t { return k ? (x0 >= 0 ? mushrooms(h, x0) : 0) : squirrel_by(y); });

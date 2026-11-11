@@ -221,40 +221,45 @@ static void crow_flying(const Canvas &c, int k, int ox, int oy, bool legs) {
   if (legs)
     crow_rows(c, "k.k", ox + 5, oy + 5);
 }
-// An eagle's colours: its darkest, brown, its light coverts, its head or nape, yellow, black, its tail, its eye and
-// a golden eagle's dark face
-static void eagle_rows(const Canvas &c, const char *art, bool sea) {
+// An eagle's colours: its darkest, brown, its light coverts, its head, yellow, black, its tail and a sea eagle's eye
+static void eagle_rows(const Canvas &c, const char *art, bool sea, int ox = 0, int oy = 0) {
   if (sea)
-    rows(c, art, "dblpykweh",
-         {0x2A1E14, 0x5A4430, 0x86684A, 0xE2D6B4, 0xF0C030, 0x1A1410, 0xF6F6F2, 0x3A2A1A, 0xE2D6B4});
+    rows(c, art, "dblpykwe", {0x2A1E14, 0x5A4430, 0x86684A, 0xE2D6B4, 0xF0C030, 0x1A1410, 0xF6F6F2, 0x3A2A1A}, ox, oy);
   else
-    rows(c, art, "dblpykweh",
-         {0x241810, 0x4A3424, 0x7A5E40, 0xC8964A, 0xE8C040, 0x2A2A2E, 0x3A2C22, 0x141010, 0x3A2A1C});
+    rows(c, art, "dblpykw", {0x241810, 0x4A3424, 0x7A5E40, 0xC8964A, 0xE8C040, 0x2A2A2E, 0x3A2C22}, ox, oy);
 }
-// An eagle from the side flying right, but for its near wing: a white-tailed sea eagle's big pale head, heavy yellow
-// bill and short white tail, or a golden eagle, dark with its crown and nape golden and its tail long
-static void eagle_body(const Canvas &c, bool sea) {
+// An eagle from below, gliding to the right: broad wings out to both sides, their fingers apart, and a fan of a
+// tail. k: 0 gliding, 1 its wingtips swept back, 2 in a beat with its wings shorter. A sea eagle has a pale head, a
+// heavy yellow bill and a white tail, a golden eagle a golden head and a dark tail
+static void eagle_soaring(const Canvas &c, int k, bool sea) {
+  // a wing from its tip in to the body, its coverts along the leading edge, the other wing its mirror
+  static const char *const WING[] = {".....k.k.k",  "....k.k.k.k", "....kkkkkkk", "....ddddlll",
+                                     "....ddddlll", "...dddddlll", "...dddddlll", "...dddddlll",
+                                     "...dddddlll", "...ddddllll", "....dddllll"};
+  for (int i = 0; i < 11; i++) {
+    int y = k == 2 && i < 4 ? i + 3 : i;  // in a beat the hand comes in over the arm
+    for (int side = 0; side < 2 && !(k == 2 && i >= 4 && i < 7); side++)
+      eagle_rows(c, WING[i], sea, k == 1 && i < 4 ? -1 : 0, side ? 22 - y : y);
+  }
+  eagle_rows(c, sea ? "w|ww.........p|wwwbbbbbbbbppy|ww.........pyy|w" : "w|ww.........p|wwwbbbbbbbbppk|ww.........p|w",
+             sea, 0, 9);
+}
+// A sea eagle from the side flying right, but for its near wing: its big pale head, heavy yellow bill and short
+// white tail
+static void eagle_body(const Canvas &c) {
   eagle_rows(c,
-             sea ? "||||||||"
-                   "..................ppp|"
-                   "................ppppep|"
-                   "wwww.......bbbbbppppyyy|"
-                   "wwwwwbbbbbbbbbbbbbpppyyy|"
-                   ".wwwbbbbbbbbbbbbbbbpp.y|"
-                   "....ddbbbbbbbbbbbbd|"
-                   "........ddddddd"
-                 : "||||||||"
-                   "..................ppp|"
-                   "................ppppeh|"
-                   "wwwwww.....bbbbbbphhhhyk|"
-                   "wwwwwwbbbbbbbbbbbbbhhhkk|"
-                   "..wwwbbbbbbbbbbbbbbbbhk|"
-                   "....ddbbbbbbbbbbbbd|"
-                   "........dlllddd",
-             sea);
+             "||||||||"
+             "..................ppp|"
+             "................ppppep|"
+             "wwww.......bbbbbppppyyy|"
+             "wwwwwbbbbbbbbbbbbbpppyyy|"
+             ".wwwbbbbbbbbbbbbbbbpp.y|"
+             "....ddbbbbbbbbbbbbd|"
+             "........ddddddd",
+             true);
 }
 // Its near wing, k: 0 up high, 1 up, 2 level, 3 down, 4 down hard, 5 soaring, a little raised, the fingers spread
-static void eagle_wing(const Canvas &c, int k, bool sea) {
+static void eagle_wing(const Canvas &c, int k) {
   static const char *const WING[] = {"....k.k.k|"
                                      ".....kkkkk|"
                                      "......ddddd|"
@@ -294,7 +299,7 @@ static void eagle_wing(const Canvas &c, int k, bool sea) {
                                      "..kkddd|"
                                      "...ddddddlll|"
                                      ".....dddddllll"};
-  eagle_rows(c, WING[k], sea);
+  eagle_rows(c, WING[k], true);
 }
 // Four keys of n numbers each, a stride, in 8 frames: frame f's numbers, the odd frames' halfway to the next key
 static void stride(const int8_t *keys, int n, int f, int8_t *out) {
@@ -385,9 +390,15 @@ static void fox_pose(const Canvas &c, int f, int head) {
                                      ".hhhoooooooww"};
   rows(c, LOOK[head], "ohwk", {0xD2642A, 0xEC8C46, 0xF2EEE6, 0x2A1C16});
 }
-// The roe buck's colours: its red coat, the white rump, the near legs and ears, the far legs, its nose and antlers
+// The roe buck's colours: its red coat, the light on its back, its far legs and ears, the white rump, its nose and
+// antlers
 static void roe_rows(const Canvas &c, const char *art) {
-  rows(c, art, "rhswdka", {0xA8582C, 0xC4743E, 0x7A3E20, 0xF0ECE2, 0x5A3020, 0x1E1612, 0xB8A888});
+  rows(c, art, "rhswka", {0xA8582C, 0xC4743E, 0x7A3E20, 0xF0ECE2, 0x1E1612, 0xB8A888});
+}
+// A bullfinch cock's: black, grey, its red breast and white
+static constexpr uint32_t FINCH_RED = 0xE0584A, FINCH_GREY = 0x8890A0;
+static void finch_rows(const Canvas &c, const char *art) {
+  rows(c, art, "kgrw", {0x1A1A20, FINCH_GREY, FINCH_RED, 0xF0F0F0});
 }
 // The red squirrel's: its red coat, its lighter tail, the dark of its feet, its pale belly and a nut
 static void squirrel_rows(const Canvas &c, const char *art, int ox = 0, int oy = 0) {
@@ -543,17 +554,14 @@ Frames bolt(const int16_t *x, const int16_t *y, int n, int *x0, int *y0) {
   *y0 = b.y;
   for (int i = 0; i < n; i++)
     px[i] = (int16_t) (x[i] - b.x), py[i] = (int16_t) (y[i] - b.y);
-  return {b.w, b.h, {1000, 90, 70, 110, 140, 160}, [px, py, n](int f, const Canvas &c) {
-            static const uint32_t CORE[] = {0, 0xFFFFCC, 0x9999AA, 0xFFFFCC, 0xCCCCBB, 0x666677};
-            for (int i = 0; f && i + 1 < n; i++)
+  return {b.w, b.h, {1000}, [px, py, n](int, const Canvas &c) {
+            for (int i = 0; i + 1 < n; i++)
               for (int y = py[i]; y < py[i + 1]; y++) {
                 int x = bolt_at(px, py, i, y);  // as the scene draws it
-                c.put(x, y, CORE[f]);
-                c.put(x + 1, y, CORE[f]);
-                if (f == 1 || f == 3) {
-                  c.put(x - 1, y, 0x9999AA);
-                  c.put(x + 2, y, 0x9999AA);
-                }
+                c.put(x, y, 0xFFFFCC);
+                c.put(x + 1, y, 0xFFFFCC);
+                c.put(x - 1, y, 0x9999AA);
+                c.put(x + 2, y, 0x9999AA);
               }
           }};
 }
@@ -573,15 +581,16 @@ struct Lobes {
 
 Frames cirrus_cloud(const Ellipse *e, int n, int y0, int h, uint32_t col) {
   Lobes lobes(e, n);
-  int x0 = lobes.x.lo - 3;
-  return {lobes.x.hi + 4 - x0, h, {16000, 12000, 14000}, [lobes, y0, h, x0, col](int f, const Canvas &c) {
+  int x0 = lobes.x.lo - Wisp::LEFT;
+  return {lobes.x.hi + Wisp::RIGHT + 1 - x0, h, {16000, 12000, 14000}, [lobes, y0, h, x0, col](int f, const Canvas &c) {
             for (int j = 0; j < lobes.n; j++) {
               const Ellipse &k = lobes.e[j];
               int d = f == 0 ? 0 : f == 1 ? (j == 1 ? 3 : -1) : (j == 0 ? 2 : 1);
               for (int y = 0; y < h; y++) {
-                int hw = half(y0 + y - k.y, k.rx + d, k.ry);
-                for (int x = k.x - hw; x <= k.x + hw && hw >= 0; x++)
-                  c.put(x - x0, y, col);
+                Wisp w = wisp(k, y0 + y - k.y, d);
+                for (int i = 0; i < w.n; i++)
+                  for (int x = k.x + w.a[i]; x <= k.x + w.b[i]; x++)
+                    c.put(x - x0, y, col);
               }
             }
           }};
@@ -612,58 +621,38 @@ struct Falls {
   }
 };
 
-// x round the tile's sides
+// x round a still's w
 static int round_w(int x, int w) { return (x % w + w) % w; }
 
-Frames rain_tile(int w, int h, int slant, std::initializer_list<Fall> kinds, uint32_t seed) {
+Frames fall_tile(int w, int h, int slant, std::initializer_list<Fall> kinds, uint32_t seed) {
   Falls k(kinds);
-  return {w, h, std::vector<uint16_t>(8, 95), [=](int f, const Canvas &c) {
+  return {w, h, {1000}, [=](int, const Canvas &c) {
             Rng r = seeded(seed);
-            for (const Fall *fall = k.k; fall < k.k + k.n; fall++) {
-              int step = (int) fall->step, period = 8 * step, count = iround(fall->dens * w * period);
-              for (int i = 0; i < count; i++) {
-                int u = r.in(0, w - 1), v = r.in(0, period - 1);
-                for (int z = -1; z * period < h + fall->size + period; z++) {
-                  int y0 = v + f * step + (z - 1) * period, x0 = u + slant * y0 / 8;
-                  for (int d = 0; d < fall->size; d++)
-                    c.put(round_w(x0 + slant * d / 8, w), y0 + d, fall->col);
-                }
+            for (const Fall *fall = k.k; fall < k.k + k.n; fall++)
+              for (int i = 0, n = iround(fall->dens * (float) (w * h)); i < n; i++) {
+                int u = r.in(0, w - 1), v = r.in(0, h - 1);
+                for (int d = 0; d < fall->size; d++)
+                  for (int e = 0; e < (fall->flake ? fall->size : 1); e++)
+                    c.put(round_w(u + (fall->flake ? e : slant * d / 8), w), round_w(v + d, h), fall->col);
               }
-            }
           }};
 }
-Frames snow_tile(int w, int h, int slant, std::initializer_list<Fall> kinds, uint32_t seed) {
+Frames sway_tile(int w, int frames, float step, std::initializer_list<Fall> kinds, uint32_t seed) {
   Falls k(kinds);
-  return {w, h, std::vector<uint16_t>(32, 110), [=](int f, const Canvas &c) {
+  int h = iround((float) frames * step);
+  return {w, h, std::vector<uint16_t>((size_t) frames, 110), [=](int f, const Canvas &c) {
             Rng r = seeded(seed);
-            for (const Fall *fall = k.k; fall < k.k + k.n; fall++) {
-              float period = 32 * fall->step;
-              int count = iround(fall->dens * w * period);
-              for (int i = 0; i < count; i++) {
-                float u = r.f() * w, v = r.f() * period, ph = r.f() * 2 * kPiF, lam = 26 + r.f() * 20,
+            for (const Fall *fall = k.k; fall < k.k + k.n; fall++)
+              for (int i = 0, n = iround(fall->dens * (float) (w * h)); i < n; i++) {
+                // a sway round in a half or a third of the tile, so it meets itself
+                float u = r.f() * (float) w, v = r.f() * (float) h, ph = r.f() * 2 * kPiF, waves = (float) r.in(2, 3),
                       amp = fall->size > 1 ? 2 : 1.4f;
-                for (int z = -1; z * period < h + period; z++) {
-                  float y = floorf(v + f * fall->step + (z - 1) * period);
-                  int x = iround(u + (float) slant * y / 8 + amp * sinf(ph + 2 * kPiF * y / lam));
-                  for (int a = 0; a < fall->size; a++)
-                    for (int b = 0; b < fall->size; b++)
-                      c.put(round_w(x + a, w), (int) y + b, fall->col);
-                }
+                float y = fmodf(v + (float) f * step, (float) h);
+                int x = iround(u + amp * sinf(ph + 2 * kPiF * waves * y / (float) h));
+                for (int a = 0; a < fall->size; a++)
+                  for (int b = 0; b < fall->size; b++)
+                    c.put(round_w(x + a, w), round_w((int) y + b, h), fall->col);
               }
-            }
-          }};
-}
-Frames fog_bank(int w, int h, int seed, std::array<uint32_t, 3> k) {
-  return {w, h, {6000, 5000, 6500, 5500}, [=](int f, const Canvas &c) {
-            for (int x = 0; x < w; x++) {
-              // sinf() dips a hair below 0 at the right end, and powf() of that is NaN
-              float env = powf(std::max(0.0f, sinf(kPiF * x / (w - 1))), 0.6f),
-                    wave = sinf(x / 9.0f + seed + f * 0.9f) * sinf(x / 23.0f + seed * 2 - f * 0.5f);
-              int top = h - 1 - iround(env * (h - 2) * (0.7f + 0.3f * wave));
-              for (int y = top; y < h; y++)
-                if (env > 0.35f || noise(x, y, seed) < env * 220)
-                  c.put(x, y, k[y == top ? 0 : y > h - 3 ? 2 : 1]);
-            }
           }};
 }
 // A puff of smoke's life from the chimney to where it's gone, in k light, main, dark: a wisp, growing and
@@ -838,13 +827,7 @@ static constexpr uint16_t GLITTER_MS[] = {700, 110, 160, 110, 2400};
 static constexpr uint16_t EIDERS_MS[] = {700, 700, 700, 700, 700, 700, 700, 700, 700, 700, 500, 400, 2600, 600};
 // the lighthouse's beam each frame, in degrees from you, to the left below 0, and how long it points there: it turns
 // as fast all the way round, past you in short steps
-static constexpr int16_t SWEEP_DEG[] = {-90, -75, -65, -56, -48, -40, -33, -27,  -21,  -16,  -12,  -8,  -4,
-                                        0,   4,   8,   12,  16,  21,  27,  33,   40,   48,   56,   65,  75,
-                                        90,  105, 120, 135, 150, 165, 180, -165, -150, -135, -120, -105};
-static constexpr uint16_t SWEEP_MS[] = {300, 200, 180, 160, 160, 140, 120, 120, 100, 80,  80,  80,  80,
-                                        200, 80,  80,  80,  100, 120, 120, 140, 160, 160, 180, 200, 300,
-                                        300, 300, 300, 300, 300, 300, 300, 300, 300, 300, 300, 300};
-static_assert(std::size(SWEEP_DEG) == std::size(SWEEP_MS), "an angle for each frame");
+static constexpr uint16_t STILL_MS[] = {1000};  // one frame
 static constexpr uint16_t SHIP_MS[] = {450, 380, 500, 420};
 // dark a while between sparkles and flickers, each dark a different while, so the stars started at each don't line up
 static constexpr uint16_t TWINKLE_MS[] = {2900, 140, 190, 140, 4300, 120, 1700, 140, 3600,
@@ -900,6 +883,9 @@ static constexpr uint16_t WITCH_MS[] = {240, 200, 240, 200};
 static constexpr uint16_t MAGPIE_MS[] = {90,  130, 90,  130, 160, 1100, 700, 500, 220, 180,  220, 900,
                                          160, 700, 800, 600, 220, 180,  220, 180, 220, 1000, 160, 900};
 static constexpr uint16_t CROWFLY_MS[] = {130, 110, 130, 110};
+static constexpr uint16_t FINCHFLY_MS[] = {80, 80};
+// it sits, pecks at the oats three times, looks up, pecks twice and sits
+static constexpr uint16_t FINCHSIT_MS[] = {900, 160, 200, 160, 200, 160, 1300, 160, 220, 160, 1500};
 // it lands with its wings up and folds them, looks about, caws three times, looks about, caws twice more, looks
 // about again and takes off
 static constexpr uint16_t CROW_MS[] = {260, 300,  260, 220,  1400, 900, 600, 280, 200, 280, 200, 320, 1200,
@@ -1059,13 +1045,9 @@ static constexpr Fixed FIXED[] = {
        }
        outline(c, GULL_RIM);
      }},
-    // A golden eagle from the side flying right: it soars with its wings a little raised, glides with them level,
-    // soars again and beats once, deep
-    {"eagle", 24, 18, EAGLE_MS,
-     [](int f, const Canvas &c) {
-       eagle_body(c, false);
-       eagle_wing(c, pose<EAGLE_MS>("52510123432", f), false);
-     }},
+    // A golden eagle from below, heading right: it glides, sweeps its wingtips back, glides again and beats twice
+    {"eagle", 14, 23, EAGLE_MS,
+     [](int f, const Canvas &c) { eagle_soaring(c, pose<EAGLE_MS>("01012101210", f), false); }},
     // A V of geese flying right, each bird beating in its own time, grey with the haze
     {"geese", 27, 18, GEESE_MS,
      [](int f, const Canvas &c) {
@@ -1129,6 +1111,75 @@ static constexpr Fixed FIXED[] = {
                                           "...k.k"};
        int p = pose<MAGPIE_MS>("454500102020301020202030", f);
        rows(c, LOOK[p], "kbgw", {0x15171D, 0x2F4F8F, 0x2F6F5A, 0xF2F4F6}, 0, p == 3 || p == 5 ? 0 : 1);
+     }},
+    // A white wagtail in the magpie's time: two runs, then it stands, wags its long tail, pecks and wags again. Grey
+    // on its back, white in the face and below, with a black cap, bib and tail
+    {"wagtail", 9, 6, MAGPIE_MS,
+     [](int f, const Canvas &c) {
+       // stand, tail down, peck, tail up, crouch, running
+       static const char *const LOOK[] = {"......kk|"
+                                          ".....wwk|"
+                                          "kk..ggwk|"
+                                          ".kkgggww|"
+                                          "...gwww|"
+                                          "....k.k",
+                                          "......kk|"
+                                          ".....wwk|"
+                                          "....ggwk|"
+                                          ".kkgggww|"
+                                          "kk.gwww|"
+                                          "....k.k",
+                                          "|"
+                                          "kk..ggg|"
+                                          ".kkgggwkk|"
+                                          "...gwwwwk|"
+                                          "....k.k",
+                                          "k.....kk|"
+                                          ".k...wwk|"
+                                          "..k.ggwk|"
+                                          "...gggww|"
+                                          "...gwww|"
+                                          "....k.k",
+                                          "|"
+                                          "......kk|"
+                                          "kk..gwwk|"
+                                          ".kkgggwk|"
+                                          "...gwww",
+                                          "......kk|"
+                                          ".....wwk|"
+                                          "kk..ggwk|"
+                                          ".kkgggww|"
+                                          "...gwww|"
+                                          "...k...k"};
+       rows(c, LOOK[pose<MAGPIE_MS>("454501030102010301030203", f)], "kgw", {0x1A1C22, 0x8A929C, 0xF2F4F6});
+     }},
+    // A bullfinch cock facing right, small and round: black cap, wings and tail, a grey back, a white rump and its
+    // red breast. Flying, its wings up and down
+    {"finchfly", 6, 5, FINCHFLY_MS,
+     [](int f, const Canvas &c) {
+       finch_rows(c, f ? "|"
+                         "...kk|"
+                         ".ggrrk|"
+                         "kkkr|"
+                         "..k"
+                       : "..k|"
+                         "..kkk|"
+                         ".ggrrk|"
+                         "kkwr");
+     }},
+    // and perched, upright or bent to peck
+    {"finchsit", 6, 5, FINCHSIT_MS,
+     [](int f, const Canvas &c) {
+       finch_rows(c, pose<FINCHSIT_MS>("01010100101", f) ? "|"
+                                                           "..gkk|"
+                                                           ".ggrrk|"
+                                                           "kkwrr|"
+                                                           "...k"
+                                                         : "...kk|"
+                                                           "..grrk|"
+                                                           ".ggrr|"
+                                                           "kkwr|"
+                                                           "...k");
      }},
     // A hooded crow flying right, rowing steadily, the fingers of its wings spread on the downstroke
     {"crowfly", 11, 8, CROWFLY_MS,
@@ -1211,12 +1262,9 @@ static constexpr Fixed FIXED[] = {
                ".k", "kbwr", {0x1C2850, 0x3A5CA8, 0xF2E8D8, 0xC0502E}, 0, 2);
        rows(c, WING[pose<SWALLOW_MS>("01234321012343215012343215", f)], "k", {0x1C2850});
      }},
-    // A white-tailed sea eagle from the side flying right, as the golden eagle flies but slower
-    {"seaeagle", 24, 18, SEAEAGLE_MS,
-     [](int f, const Canvas &c) {
-       eagle_body(c, true);
-       eagle_wing(c, pose<SEAEAGLE_MS>("52510123432", f), true);
-     }},
+    // A white-tailed sea eagle from below, as the golden eagle flies but slower
+    {"seaeagle", 14, 23, SEAEAGLE_MS,
+     [](int f, const Canvas &c) { eagle_soaring(c, pose<SEAEAGLE_MS>("01012101210", f), true); }},
     // ---- the sea
     // A small sailboat, bow to the left: the jib and the main fill and luff, the hull rocks. From frame 4 it comes
     // about: the bow swings toward you, the sails flap edge on, then fill on the other side.
@@ -1278,37 +1326,6 @@ static constexpr Fixed FIXED[] = {
            c.put(x, 5, 0x99BBDD);
        if (f == 11 || f == 12)
          dots(c, {0, 4, 5, 4}, 0x99BBDD);
-     }},
-    // The lighthouse turning, round in SWEEP_DEG's steps: the beam points left, shortens as it turns toward you, the
-    // lamp flashes, then the beam grows on the right, and dimmer it swings round behind and back to the left. The lamp
-    // never goes out
-    {"sweep", 141, 11, SWEEP_MS,
-     [](int f, const Canvas &c) {
-       const int L = 90, ly = 5;  // the lamp in the sprite
-       int deg = SWEEP_DEG[f], dir = deg < 0 ? -1 : 1;
-       float a = deg * (float) M_PI / 180, away = std::max(0.0f, fabsf((float) deg) - 90);  // past side on
-       // as long as it's across you, a little brighter toward you and half as bright pointing away, in twentieths
-       float len = 90 * fabsf(sinf(a)), bright = 20 + 3 * std::clamp((cosf(a) - 0.9f) * 10, 0.0f, 1.0f) - away / 9;
-       for (int d = 2; d <= std::min(len, dir < 0 ? 90.0f : 50.0f); d++) {
-         float half = 0.6f + d * 0.06f, fade = d / len;
-         for (int y = (int) floorf(ly - half); y <= (int) ceilf(ly + half); y++) {
-           float off = abs(y - ly) / (half + 0.5f), v = bright / 20 * (1 - 0.75f * fade) * (1 - 0.6f * off);
-           if (off <= 1 && v > 0.18f)
-             c.put(L + dir * d, y, v > 0.72f ? 0xFFFFEE : v > 0.5f ? 0xDDDDEE : v > 0.32f ? 0x9999AA : 0x555577);
-         }
-       }
-       int r = (int) lroundf(std::max(0.0f, 11 * (1 - abs(deg) / 24.0f)));  // the glow's radius in half px
-       for (int y = 0; r && y < 11; y++)
-         for (int x = L - 7; x <= L + 7; x++) {
-           int d2 = 4 * ((x - L) * (x - L) + (y - ly) * (y - ly));
-           if (d2 < r * r)
-             c.put(x, y, d2 * 25 < r * r * 4 ? 0xFFFFFF : d2 * 100 < r * r * 49 ? 0xFFFFEE : 0x9999AA);
-         }
-       bool flash = r >= 9;
-       for (int y = ly - 1; y <= ly + 1; y++)
-         for (int x = L - 1; x <= L + 1; x++)
-           if (!flash || (x != L && y != ly))
-             c.put(x, y, x == L && y == ly ? 0xFFFFEE : flash ? 0xFFFFFF : 0xFFDD88);
      }},
     // A coastal express far out on the horizon at night: rows of warm windows, a white light at the masthead, a
     // red one to port, and their reflections trembling on the water
@@ -1691,63 +1708,85 @@ static constexpr Fixed FIXED[] = {
        if (p == 2)  // its nose going
          snowhare_rows(c, "s", 6, 4);
      }},
-    // A roe buck at the edge of the meadow, small and slender: grazing, then its head up to look, ears twitching
-    {"roedeergraze", 9, 7, ROEDEER_MS,
+    // A roe buck at the edge of the meadow, slender on long legs: grazing, then its head up to look, ears twitching
+    {"roedeergraze", 14, 11, ROEDEER_MS,
      [](int f, const Canvas &c) {
-       static const char *const LOOK[] = {"||"
-                                          ".whhhhh|"
-                                          "..rrrrrr|"
-                                          ".......rs|"
-                                          ".......hh|"
-                                          "........k",  // grazing
-                                          "||"
-                                          ".whhhhh|"
-                                          "..rrrrrr|"
-                                          ".......rs|"
-                                          ".......hk",            // a tug
-                                          "......sa|"
-                                          "......hhk|"
-                                          ".whhhhr|"
-                                          "..rrrrr",                // up
-                                          ".....s.a|"
-                                          "......hhk|"
-                                          ".whhhhr|"
-                                          "..rrrrr"};               // an ear back
-       roe_rows(c, "||||"
-                   "..sd.ds|"
-                   "..sd.ds|"
-                   "..sd.ds");
+       static const char *const LOOK[] = {"||||"
+                                          ".whhhhhhhh|"
+                                          ".wrrrrrrrrr|"
+                                          "..rrrrrrrrrr|"
+                                          "...........rs|"
+                                          "...........hh|"
+                                          "............k",  // grazing
+                                          "||||"
+                                          ".whhhhhhhh|"
+                                          ".wrrrrrrrrr|"
+                                          "..rrrrrrrrrr|"
+                                          "...........rs|"
+                                          "...........hk",  // a tug
+                                          "..........sa|"
+                                          "..........hhk|"
+                                          ".........hr|"
+                                          ".........hr|"
+                                          ".whhhhhhhhr|"
+                                          ".wrrrrrrrrr|"
+                                          "..rrrrrrrr",     // up
+                                          ".........s.a|"
+                                          "..........hhk|"
+                                          ".........hr|"
+                                          ".........hr|"
+                                          ".whhhhhhhhr|"
+                                          ".wrrrrrrrrr|"
+                                          "..rrrrrrrr"};    // an ear back
+       roe_rows(c, "|||||||"
+                   "..rs....sr|"
+                   "..rs....sr|"
+                   "..rs....sr|"
+                   "..rs....sr");
        roe_rows(c, LOOK[pose<ROEDEER_MS>("01012323201232", f)]);
      }},
-    // and off in bounds, its white rump flashing
-    {"roedeerrun", 10, 7, ROEDEERRUN_MS,
+    // and off in bounds, its white rump flashing: gathered, stretched out in the air, down on its forelegs, its hind
+    // legs coming in under it
+    {"roedeerrun", 16, 11, ROEDEERRUN_MS,
      [](int f, const Canvas &c) {
        static const char *const LOOK[] = {"|"
-                                          "......sa|"
-                                          "......hhk|"
-                                          ".whhhhr|"
-                                          ".wrrrrr|"
-                                          "...sds|"
-                                          "...s.s",
-                                          "......sa|"
-                                          "......hhk|"
-                                          "whhhhhr|"
-                                          "wwrrrrrs|"
-                                          ".s.....ds|"
-                                          "s........s",
-                                          "......sa|"
-                                          "......hhk|"
-                                          "whhhhhr|"
-                                          "wwrrrrrs|"
-                                          ".ds...dss|"
-                                          "s",
-                                          "......sa|"
-                                          "......hhk|"
-                                          ".whhhhr|"
-                                          "wwrrrrrr|"
-                                          "..ds..ds|"
-                                          "....s..s|"
-                                          ".......s"};
+                                          "...........sa|"
+                                          "...........hhk|"
+                                          "...hhhhhh.hr|"
+                                          "..whhrrrrrrr|"
+                                          "..wrrrrrrrr|"
+                                          "...rrrrrrr|"
+                                          "....rs.sr|"
+                                          ".....rssr|"
+                                          ".....rsr|"
+                                          "......r",
+                                          "............sa|"
+                                          "............hhk|"
+                                          ".whhhhhhhhhhr|"
+                                          "wwrrrrrrrrrr|"
+                                          "..rrrrrrrr.rr|"
+                                          ".rr.........rr|"
+                                          "rr............r",
+                                          "|"
+                                          "...........sa|"
+                                          "...........hhk|"
+                                          ".whhhhhhhhhr|"
+                                          "wwrrrrrrrrr|"
+                                          ".rrrrrrrrr|"
+                                          "r.......sr|"
+                                          ".........sr|"
+                                          ".........r|"
+                                          ".........r",
+                                          "|"
+                                          "...........sa|"
+                                          "...........hhk|"
+                                          "..whhhhhhhhr|"
+                                          "..wrrrrrrrr|"
+                                          "...rrrrrrr|"
+                                          "....rr..sr|"
+                                          ".....rr..r|"
+                                          "......r..r|"
+                                          ".........r"};
        roe_rows(c, LOOK[f]);
      }},
     // Three white sheep grazing on the hillside in summer, the middle one facing the other way, each lifting its dark
@@ -2072,18 +2111,18 @@ static constexpr Fixed FIXED[] = {
     // Rudolph's nose still bright
     {"sleigh", 37, 12, SLEIGH_MS,
      [](int f, const Canvas &c) {
-       const uint32_t gold = 0x887755, red = 0x773333, deer = 0x554433, dark = 0x332211, moon = 0x887766;
+       const uint32_t gold = 0x887755, green = 0x2A4436, deer = 0x554433, dark = 0x332211, moon = 0x887766;
        line(c, 1, 9, 13, 9, gold);  // the runner
        dots(c, {0, 8, 14, 8}, gold);
        line(c, 2, 4, 12, 4, moon);  // the rail
-       line(c, 2, 5, 12, 5, red);
-       rect(c, 2, 6, 12, 8, 0x662222);
-       rect(c, 4, 2, 7, 4, 0x443322);  // the sack
-       for (int y = 0; y <= 4; y++) {  // and him
-         c.put(9, y, y ? red : 0xAA8877);
-         c.put(10, y, red);
-       }
-       dots(c, {11, 0, 10, 2, 11, 2}, 0x9999AA);
+       rect(c, 2, 5, 12, 8, green);
+       rect(c, 3, 2, 6, 4, 0x554422);  // the sack
+       rows(c,                       // and him, in red with his beard and the white of his hat
+            ".RRw|"
+            "wwww|"
+            ".ss|"
+            "RwwR",
+            "Rws", {0xBB3333, 0xCCCCDD, 0xBB9977}, 8, 0);
        line(c, 13, 6, 18, 6, 0x554433);  // the trace
        static const int8_t S[] = {1, -1, 0, 0, -1, 1, 0, 0};
        for (int ox = 18; ox <= 27; ox += 9) {  // two reindeer
@@ -2205,21 +2244,29 @@ static constexpr Fixed FIXED[] = {
        hare_rows(c, body, 2, 6);
      }},
     // 17 May: a few children walking in a row, each waving a small flag, the first with a drum
-    {"parade", 34, 13, PARADE_MS,
+    {"parade", 40, 13, PARADE_MS,
      [](int f, const Canvas &c) {
        static const uint32_t COAT[] = {0x3366CC, 0xDD3333, 0xEEEEEE, 0x33AA55},
                              SKINS[] = {0xFFCC88, 0xEECC99, 0xFFCCAA, 0xDDBB88};
-       static const char *const FLAG[] = {"rwbr|"
-                                          "rwbr|"
-                                          "wwbw",
-                                          "rrw|"
-                                          "rrw|"
-                                          "www",
-                                          "rwb|"
-                                          "wwb|"
-                                          "rwb"};
+       // the flag out, rippling and edge on
+       static const char *const FLAG[] = {"rwbwrrr|"
+                                          "wwbwwww|"
+                                          "bbbbbbb|"
+                                          "wwbwwww|"
+                                          "rwbwrrr",
+                                          "rwbw|"
+                                          "wwbwrrr|"
+                                          "bbbbwww|"
+                                          "wwbwbbb|"
+                                          "rwbwwww|"
+                                          "....rrr",
+                                          "rwbwr|"
+                                          "wwbww|"
+                                          "bbbbb|"
+                                          "wwbww|"
+                                          "rwbwr"};
        for (int i = 0; i < 4; i++) {
-         int x0 = i * 8, step = (f + i) % 2, wave = (f / 2 + i) % 3, y0 = 5;
+         int x0 = i * 9, step = (f + i) % 2, wave = (f / 2 + i) % 3, y0 = 6;
          line(c, x0 + 2, y0, x0 + 3, y0, 0x664422);  // hair
          line(c, x0 + 2, y0 + 1, x0 + 3, y0 + 1, SKINS[i]);
          rect(c, x0 + 1, y0 + 2, x0 + 4, y0 + 4, COAT[i]);
@@ -2232,9 +2279,9 @@ static constexpr Fixed FIXED[] = {
            dots(c, {6, 3, 5, 4}, 0xDD3333, x0, y0);
            continue;
          }
-         int sx = x0 + 5, top = y0 - 4 + (wave == 1);
-         line(c, sx, top, sx, y0 + 2, 0x887755);
-         rows(c, FLAG[wave], "rwb", {FLAG_RED, FLAG_WHITE, FLAG_BLUE}, sx + 1, top);
+         int sx = x0 + 5;
+         line(c, sx, 0, sx, y0 + 2, 0x887755);
+         rows(c, FLAG[wave], "rwb", {FLAG_RED, FLAG_WHITE, FLAG_BLUE}, sx + 1, 0);
        }
      }},
     // a balloon that got away, rising and swaying on its string
@@ -2358,33 +2405,38 @@ static constexpr Fixed FIXED[] = {
              c.put(x, y, COL[std::min(4, pose<PUMPKIN_MS>("213021", f) + (y > 3))]);
      }},
     // ---- the rare ones, see met_live_rare.h
-    // A lynx facing right on long legs, grey-tawny with a spot or two, its ears tufted and its short tail black at the
-    // tip: it walks three strides, stops, looks at you and behind it, and looks ahead again to walk on
-    {"lynx", 12, 8, LYNX_MS,
+    // A lynx facing right, high on its legs and higher behind, grey-tawny and spotted, with tufted ears, a ruff
+    // under its cheeks and a short tail black at the tip: walking, then standing to look ahead, at you and behind it
+    {"lynx", 16, 11, LYNX_MS,
      [](int f, const Canvas &c) {
        static const char *const KEYS = "ohspwk";
        std::initializer_list<uint32_t> cols = {0xA8906E, 0xC4AC88, 0x806A50, 0x5E4C3A, 0xE2D8C6, 0x1E1A16};
-       static const int8_t HIP[] = {3, 4, 7, 8};
+       static const int8_t HIP[] = {2, 3, 9, 10};
        static const int8_t STEP[] = {-1, 1, -1, 1, 0, 0, 0, 1, 1, -1, 1, -1, 0, 0, 1, 0, 0, 0, 0, 0};
        int walk = f < 12 ? f % 4 : 4;  // the last standing
-       four_legs(c, HIP, STEP + walk * 4, walk == 1 ? "1000" : walk == 3 ? "0100" : "0000", 5,
+       four_legs(c, HIP, STEP + walk * 4, walk == 1 ? "1000" : walk == 3 ? "0100" : "0000", 8,
                  {.near = 0x806A50, .far = 0x6E5C46});
-       rows(c, "kkhhhhhhh|"
-               "..oopoopoo|"
-               "..ooooooo", KEYS, cols, 0, 3);
+       rows(c, "..hhhhhhhh|"
+               "kohopoopohoo|"
+               "..oopooopooo|"
+               "..oooooooooow|"
+               "..os.....os", KEYS, cols, 0, 3);
        // ahead, at you, behind it
-       static const char *const HEAD[] = {"..........k|"
-                                          ".........hoo|"
-                                          "........hopow|"
-                                          ".........ww",
-                                          ".......k...k|"
-                                          ".......hoooh|"
-                                          ".......opopo|"
-                                          "........wpw",
-                                          ".........k|"
-                                          "........ooh|"
-                                          ".......wopoh|"
-                                          "........ww"};
+       static const char *const HEAD[] = {"............k.k|"
+                                          "............hoh|"
+                                          "...........hooow|"
+                                          "...........wopok|"
+                                          "............ww",
+                                          "..........k...k|"
+                                          "..........hoooh|"
+                                          "..........opopo|"
+                                          "..........wokow|"
+                                          "...........www",
+                                          "..........k.k|"
+                                          "..........hoh|"
+                                          ".........woooh|"
+                                          ".........kopow|"
+                                          "...........ww"};
        rows(c, HEAD[f < 12 ? 0 : "01210"[f - 12] - '0'], KEYS, cols);
      }},
     // Two orcas heading right in a fjord, surfacing in turn: a blow of mist, the back with its dorsal fin, the bull's
@@ -2484,7 +2536,7 @@ static constexpr Fixed FIXED[] = {
      [](int f, const Canvas &c) {
        static const char *const KEYS = "ykfgsa";
        std::initializer_list<uint32_t> cols = {0xF0C030, 0x1A1410, 0xD8DEE6, 0x5A6A7A, 0xFFFFFF, 0xA8D0EC};
-       eagle_body(c, true);
+       eagle_body(c);
        if (f == 0)  // its talons out
          rows(c, "yy|"
                  ".yyy|"
@@ -2501,7 +2553,7 @@ static constexpr Fixed FIXED[] = {
                  ".ffffffff|"
                  "g..ffff", KEYS, cols, 10, 14);
        static const int8_t WING[] = {5, 0, 0, 1, 3, 1, 4, 0, 2};
-       eagle_wing(c, WING[f], true);
+       eagle_wing(c, WING[f]);
        static const char *const SPRAY[] = {
            "|||||||||||||||"
            "...........s.....s|"
@@ -2690,48 +2742,54 @@ static constexpr Fixed FIXED[] = {
            ".k.k"};
        rows(c, LOOK[pose<NISSE_MS>("01010101010123432010101010101", f)], KEYS, cols);
      }},
-    // Draugen, facing right: a hunched fisherman in black oilskins with a clump of seaweed for a head, pushing his
-    // oars facing the way he goes in half a boat, its broken end behind him. It rises and falls on the swell, the sea
-    // at row 7
-    {"draugen", 12, 8, DRAUGEN_MS,
+    // Draugen, facing right: a drowned fisherman in black oilskins and a sou'wester, his head a pale clump of
+    // seaweed with two lit eyes, rowing half a boat facing the way he goes, its broken end behind him. It rises and
+    // falls on the swell, the sea at row 11
+    {"draugen", 20, 12, DRAUGEN_MS,
      [](int f, const Canvas &c) {
-       static const char *const KEYS = "ohrkKbgc";
-       std::initializer_list<uint32_t> cols = {0x34362E, 0x7A806A, 0xD0D8E8, 0x52622E,
-                                               0x8A9848, 0x6E6458, 0xA09484, 0xC8B898};
-       static const char *const MAN[] = {// the stroke: hands in, pushing, out, and back
-                                         "|"
-                                         "...rrK|"
-                                         "..rook|"
-                                         "..rooh|"
-                                         "..oooo",
-                                         "|"
-                                         "....rrK|"
-                                         "...rook|"
-                                         "...rooh|"
-                                         "..ooooo",
-                                         "|"
-                                         "....rrK|"
-                                         "...rook|"
-                                         "...roooh|"
-                                         "..ooooo",
-                                         "|"
-                                         "...rrK|"
-                                         "..rook|"
-                                         "..rooh|"
-                                         "..oooo"};
-       static const int8_t OAR[] = {6, 3, 9, 7, 7, 3, 7, 7, 8, 4, 5, 7, 7, 3, 9, 5};  // hands to blade
+       // oilskin, its sheen, weed, dark weed, eyes, the hull, its rail
+       static const char *const KEYS = "ohgkebc";
+       std::initializer_list<uint32_t> cols = {0x2A2C28, 0x565A4C, 0x7E9458, 0x4C5E30, LAMP, 0x6E6458, 0xC8B898};
+       // the stroke: leaning in, pushing, leaning back, and in again
+       static const char *const MAN[] = {".....oooo|"
+                                         "....oooooo|"
+                                         ".....gege|"
+                                         ".....kggk|"
+                                         "....hoook|"
+                                         "...hooooo|"
+                                         "...oooooo",
+                                         "......oooo|"
+                                         ".....oooooo|"
+                                         "......gege|"
+                                         "......kggk|"
+                                         ".....hoook|"
+                                         "....hooooo|"
+                                         "...ooooooo",
+                                         ".......oooo|"
+                                         "......oooooo|"
+                                         ".......gege|"
+                                         ".......kggk|"
+                                         "......hoook|"
+                                         ".....hooooo|"
+                                         "...oooooooo",
+                                         "......oooo|"
+                                         ".....oooooo|"
+                                         "......gege|"
+                                         "......kggk|"
+                                         ".....hoook|"
+                                         "....hooooo|"
+                                         "...ooooooo"};
+       static const int8_t OAR[] = {9, 5, 15, 10, 10, 5, 13, 10, 11, 5, 9, 10, 10, 5, 15, 8};  // hands to blade
        int p = f % 4, dy = pose<DRAUGEN_MS>("00111100", f);
-       rows(c, "..........b|"
-               "..........b|"
-               ".........b|"
-               ".........b|"
-               "........bb|"
-               "cggggggggb|"
-               "cbbbbbbbb", KEYS, cols, 0, dy);
-       rows(c, MAN[p], KEYS, cols, 0, dy);
+       rows(c, ".................c|"     // the stem, the rail and the hull, splintered where it broke
+               "..c..............c|"
+               "..bccccccccccccccc|"
+               ".b.bbbbbbbbbbbbbb|"
+               "....bbbbbbbbbbb", KEYS, cols, 0, 6 + dy);
+       rows(c, MAN[p], KEYS, cols, 0, 1 + dy);
        const int8_t *o = OAR + p * 4;
-       line(c, o[0], o[1] + dy, o[2], std::min(7, o[3] + dy), 0xB8A888);
-       rows(c, dy ? ".ff.ff.ff.f" : "ff.fff.ff.ff", "f", {0xD8EAF0}, 0, 7);  // the foam
+       line(c, o[0], o[1] + dy, o[2], std::min(11, o[3] + dy), 0xB8A888);
+       rows(c, dy ? ".ff.fff.ff.fff.ff.f" : "ff.fff.ff.ff.fff.ff", "f", {0xD8EAF0}, 0, 11);  // the foam
      }},
     // A garden trampoline tumbling end over end, a sixth of a turn a frame: its black mat in the blue padding, and
     // the legs bent out under it
@@ -3027,11 +3085,8 @@ static constexpr Fixed FIXED[] = {
      }},
     // ---- the city
     // the red light on the antenna, slowly on and off
-    {"beacon", 3, 2, BEACON_MS,
-     [](int f, const Canvas &c) {
-       if (!f)
-         rect(c, 0, 0, 2, 1, 0xFF3333);
-     }},
+    // The antenna's red light blinking, its lens dark between
+    {"beacon", 3, 2, BEACON_MS, [](int f, const Canvas &c) { rect(c, 0, 0, 2, 1, f ? 0x551818 : 0xFF3333); }},
     // A window someone has just switched on: their lamp, and now and then someone walking past it
     {"winlit", 2, 2, WINLIT_MS,
      [](int f, const Canvas &c) {
@@ -3173,6 +3228,29 @@ static constexpr Fixed FIXED[] = {
      }},
 };
 
+// The sprite called name in other colours: each pair's first as its second, or left out if that's NO_PAINT
+static constexpr uint32_t NO_PAINT = 1 << 24;
+static Frames repainted(const char *name, std::vector<std::array<uint32_t, 2>> paint) {
+  Frames f;
+  make_sprite(name, f);
+  f.draw = [draw = f.draw, w = f.w, h = f.h, paint = std::move(paint)](int k, const Canvas &c) {
+    Colours cols;
+    std::vector<uint8_t> px((size_t) w * h);
+    draw(k, Canvas{w, h, px.data(), &cols});
+    for (int i = 0; i < w * h; i++) {
+      if (!px[i])
+        continue;
+      uint32_t rgb = cols.rgb[px[i]];
+      for (const auto &p : paint)
+        if (p[0] == rgb)
+          rgb = p[1];
+      if (rgb != NO_PAINT)
+        c.px[i] = c.cols->of(rgb);
+    }
+  };
+  return f;
+}
+
 // The ones a factory makes
 struct Made {
   char name[11];
@@ -3188,6 +3266,17 @@ static const Made MADE[] = {
     {"burst", [] { return firework({0xFFFFFF, 0xCCCCCC, 0x808080, 0x555555, 0x333333}, 3); }},
     {"tram", [] { return tram(true); }},
     {"tramday", [] { return tram(false); }},
+    // a bullfinch hen, buff where the cock is red, and a great tit, yellow below and olive on its back
+    {"finchhen", [] { return repainted("bullfinch", {{FINCH_RED, 0xB89C8C}}); }},
+    {"tit", [] { return repainted("bullfinch", {{FINCH_RED, 0xE8D040}, {FINCH_GREY, 0x7A8A50}}); }},
+    // a moose without antlers: a cow, or a bull from January till they grow out again
+    {"moosecow", [] { return repainted("moose", {{0xB49A74, NO_PAINT}}); }},
+    // a roe deer in its grey winter coat, the buck's antlers shed
+    {"roedeerw",
+     [] {
+       return repainted("roedeer",
+                        {{0xA8582C, 0x8A7866}, {0xC4743E, 0xA08E7A}, {0x7A3E20, 0x5E5044}, {0xB8A888, NO_PAINT}});
+     }},
 };
 
 // Sprites as one strip, their frames one after the other, each part's top left at the strip's: a bird flying in and
@@ -3209,6 +3298,7 @@ static const Join JOINS[] = {
     {"harew", {{"harewhop", "hop"}, {"haresitw", "sit"}}},
     {"hare", {{"harehop", "hop"}, {"haresit", "sit"}}},
     {"owl", {{"owlfly", "fly"}, {"owlperch", "perch"}}},
+    {"bullfinch", {{"finchfly", "fly"}, {"finchsit", "sit"}}},
     // a rocket up and its burst, half of it: a peony or a ring
     {"firework", {{"rocket", "rise"}, {"burst", "burst", "peony 0-7, ring 8-15"}}},
 };

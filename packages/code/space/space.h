@@ -5,7 +5,7 @@
 #include <cmath>
 #include <functional>
 #include <string>
-#include "../marks/marks.h"
+#include "../panel/picture_marks.h"
 #include "../panel/fetch.h"
 #include "../panel/json_scan.h"
 #include "../panel/picture_online.h"

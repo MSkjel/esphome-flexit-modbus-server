@@ -1,8 +1,9 @@
-// Text and marks over a panel picture, drawn on the ESP in the panel's own Noto Sans (marks_font.h). A Layer lists
-// them like a drawing. The text, dots and marks go to the panel sharp, as a still overlay with colours of its own:
-// each ink a few opacities, so the edges stay smooth. The lines, glows, boxes, scrims and the soft shadow under it
-// all go into the picture, where the JPEG keeps them smooth. Both are drawn BAND rows at a time as picture.h and
-// overlay.h ask for them, so neither is held whole. on() hooks a picture up, set() gives it a new layer.
+// Text and marks over a panel picture, drawn on the ESP: Noto Sans (marks_font.h) and 1-bit bitmaps, like a pixel
+// font. A Layer lists them like a drawing. The text, dots, bitmaps and marks go to the panel sharp, as a still overlay
+// with colours of its own: each ink a few opacities, so the edges stay smooth. The lines, glows, boxes, scrims and
+// the soft shadow under it all go into the picture, where the JPEG keeps them smooth. Both are drawn BAND rows at a
+// time as they're asked for, so neither is held whole. picture_marks.h puts a layer over a picture. Plain C++
+// without ESPHome.
 #pragma once
 #include <algorithm>
 #include <climits>
@@ -12,12 +13,12 @@
 #include <cstring>
 #include <functional>
 #include <map>
-#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
-#include "../panel/overlay.h"
-#include "../panel/picture.h"
+#include "dates.h"
 #include "marks_font.h"
+#include "plink_keys.h"
 
 namespace flexit::panel::marks {
 
@@ -28,6 +29,7 @@ inline constexpr uint32_t WHITE = 0xFFFFFF, INK = 0x08090E, CYAN = 0x62E2FF, WAR
 
 struct Box {
   float x0, y0, x1, y1;
+  bool operator==(const Box &b) const { return x0 == b.x0 && y0 == b.y0 && x1 == b.x1 && y1 == b.y1; }
 };
 
 // The box round x, y pairs
@@ -48,7 +50,7 @@ inline void edge(const Box &b, float cx, float cy, float dx, float dy, float &x,
 }
 
 struct Op {
-  enum Kind : uint8_t { TEXT, DOT, RING, LINE, POLY, RECT, SCRIM, GLOW_DOT, GLOW_LINE };
+  enum Kind : uint8_t { TEXT, BITMAP, DOT, RING, LINE, POLY, RECT, SCRIM, GLOW_DOT, GLOW_LINE };
   Kind kind;
   bool soft;  // drawn into the picture, else the overlay
   uint32_t rgb;
@@ -58,7 +60,15 @@ struct Op {
   std::vector<float> pts;  // LINE, GLOW_LINE, POLY: x, y pairs. POLY is convex.
   std::string text;        // TEXT in UTF-8, or SCRIM's edge: "t", "b", "l" or "r"
   FaceId face = SMALL;
-  float track = 0;  // TEXT: px between letters
+  float track = 0;                  // TEXT: px between letters
+  std::vector<uint64_t> rows;       // BITMAP's, the leftmost pixel in the highest of cols bits
+  uint8_t cols = 0, scale = 1;      // BITMAP
+  std::optional<uint32_t> outline;  // BITMAP: a pixel round it in this, drawn just before it
+  bool operator==(const Op &o) const {
+    return kind == o.kind && soft == o.soft && rgb == o.rgb && alpha == o.alpha && box == o.box && r == o.r &&
+           w == o.w && pts == o.pts && text == o.text && face == o.face && track == o.track && rows == o.rows &&
+           cols == o.cols && scale == o.scale && outline == o.outline;
+  }
 };
 
 // The next code point of UTF-8 s at i
@@ -108,6 +118,7 @@ struct Layer {
   std::vector<Op> ops;
   std::vector<Box> boxes;  // taken, so label() puts nothing over them
   float shadow = 0.6f;     // the soft shadow under the sharp ops and the lines
+  bool operator==(const Layer &l) const { return ops == l.ops && shadow == l.shadow; }
 
   Op &add(Op::Kind k, bool soft, uint32_t rgb, float alpha, Box b) {
     Op o;
@@ -130,6 +141,16 @@ struct Layer {
     o.face = f;
     o.track = track;
     return w;
+  }
+  // A 1-bit bitmap scale times as big with its top left at x, y: rows of cols bits, 64 at most
+  void bitmap(int x, int y, std::vector<uint64_t> rows, int cols, int scale, uint32_t rgb,
+              std::optional<uint32_t> outline = std::nullopt) {
+    float w = (float) (cols * scale), h = (float) (rows.size() * scale);
+    Op &o = add(Op::BITMAP, false, rgb, 1, {x - 1.0f, y - 1.0f, x + w, y + h});
+    o.rows = std::move(rows);
+    o.cols = (uint8_t) cols;
+    o.scale = (uint8_t) scale;
+    o.outline = outline;
   }
   // A small label in capitals
   float caps(float x, float y, const std::string &s, float alpha = 0.62f, uint32_t rgb = WHITE, char anchor = 'l') {
@@ -304,13 +325,31 @@ inline void cover_text(const Op &o, int y0, int y1, uint8_t *cov, Span &sp) {
   }
 }
 
-// The op's coverage in rows y0..y1 into cov, by its own rule
-inline void cover(const Op &o, int y0, int y1, uint8_t *cov, Span &sp) {
+// Whether a BITMAP has pixel x, y of the screen. Its top left is a pixel into its box.
+inline bool bit(const Op &o, int x, int y) {
+  int c = x - (int) o.box.x0 - 1, r = y - (int) o.box.y0 - 1;
+  if (c < 0 || r < 0 || (c /= o.scale) >= o.cols || (r /= o.scale) >= (int) o.rows.size())
+    return false;
+  return o.rows[r] >> (o.cols - 1 - c) & 1;
+}
+
+// The op's coverage in rows y0..y1 into cov, by its own rule. edge: a BITMAP's outline instead.
+inline void cover(const Op &o, int y0, int y1, uint8_t *cov, Span &sp, bool edge = false) {
   int x0, x1, ya, yb;
   if (!clip(o.box, y0, y1, x0, x1, ya, yb))
     return;
   if (o.kind == Op::TEXT) {
     cover_text(o, y0, y1, cov, sp);
+    return;
+  }
+  if (o.kind == Op::BITMAP) {
+    for (int y = ya; y < yb; y++)
+      for (int x = x0; x < x1; x++) {
+        bool on = bit(o, x, y);
+        for (int d = 0; edge && !on && d < 9; d++)
+          on = bit(o, x + d % 3 - 1, y + d / 3 - 1);
+        put(cov, y0, x, y, on, sp);
+      }
     return;
   }
   if (o.kind == Op::LINE || o.kind == Op::GLOW_LINE) {
@@ -401,6 +440,11 @@ struct Sharp {
 };
 
 inline bool casts(const Op &o) { return o.kind != Op::SCRIM && o.kind != Op::GLOW_DOT && o.kind != Op::GLOW_LINE; }
+
+// Whether l draws anything into the picture: a soft op, or a shadow under one that casts it
+inline bool into_picture(const Layer &l) {
+  return std::any_of(l.ops.begin(), l.ops.end(), [&](const Op &o) { return o.soft || (l.shadow > 0 && casts(o)); });
+}
 
 // Rows y0.. of the picture: base, the scrims, the glows, the shadow, then the lines and boxes
 inline void draw_soft(const Layer &l, const std::function<uint32_t(int, int)> &base, Soft &b, int y0) {
@@ -495,23 +539,23 @@ inline void draw_sharp(const Layer &l, Sharp &b, int y0) {
   b.y0 = y0;
   int y1 = std::min(y0 + BAND, H);
   std::fill(std::begin(b.px), std::end(b.px), 0);
-  for (const Op &o : l.ops) {
-    if (o.soft)
-      continue;
-    Span sp;
-    cover(o, y0, y1, b.cov, sp);
-    for (int y = sp.y0; y < sp.y1; y++)
-      for (int x = sp.x0; x < sp.x1; x++) {
-        uint8_t &c = b.cov[(y - y0) * W + x];
-        uint32_t a = (uint32_t) (c * o.alpha + 0.5f), &p = b.px[(y - y0) * W + x], out = 0;
-        for (int s = 0; s < 32; s += 8) {
-          uint32_t src = s == 24 ? 255 : o.rgb >> s & 255;
-          out |= (src * a / 255 + (p >> s & 255) * (255 - a) / 255) << s;
+  for (const Op &o : l.ops)
+    for (int edge = o.outline ? 1 : 0; !o.soft && edge >= 0; edge--) {
+      Span sp;
+      cover(o, y0, y1, b.cov, sp, edge);
+      uint32_t rgb = edge ? *o.outline : o.rgb;
+      for (int y = sp.y0; y < sp.y1; y++)
+        for (int x = sp.x0; x < sp.x1; x++) {
+          uint8_t &c = b.cov[(y - y0) * W + x];
+          uint32_t a = (uint32_t) (c * o.alpha + 0.5f), &p = b.px[(y - y0) * W + x], out = 0;
+          for (int s = 0; s < 32; s += 8) {
+            uint32_t src = s == 24 ? 255 : rgb >> s & 255;
+            out |= (src * a / 255 + (p >> s & 255) * (255 - a) / 255) << s;
+          }
+          p = out;
+          c = 0;
         }
-        p = out;
-        c = 0;
-      }
-  }
+    }
 }
 
 // ---------------------------------------------------------------- the overlay's colours
@@ -520,12 +564,17 @@ inline void draw_sharp(const Layer &l, Sharp &b, int y0) {
 // steps to land on. 15 of them shared out between the inks, and one clear.
 inline std::vector<uint32_t> colours_of(const Layer &l) {
   std::map<uint32_t, std::vector<int>> inks;  // rgb, the opacities it's drawn at
+  auto ink = [&](uint32_t rgb, float alpha) {
+    auto &v = inks[rgb & 0xFFFFFF];
+    int a = std::clamp((int) lroundf(alpha * 15), 1, 15);
+    if (std::find(v.begin(), v.end(), a) == v.end())
+      v.push_back(a);
+  };
   for (const Op &o : l.ops)
     if (!o.soft) {
-      auto &v = inks[o.rgb & 0xFFFFFF];
-      int a = std::clamp((int) lroundf(o.alpha * 15), 1, 15);
-      if (std::find(v.begin(), v.end(), a) == v.end())
-        v.push_back(a);
+      ink(o.rgb, o.alpha);
+      if (o.outline)
+        ink(*o.outline, o.alpha);
     }
   std::vector<uint32_t> out;
   if (inks.empty())
@@ -556,119 +605,6 @@ inline std::vector<uint32_t> colours_of(const Layer &l) {
   }
   out.push_back(0);
   return out;
-}
-
-// ---------------------------------------------------------------- a picture with its marks
-
-struct Marks {
-  std::string name;  // the picture's, and its overlay's with "_marks"
-  Layer layer;
-  std::function<uint32_t(int, int)> base;  // the picture without them, at the screen's size
-  std::unique_ptr<Soft> soft;              // while the picture is made
-  std::unique_ptr<Sharp> sharp;            // while the overlay is made
-  int ox = 0, oy = 0, ow = 0, oh = 0;      // the overlay's place and size, 0 wide for none
-  bool on_panel = false;                   // the picture is
-};
-inline std::map<std::string, Marks> all;  // by picture
-
-inline std::string overlay_of(const std::string &name) { return name + "_marks"; }
-
-inline uint32_t soft_pixel(Marks &m, int x, int y) {
-  if (x < 0 || y < 0 || x >= W || y >= H)
-    return 0;
-  if (m.layer.ops.empty())
-    return m.base(x, y);
-  if (!m.soft)
-    m.soft.reset(new (std::nothrow) Soft());
-  if (!m.soft)
-    return m.base(x, y);
-  int y0 = y / BAND * BAND;
-  if (m.soft->y0 != y0)
-    draw_soft(m.layer, m.base, *m.soft, y0);
-  return m.soft->rgb[(y - y0) * W + x];
-}
-
-inline uint32_t sharp_pixel(Marks &m, int x, int y) {
-  int sx = x + m.ox, sy = y + m.oy;
-  if (!m.sharp)
-    m.sharp.reset(new (std::nothrow) Sharp());
-  if (!m.sharp || sx >= W || sy >= H)
-    return 0;
-  int y0 = sy / BAND * BAND;
-  if (m.sharp->y0 != y0)
-    draw_sharp(m.layer, *m.sharp, y0);
-  uint32_t p = m.sharp->px[(sy - y0) * W + sx], a = p >> 24;
-  if (x == m.ow - 1 && y == m.oh - 1)
-    m.sharp.reset();  // the last pixel of a pass, the next starts over
-  if (!a)
-    return 0;
-  uint32_t out = a << 24;
-  for (int s = 0; s < 24; s += 8)
-    out |= std::min<uint32_t>(255, ((p >> s & 255) * 255 + a / 2) / a) << s;
-  return out;
-}
-
-// Picture name's marks are drawn into it and shown over it, from set() on. After picture::add().
-inline void on(const std::string &name) {
-  auto it = picture::sources.find(name);
-  if (it == picture::sources.end())
-    return;
-  Marks &m = all[name];
-  m.name = name;
-  picture::Source &s = it->second;
-  m.base = s.pixel;
-  s.pixel = [&m](int x, int y) { return soft_pixel(m, x, y); };
-  auto done = s.done;
-  s.done = [&m, done]() {
-    m.soft.reset();
-    if (done)
-      done();
-  };
-  auto panel = s.on_panel;
-  s.on_panel = [&m, panel](bool on) {
-    m.on_panel = on;
-    std::string k = overlay_of(m.name);
-    if (on && m.ow)
-      overlay::show(k);
-    else if (!on && overlay::find(k)) {
-      overlay::clear(k);
-      m.sharp.reset();
-    }
-    if (panel)
-      panel(on);
-  };
-}
-
-// Picture name's marks are now l: drawn into it as it's made again, and their overlay made again over it
-inline void set(const std::string &name, Layer l) {
-  auto it = all.find(name);
-  if (it == all.end())
-    return;
-  Marks &m = it->second;
-  std::string k = overlay_of(name);
-  if (overlay::find(k))
-    overlay::clear(k);
-  m.layer = std::move(l);
-  drop(m.layer.boxes);  // they were for laying it out
-  m.soft.reset();
-  m.sharp.reset();
-  // the overlay covers what the sharp ops do
-  Box b{(float) W, (float) H, 0, 0};
-  for (const Op &o : m.layer.ops)
-    if (!o.soft)
-      b = {std::min(b.x0, o.box.x0), std::min(b.y0, o.box.y0), std::max(b.x1, o.box.x1), std::max(b.y1, o.box.y1)};
-  m.ow = 0;
-  if (b.x0 < b.x1) {
-    m.ox = std::max(0, (int) floorf(b.x0));
-    m.oy = std::max(0, (int) floorf(b.y0));
-    m.ow = std::min(W - m.ox, (int) ceilf(b.x1) - m.ox + 1);
-    m.oh = std::min(H - m.oy, (int) ceilf(b.y1) - m.oy + 1);
-    overlay::Source s{m.ow, m.oh, 1, 500, m.ox, m.oy, 1, [&m](int, int x, int y) { return sharp_pixel(m, x, y); }};
-    s.colours = colours_of(m.layer);
-    s.fade_ms = 300;
-    overlay::add(k, std::move(s));
-  }
-  picture::changed(name);  // the overlay comes once the picture is on the panel again
 }
 
 // ---------------------------------------------------------------- times and dates, as the panel writes them

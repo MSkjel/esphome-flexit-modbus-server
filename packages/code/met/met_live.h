@@ -17,10 +17,6 @@
 
 namespace flexit::panel::met::live {
 
-// ms of a step: the panel moves things in them, so a wave jumps back to its start in one, and loop() runs once a
-// step, so a timer goes off up to one late
-inline constexpr int STEP = 50;
-
 struct Timer {
   uint32_t at;                   // millis()
   std::function<uint32_t()> fn;  // the ms it takes, for sometimes()
@@ -32,9 +28,11 @@ struct Timer {
 struct Running {
   bool on;                           // the switch
   int show = -1;                     // met_live_shows.h's SHOWS, -1 none
+  std::string label;                 // its animations', for Panel Animation Status
   uint32_t where;                    // the place, the landscape and what the show is made of, see apply()
   bool flag;                         // the flag is up with it
   int8_t flown;                      // the way the wind blew it when it went up
+  uint32_t lights;                   // the northern lights glow with it: lights_at() of their ribbon, 0 without
   int16_t sun_x;                     // the sun's now, -1 down
   float light;                       // the scene's now, see in_light()
   std::map<std::string, float> lit;  // the sprites in it, and the least light each is in
@@ -50,6 +48,7 @@ struct Running {
   std::string rare;                    // the sprite of the rare encounter on, see met_live_rare.h
   std::function<uint32_t(int)> visit;  // the show's visitors, see visitors()
   int visits;
+  int turn = -1;  // which of the shows that take turns is on, -1 by the picture's half hour
 };
 inline Running R;
 
@@ -144,11 +143,31 @@ inline bool ready(const std::string &name) {
   s.fade_ms = 300;
   s.glows = {LAMP};
   s.shade = NIGHT;
+  s.label = R.label;
   for (auto &[n, c] : sp->clips)
     s.clips[n] = {c.first, c.last, c.w, c.h};
   overlay::add(k, std::move(s));
   R.names.push_back(k);
   return true;
+}
+
+// 16 shades of col's light along a field: from clear to as opaque as shade says at v, 0 to 1 of the way
+template<class F> std::vector<uint32_t> light(uint32_t col, F shade) {
+  std::vector<uint32_t> v;
+  for (int i = 0; i < 16; i++)
+    v.push_back((uint32_t) lroundf(15 * std::clamp<float>(shade(i / 15.0f), 0, 1)) * 17 << 24 | col);
+  return v;
+}
+
+// name as a field the panel works out, w x h, see overlay::field(), in place of a sprite
+inline void add_field(const std::string &name, int w, int h, int kind, int a, int b, std::vector<uint32_t> colours) {
+  std::string k = key(name);
+  overlay::Source s = overlay::field(w, h, kind, a, b, std::move(colours));
+  s.fade_ms = 300;
+  s.label = R.label;
+  if (!overlay::sources.count(k))
+    R.names.push_back(k);
+  overlay::add(k, std::move(s));
 }
 
 // Takes name's animation off the panel, to be made again
@@ -182,9 +201,9 @@ inline void relight() {
 
 // How a copy is placed
 struct How {
-  bool left = false;                // mirrored, facing left
-  int fade = -1;                    // ms it fades in and out, -1 the usual 300
-  uint8_t depth = OVERLAY_NEAREST;  // a Depth, behind the scene's parts nearer than it
+  bool left = false;      // mirrored, facing left
+  int fade = -1;          // ms it fades in and out, -1 the usual 300
+  uint8_t depth = D_AIR;  // a Depth, behind the scene's parts nearer than it
 };
 // Copy i of sprite n at x, y doing what script says, with numbers by name in k, see overlay_script.h, in the light
 // there is if it's lit. With a frame of its own if the script plays frames. o.left mirrors it with its left at x all
@@ -216,16 +235,54 @@ inline void clear(const std::string &n) { overlay::clear(key(n)); }
 
 inline std::string num(int v) { return std::to_string(v); }
 
+// A shape for a box from row top, see OVERLAY_DO_SHAPE: runs of columns from each one's row in from down to just
+// above its row in to, H without to. The two nearest alike are joined while there are more than SHAPE_RUNS, showing
+// only what both would.
+inline constexpr size_t SHAPE_RUNS = 24;
+static_assert(SHAPE_RUNS <= OVERLAY_SHAPE_RUNS, "the panel takes the shape");
+inline std::string column_shape(const uint8_t *from, const uint8_t *to, int top) {
+  struct Run {
+    int w, top, bottom;
+  };
+  std::vector<Run> r;
+  for (int x = 0; x < W; x++) {
+    int a = from[x], b = to ? std::max<int>(a, to[x]) : H;
+    if (!r.empty() && r.back().top == a && r.back().bottom == b)
+      r.back().w++;
+    else
+      r.push_back({1, a, b});
+  }
+  auto apart = [&](size_t i) { return abs(r[i].top - r[i + 1].top) + abs(r[i].bottom - r[i + 1].bottom); };
+  while (r.size() > SHAPE_RUNS) {
+    size_t k = 0;
+    for (size_t i = 1; i + 1 < r.size(); i++)
+      if (apart(i) < apart(k))
+        k = i;
+    int a = std::max(r[k].top, r[k + 1].top);
+    r[k] = {r[k].w + r[k + 1].w, a, std::max(a, std::min(r[k].bottom, r[k + 1].bottom))};
+    r.erase(r.begin() + (long) k + 1);
+  }
+  std::string t = "shape ";
+  for (size_t i = 0; i < r.size(); i++)
+    t += (i ? ", " : "") + num(r[i].w) + ", " + num(r[i].top - top) + ", " + num(r[i].bottom - top);
+  return t;
+}
+
 // A leg of a path: to x, y in ms
 struct Leg {
   int x, y, ms;
   const char *ease = "none";
 };
-// Moves along legs one after another, each waited for
+// Moves along legs one after another, each waited for. One longer than a glide takes goes in parts, each the share
+// of the way left from where it is.
 inline std::string path(std::initializer_list<Leg> legs) {
   std::string t;
   for (const Leg &l : legs)
-    t += "move " + num(l.x) + ", " + num(l.y) + " over " + num(l.ms) + " ease " + l.ease + "; wait " + num(l.ms) + "\n";
+    for (int n = l.ms / 65536 + 1, k = n; k > 0; k--) {
+      std::string to = k == 1 ? num(l.x) + ", " + num(l.y)
+                              : "x + (" + num(l.x) + " - x) / " + num(k) + ", y + (" + num(l.y) + " - y) / " + num(k);
+      t += "move " + to + " over " + num(l.ms / n) + " ease " + l.ease + "; wait " + num(l.ms / n) + "\n";
+    }
   return t;
 }
 inline int path_ms(std::initializer_list<Leg> legs) {
@@ -345,13 +402,15 @@ inline void visitors(uint32_t mean, uint32_t first, int n, std::function<uint32_
 
 // ---- the sky
 
-// The top row of what stands in front of the sky in each column: the land, the mountains' far ridge with far, the
-// sea's horizon, the trees, the cabin, the flagpole and its flag, the lighthouse, and the town's buildings with
-// what's on their roofs
-inline void skyline(const Scene &s, uint8_t top[W], bool far = true) {
+// The top row of what stands in front of the sky in each column: the land, the sea's horizon, the trees, the cabin,
+// the flagpole and its flag, the lighthouse, and the town's buildings with what's on their roofs. far: 2 with the
+// mountains' far ridge, 1 without it, 0 without the far hills either.
+inline void skyline(const Scene &s, uint8_t top[W], int far = 2) {
   for (int x = 0; x < W; x++) {
-    int y = std::min({s.land->hill[0][x], s.land->hill[1][x], s.land->hill[2][x]});
-    if (s.ridge && far)
+    int y = std::min(s.land->hill[1][x], s.land->hill[2][x]);
+    if (far > 0)
+      y = std::min<int>(y, s.land->hill[0][x]);
+    if (far > 1 && s.ridge)
       y = std::min<int>(y, s.land->ridge[x]);
     if (s.sea)
       y = std::min<int>(y, s.sea_top);
@@ -367,14 +426,13 @@ inline void skyline(const Scene &s, uint8_t top[W], bool far = true) {
     up(t.x - half, t.x + half, t.top);
   }
   if (s.cabin)
-    up(s.cabin_x - 17, s.cabin_x + 17, s.cabin_y - 32);
+    up(s.cabin_x + EAVES_L - 1, s.cabin_x + EAVES_R + 1, s.cabin_y - CABIN_TOP - 1);
   if (s.pole_x >= 0)
     up(s.pole_x - PENNANT_LEFT, s.pole_x + PENNANT_RIGHT, s.pole_top);
   if (s.lighthouse)
     up(LH_X - 6, LH_X + 6, s.lh_y - 34);
-  static constexpr int8_t ROOF[] = {0, 5, 12, 14};  // a flat roof, a box on it, an antenna, a spire
   for (int i = 0; i < s.nbld; i++)
-    up(s.bld[i].x, s.bld[i].x + s.bld[i].w - 1, s.bld[i].top - ROOF[s.bld[i].kind & 3]);
+    up(s.bld[i].x - 1, s.bld[i].x + s.bld[i].w, s.bld[i].top - ROOF_UP[s.bld[i].kind]);
 }
 
 // The moon's whole disc in the sky: under the forecast, away from the sides it would wrap round, and above
@@ -391,9 +449,9 @@ inline bool moon_clear(const Scene &s) {
   return true;
 }
 
-// Whether pixel c on row y is the night or day sky, or a star in it
-inline bool sky_px(const Scene &s, uint8_t c, int y) {
-  return c == s.ix[C_SKY + band_of(y)] || c == s.ix[C_DIM] || c == s.ix[C_STAR];
+// Whether pixel c at x, y is the night or day sky, or a star in it
+inline bool sky_px(const Scene &s, uint8_t c, int x, int y) {
+  return c == s.ix[C_SKY + band_at(x, y)] || c == s.ix[C_DIM] || c == s.ix[C_STAR];
 }
 
 // The row at the left edge for a w x h sprite to cross the sky to the right edge from, its top dy lower there, with
@@ -410,7 +468,7 @@ inline int sky_line(const Scene &s, int w, int h, int lo, int hi, int dy) {
   for (int y = std::max(0, std::min(lo, lo + dy) - 1); y <= std::min(H - 1, std::max(hi, hi + dy) + h); y++) {
     row(s, y, px);
     for (int x = 0; x < W; x++) {
-      for (int i = 0; i < 6 && !sky_px(s, px[x], y); i++) {
+      for (int i = 0; i < 6 && !sky_px(s, px[x], x, y); i++) {
         int top = y0[i] + dy * std::max(0, x - w) / W;  // the sprite over this column, a row either side
         clear[i] = clear[i] && (y < top - 1 || y > top + h);
       }
@@ -477,12 +535,13 @@ inline uint32_t across(const char *n, int x0, int y0, int x1, int y1, int ms, co
   return (uint32_t) ms;
 }
 
-// Copy 0 of n soars in from off the side away from the sun, circles rx by ry px round row y there a while and goes
-// off higher up, facing the way it flies. The ms it takes.
+// Copy 0 of n, seen from below, soars in from off the side away from the sun, circles rx by ry px round row y there
+// a while and goes off higher up, turning the way it flies. The ms it takes.
 inline uint32_t soar(const char *n, int y, int rx, int ry) {
   bool left = R.sun_x > W / 2;  // where it comes in from
   place(n, 0, left ? -40 : W + 20, y - 16, R"(
-    face 0 mirror level
+    smooth on
+    face 0 tilt 180 rate 60
     wave x -rx, rx, 12000, 12000 jitter 20 slow both
     wave y -ry, ry, 8000, 8000 jitter 20 slow both
     move x1, y over 12000 ease out
@@ -495,23 +554,24 @@ inline uint32_t soar(const char *n, int y, int rx, int ry) {
   return 56000;
 }
 
-// Gulls back and forth across the picture and round out of sight, on gusts of slow waves, facing the way they fly.
-// Each from x, y at speed s0..s1, between rows top and bottom, the others beating in their own time.
-struct Gull {
+// Birds back and forth across the picture and round out of sight, on gusts of slow waves, facing the way they fly:
+// copies of n from copy on, in its clip if it has one. Each from x, y at speed s0..s1, between rows top and bottom,
+// the others beating in their own time.
+struct Bird {
   int x, y;
   float s0, s1;
   int top, bottom;
 };
-inline void flock(std::initializer_list<Gull> gulls) {
+inline void flock(const char *n, int copy, const char *clip, std::initializer_list<Bird> birds) {
   int i = 0;
-  for (const Gull &g : gulls) {
-    place("gull", i, g.x, g.y, std::string(R"(
+  for (const Bird &b : birds) {
+    place(n, copy + i, b.x, b.y, (*clip ? std::string("clip ") + clip : std::string()) + R"(
       area -24, top, 344, bottom bounce
       wave speed 70, 130, 4000, 4000 hold 2000, 2000 jitter 50 random slow both
       face 0 mirror level
       wander s0, s1, 0, 20, 3000, 9000, 0, 0
-    )") + (i ? "frame " + num(5 * i % 8) : ""),
-          {{"top", g.top}, {"bottom", g.bottom}, {"s0", g.s0}, {"s1", g.s1}});
+    )" + (i ? "rate " + num(100 + 9 * i) : ""),
+          {{"top", b.top}, {"bottom", b.bottom}, {"s0", b.s0}, {"s1", b.s1}});
     i++;
   }
 }
@@ -523,7 +583,7 @@ inline void chimney(const char *name, int puffs, int x, int y, int rise, int dri
   const Frames *sp = frames_of(name);
   if (!sp)
     return;
-  int ms = sp->ms() - STEP;  // a step less for the waves' jump back keeps them in step with the frames
+  int ms = sp->ms();
   int left = wdir < 0 ? drift + 20 : 20, right = wdir < 0 ? 30 : drift + 30, x0 = x - sp->w / 2;
   for (int i = 0; i < puffs; i++)
     place(name, i, x0, y - sp->h / 2,
@@ -548,8 +608,8 @@ inline void chimney(const char *name, int puffs, int x, int y, int rise, int dri
 
 // Some of the picture's bright stars in full view sparkle now and then, each from another of the twinkle's dark
 // whiles, so they don't line up: the big ones first, as far from the others as they can be. Not near the moon, nor
-// over the forecast or skip.
-inline void twinkle_stars(const Scene &s, Box skip = {}) {
+// over the forecast or skip, most of them at most.
+inline void twinkle_stars(const Scene &s, Box skip = {}, int most = 6) {
   uint8_t px[W];
   int pick[6], n = 0;
   bool seen[std::size(STARS)] = {};
@@ -560,7 +620,7 @@ inline void twinkle_stars(const Scene &s, Box skip = {}) {
               (!s.moon || abs(x - s.moon_x) > 20 || abs(y - s.moon_y) > 20) && !(s.overlay && y < OV_H + 2) &&
               !(skip.w && x > skip.x - 3 && x < skip.x + skip.w + 2 && y > skip.y - 3 && y < skip.y + skip.h + 2);
   }
-  for (; n < 6; n++) {
+  for (; n < most; n++) {
     int best = -1, far = -1;
     for (int i = 0; i < s.nbright; i++) {
       int d = 9999;
@@ -578,7 +638,7 @@ inline void twinkle_stars(const Scene &s, Box skip = {}) {
   static constexpr int DARK[] = {0, 9, 4, 13, 8, 17};  // its frames that start a dark while
   for (int i = 0; i < 6; i++)
     if (i < n)
-      place("twinkle", i, s.bright_x[pick[i]] - 2, s.bright_y[pick[i]] - 2, "frame " + num(DARK[i]));
+      place("twinkle", i, s.bright_x[pick[i]] - 2, s.bright_y[pick[i]] - 2, "blend add; frame " + num(DARK[i]));
     else
       remove("twinkle", i);
 }
@@ -597,6 +657,7 @@ inline void stop() {
   free_px();
   R.show = -1;
   R.flag = false;
+  R.lights = 0;
   R.rare.clear();
   R.visit = nullptr;
   R.visits = 0;

@@ -1,8 +1,8 @@
-// met_scene.h as a panel picture. met.yaml calls redraw() every few minutes so the sun and moon move. Only changed
-// rows are sent to the panel. MET Norway is asked for the forecast through fetch.h, again once its last answer has
-// expired, with If-Modified-Since, soon again after a server error and less often while it refuses or doesn't answer,
-// see Forecasts::got() and fetch::Schedule. The forecast is kept through all of that until it runs out. NOAA is asked
-// for the Kp every 3 hours while the aurora is on, see KpIndex.
+// met_scene.h as a panel picture, the forecast over it with marks.h. met.yaml calls redraw() every few minutes so the
+// sun and moon move. Only changed rows are sent to the panel. MET Norway is asked for the forecast through fetch.h,
+// again once its last answer has expired, with If-Modified-Since, soon again after a server error and less often while
+// it refuses or doesn't answer, see Forecasts::got() and fetch::Schedule. The forecast is kept through all of that
+// until it runs out. NOAA is asked for the Kp every 3 hours while the aurora is on, see KpIndex.
 #pragma once
 #include <algorithm>
 #include <cmath>
@@ -12,6 +12,7 @@
 #include "../panel/fetch.h"
 #include "../panel/items.h"
 #include "../panel/picture.h"
+#include "../panel/picture_marks.h"
 #include "met_kp.h"
 #include "met_live_shows.h"
 #include "met_raster.h"
@@ -38,6 +39,7 @@ inline double lat, lon;
 inline std::string name;
 inline bool with_forecast;    // the Panel Weather Forecast switch
 inline Options options;       // set from met.yaml
+inline SnowCover snow_cover;  // the snow on the ground
 inline uint32_t pal[16];      // the scene's colours, for picture.h
 inline picture::Parts parts;  // and its parts
 
@@ -132,8 +134,8 @@ inline int utc_offset(uint32_t t) {
   return (int) (unix_of(l.year, l.month, l.day_of_month, l.hour, l.minute, l.second) - t);
 }
 
-// The scene, only while picture.h makes the picture. Its stamps and overlay are blocks of their own, the land is
-// kept while it's the panel's picture.
+// The scene, only while picture.h makes the picture. Its stamps are a block of their own, the land is kept while it's
+// the panel's picture.
 struct Drawing {
   Scene scene;
   uint8_t row[W];  // the last row pixel() drew
@@ -148,8 +150,6 @@ inline bool counting;  // drawing has it but its colours, see prepare()
 inline void free_drawing() {
   if (drawing) {
     RAMAllocator<Stamps>().deallocate(drawing->scene.stamps, 1);
-    if (drawing->scene.ov)
-      RAMAllocator<uint8_t>().deallocate(drawing->scene.ov[0], OV_H * W / 4);
     RAMAllocator<Drawing>().deallocate(drawing, 1);
   }
   drawing = nullptr;
@@ -161,8 +161,7 @@ inline void free_drawing() {
 }
 
 inline bool new_drawing() {
-  size_t ov_bytes = with_forecast ? OV_H * W / 4 : 0;
-  uint8_t at = picture::room_for(sizeof(Drawing) + sizeof(Stamps) + ov_bytes + (land ? 0 : sizeof(Land)),
+  uint8_t at = picture::room_for(sizeof(Drawing) + sizeof(Stamps) + (land ? 0 : sizeof(Land)),
                                  sizeof(Drawing));  // internal RAM, PSRAM when that's short
   if (!at)
     return false;
@@ -171,11 +170,9 @@ inline bool new_drawing() {
     land->made = false;
   Drawing *c = RAMAllocator<Drawing>(at).allocate(1);
   Stamps *stamps = RAMAllocator<Stamps>(at).allocate(1);
-  uint8_t *ov = ov_bytes ? RAMAllocator<uint8_t>(at).allocate(ov_bytes) : nullptr;
-  if (!land || !c || !stamps || (ov_bytes && !ov)) {
+  if (!land || !c || !stamps) {
     RAMAllocator<Drawing>().deallocate(c, 1);
     RAMAllocator<Stamps>().deallocate(stamps, 1);
-    RAMAllocator<uint8_t>().deallocate(ov, ov_bytes);
     if (new_land) {
       RAMAllocator<Land>().deallocate(land, 1);
       land = nullptr;
@@ -183,7 +180,6 @@ inline bool new_drawing() {
     return false;
   }
   c->scene.stamps = stamps;
-  c->scene.ov = (uint8_t (*)[W / 4]) ov;
   c->scene.land = land;
   drawing = c;
   return true;
@@ -196,8 +192,6 @@ inline bool begin() {
     picture::S.waiting = "waiting for the time from Home Assistant";
     return false;
   }
-  if (drawing && !drawing->scene.ov != !with_forecast)
-    free_drawing();  // the forecast went on or off
   if (!drawing && !new_drawing()) {
     picture::S.waiting = "no RAM to draw it";
     return false;
@@ -209,9 +203,12 @@ inline bool begin() {
 #pragma GCC diagnostic pop
   options.frame++;
   options.kp = kp.at((uint32_t) t.timestamp);
+  snow_cover.step(weather, (uint32_t) t.timestamp);
+  options.snow_cm = snow_cover.cm;
   Scene &s = drawing->scene;
   weather.wave = wave_at(sea, (uint32_t) t.timestamp);
   build(s, weather, lat, lon, (uint32_t) t.timestamp, with_forecast, utc_offset, options);
+  marks::set(name, forecast_marks(s, weather, (uint32_t) t.timestamp, utc_offset));
   s.live = live::leaves_out(s);  // what the animations that fit it draw themselves
   drawing->colours.start(s);
   counting = true;
@@ -447,6 +444,7 @@ void setup(double latitude, double longitude, const char *picture, const char *e
   s.done = free_drawing;
   s.coding(encoding, quality);
   picture::add(name, s);
+  marks::on(name, "forecast");
 }
 
 }  // namespace flexit::panel::met

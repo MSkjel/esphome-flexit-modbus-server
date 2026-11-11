@@ -1,5 +1,5 @@
 """
-Writes packages/code/marks/marks_font.cpp: Noto Sans's glyphs at the sizes marks.h draws text in, 4 bits of
+Writes packages/code/panel/marks_font.cpp: Noto Sans's glyphs at the sizes marks.h draws text in, 4 bits of
 coverage a pixel. Each is drawn at 4x and averaged down, as the panel's own text is.
     python3 scripts/marks_font.py [NOTO_DIR]   (default /usr/share/fonts/noto)
 Noto Sans is under the SIL Open Font License 1.1.
@@ -25,7 +25,7 @@ FACES = [
     ("HUGE", "Medium", 20, FIGURES),
 ]
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "..", "packages", "code", "marks", "marks_font.cpp")
+OUT = os.path.join(HERE, "..", "packages", "code", "panel", "marks_font.cpp")
 
 
 def lines(items):

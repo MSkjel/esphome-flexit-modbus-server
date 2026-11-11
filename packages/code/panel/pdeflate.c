@@ -89,11 +89,18 @@ static inline unsigned getbits(inf_t *s, int need) {  // up to 16
   return v;
 }
 
-// Builds h from n code lengths, its symbols into sym. < 0 = too many codes, 0 = complete, > 0 = some left over.
-static int build(huff_t *h, uint16_t *sym, const uint8_t *lens, int n) {
+// Code lengths, 4 bits each
+static inline unsigned len_at(const uint8_t *lens, int i) { return lens[i / 2] >> (i & 1 ? 4 : 0) & 15; }
+static inline void len_set(uint8_t *lens, int i, unsigned l) {
+  lens[i / 2] = (uint8_t) (i & 1 ? (lens[i / 2] & 0x0F) | l << 4 : (lens[i / 2] & 0xF0) | l);
+}
+
+// Builds h from the n code lengths from the one at from on, its symbols into sym. < 0 = too many codes, 0 =
+// complete, > 0 = some left over.
+static int build(huff_t *h, uint16_t *sym, const uint8_t *lens, int from, int n) {
   int16_t count[16] = {0}, offs[16];
   for (int i = 0; i < n; i++)
-    count[lens[i]]++;
+    count[len_at(lens, from + i)]++;
   int left = 1, first = 0, index = 0;
   for (int l = 1; l < 16; l++) {
     left = (left << 1) - count[l];
@@ -111,8 +118,8 @@ static int build(huff_t *h, uint16_t *sym, const uint8_t *lens, int n) {
     while ((unsigned) p << 11 >= h->limit[l])
       l++;
   for (int i = 0; i < n; i++)
-    if (lens[i])
-      sym[offs[lens[i]]++] = (uint16_t) i;
+    if (len_at(lens, from + i))
+      sym[offs[len_at(lens, from + i)]++] = (uint16_t) i;
   h->symbol = sym;
   return count[0] == n ? 0 : left;  // no codes: nothing will decode
 }
@@ -213,29 +220,31 @@ static bool stored(inf_t *s) {
   return true;
 }
 
-static bool dynamic(inf_t *s, huff_t *lit, huff_t *dist, uint16_t *lsym, uint16_t *dsym, uint8_t *lens) {
+// A dynamic block's two codes, read from its start. On its own, so the lengths are off the stack again before the
+// block is decoded.
+__attribute__((noinline)) static bool tables(inf_t *s, huff_t *lit, huff_t *dist, uint16_t *lsym, uint16_t *dsym) {
+  uint8_t lens[(288 + 32) / 2] = {0};
   int nlen = (int) getbits(s, 5) + 257, ndist = (int) getbits(s, 5) + 1, ncode = (int) getbits(s, 4) + 4;
   if (s->short_ || nlen > 286 || ndist > 30)
     return false;
-  memset(lens, 0, 19);
   for (int i = 0; i < ncode; i++)
-    lens[CLORDER[i]] = (uint8_t) getbits(s, 3);
-  if (s->short_ || build(lit, lsym, lens, 19) != 0)
+    len_set(lens, CLORDER[i], getbits(s, 3));
+  if (s->short_ || build(lit, lsym, lens, 0, 19) != 0)
     return false;  // the code length code has to be complete
   for (int i = 0; i < nlen + ndist;) {
     int sym = decode(s, lit);
     if (s->short_ || sym < 0)
       return false;
     if (sym < 16) {
-      lens[i++] = (uint8_t) sym;
+      len_set(lens, i++, (unsigned) sym);
       continue;
     }
-    uint8_t len = 0;
+    unsigned len = 0;
     int rep;
     if (sym == 16) {
       if (!i)
         return false;  // nothing to repeat
-      len = lens[i - 1];
+      len = len_at(lens, i - 1);
       rep = 3 + (int) getbits(s, 2);
     } else {
       rep = sym == 17 ? 3 + (int) getbits(s, 3) : 11 + (int) getbits(s, 7);
@@ -243,24 +252,21 @@ static bool dynamic(inf_t *s, huff_t *lit, huff_t *dist, uint16_t *lsym, uint16_
     if (s->short_ || i + rep > nlen + ndist)
       return false;
     while (rep--)
-      lens[i++] = len;
+      len_set(lens, i++, len);
   }
-  if (!lens[256])
+  if (!len_at(lens, 256))
     return false;  // no end code
   // An incomplete code is only OK as a single 1-bit code, nothing longer after it
-  int left = build(lit, lsym, lens, nlen);
+  int left = build(lit, lsym, lens, 0, nlen);
   if (left < 0 || (left > 0 && lit->limit[15] != lit->limit[1]))
     return false;
-  left = build(dist, dsym, lens + nlen, ndist);
-  if (left < 0 || (left > 0 && dist->limit[15] != dist->limit[1]))
-    return false;
-  return codes(s, lit, dist);
+  left = build(dist, dsym, lens, nlen, ndist);
+  return !left || (left > 0 && dist->limit[15] == dist->limit[1]);
 }
 
 uint32_t pinflate(const uint8_t *in, uint32_t n, uint8_t *out, unsigned width, unsigned stride, uint32_t len,
                   uint32_t hist) {
   uint16_t lsym[288], dsym[30];
-  uint8_t lens[288 + 32];
   huff_t lit, dist;
   inf_t s = {.in = in,
              .start = in,
@@ -283,7 +289,7 @@ uint32_t pinflate(const uint8_t *in, uint32_t n, uint8_t *out, unsigned width, u
       return 0;
     bool ok = type == 0   ? stored(&s)
               : type == 1 ? codes(&s, &FIX_LIT, &FIX_DIST)
-              : type == 2 ? dynamic(&s, &lit, &dist, lsym, dsym, lens)
+              : type == 2 ? tables(&s, &lit, &dist, lsym, dsym) && codes(&s, &lit, &dist)
                           : false;
     if (!ok)
       return 0;
