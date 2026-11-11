@@ -6,11 +6,12 @@
 # url: where to get the .fxup, built by tools/mkupdate.py in the firmware repo. The default is the newest GitHub
 # release, any other HTTP(S) URL works too. The "Panel Firmware URL" text box starts at it, change it there for a
 # one-off. "Flash Panel Firmware" starts the update, "Panel Firmware Update" and "Panel Firmware Progress" show how
-# it goes.
+# it goes. The URL, Progress, Force and Pre-releases start off disabled in Home Assistant, turn them on when needed.
 #
 # "Panel Firmware", the update entity, shows up under Settings > Updates in Home Assistant when the file at the URL
 # is newer than the panel, with its own install button. check_interval: how often it looks, never for only when
-# it's asked to. Each look reads only the start of the file.
+# it's asked to. Each look reads only the start of the file. With "Panel Firmware Pre-releases" on, a GitHub URL
+# to the latest release's file, like the default, goes by the newest release that has it, a pre-release too.
 #
 # The ESP downloads the file a few KB at a time into its spare app slot, where its own next OTA update goes, beside
 # the main loop, and streams it to the panel's ROM bootloader. What it checks and how the flash goes:
@@ -38,6 +39,7 @@ text:
     id: panel_firmware_url
     name: "Panel Firmware URL"
     entity_category: config
+    disabled_by_default: true
     icon: "mdi:link-variant"
     mode: text
     optimistic: true
@@ -50,13 +52,14 @@ button:
     entity_category: config
     icon: "mdi:cellphone-arrow-down"
     on_press:
-      - lambda: flexit::panel::update::download(id(panel_firmware_url).state);
+      - lambda: flexit::panel::update::download(flexit::panel::update::check.source());
 
 switch:
   - platform: template
     id: panel_firmware_force
     name: "Panel Firmware Force"
     entity_category: config
+    disabled_by_default: true
     icon: "mdi:cellphone-arrow-down-variant"
     optimistic: true
     restore_mode: DISABLED  # off after every restart
@@ -64,6 +67,18 @@ switch:
       - lambda: flexit::panel::update::force = true;
     turn_off_action:
       - lambda: flexit::panel::update::force = false;
+  - platform: template
+    id: panel_firmware_prereleases
+    name: "Panel Firmware Pre-releases"
+    entity_category: config
+    disabled_by_default: true
+    icon: "mdi:flask-outline"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - lambda: flexit::panel::update::set_prereleases(true);
+    turn_off_action:
+      - lambda: flexit::panel::update::set_prereleases(false);
 
 text_sensor:
   - platform: template
@@ -77,6 +92,7 @@ sensor:
     id: panel_firmware_progress
     name: "Panel Firmware Progress"
     entity_category: diagnostic
+    disabled_by_default: true
     unit_of_measurement: "%"
     accuracy_decimals: 0
     icon: "mdi:percent"

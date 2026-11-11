@@ -724,10 +724,6 @@ inline void loop(uint32_t deadline_us) {
     case JPEG_TRY:
       jpeg(deadline_us);
       break;
-    case CHOOSE:
-      if (!choose())
-        break;
-      [[fallthrough]];
     case PLAN:
       if (!plan())
         break;
@@ -736,6 +732,8 @@ inline void loop(uint32_t deadline_us) {
       send(deadline_us);
       break;
   }
+  if (S.phase == CHOOSE)  // at once, so the source's RAM is free before the animations look for theirs
+    choose();
 }
 
 }  // namespace flexit::panel::picture

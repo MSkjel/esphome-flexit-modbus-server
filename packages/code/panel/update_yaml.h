@@ -59,11 +59,30 @@ struct Head : fetch::Request {
   }
 };
 
-// The file at the Panel Firmware URL, looked at every check_interval and when Home Assistant asks
+// The newest release's file, from GitHub's list of releases
+struct List : fetch::Request {
+  Newest newest;
+  bool feed(const char *p, size_t n) override { return newest.scan(p, n) && newest.url.empty(); }
+};
+
+// The file at the Panel Firmware URL, looked at every check_interval and when Home Assistant asks. With pre-releases
+// and a GitHub URL to the latest release's file, first which release's file that is.
 struct Check : fetch::Asker {
   const std::string *url = nullptr;  // the text's state
-  fetch::Request *make(int) override {
-    auto *r = fetch::request<Head>(*url);
+  std::string list, newest;          // with pre-releases: the list for the URL, and the file it had
+  fetch::Request *make(int step) override {
+    std::string file;
+    if (!step) {
+      list = prereleases ? release_list(*url, &file) : "";
+      steps = list.empty() ? 1 : 2;
+    }
+    if (steps == 2 && !step) {
+      auto *r = fetch::request<List>(list);
+      if (r)
+        r->newest.file = file;
+      return r;
+    }
+    auto *r = fetch::request<Head>(steps == 2 ? newest : *url);
     if (r) {
       r->header = "Range";
       r->value = "bytes=0-" + std::to_string(HEAD_LEN - 1);
@@ -72,11 +91,27 @@ struct Check : fetch::Asker {
     return r;
   }
   bool got(fetch::Request &r) override {
+    if (steps == 2 && !step) {
+      newest = static_cast<List &>(r).newest.url;
+      return !newest.empty();
+    }
     auto &h = static_cast<Head &>(r);
     return check_head(h.head, h.got);
   }
+  // Where the file is: with pre-releases the one the last look found, else the URL
+  std::string source() const {
+    std::string file;
+    return prereleases && !newest.empty() && release_list(*url, &file) == list ? newest : *url;
+  }
 };
 inline Check check;
+
+// The Panel Firmware Pre-releases switch, which looks again at once
+inline void set_prereleases(bool on) {
+  prereleases = on;
+  if (check.url && !check.asking)
+    check.ask();
+}
 
 // The file into the spare app slot as it comes
 struct Staging : fetch::Request {
@@ -92,7 +127,8 @@ struct Flasher : fetch::Caller {
 };
 inline Flasher flasher;
 
-// Flash Panel Firmware and Install: the file at url downloaded, before any other request waiting, then flashed
+// Flash Panel Firmware and Install: the file at url, check.source(), downloaded before any other request waiting, then
+// flashed
 inline void download(const std::string &url) {
   if (!stage_begin())
     return;
@@ -120,7 +156,7 @@ template<typename Entity, typename Text> inline void attach(Entity *entity, Text
     if (!check.asking)
       check.ask();
   });
-  entity->on_install([url]() { download(url->state); });
+  entity->on_install([]() { download(check.source()); });
   on_change = [entity]() {
     if (panel_version >= 0 && latest_version >= 0)
       entity->show(version_text(panel_version), version_text(latest_version), latest_version > panel_version,

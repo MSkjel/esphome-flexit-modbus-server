@@ -95,8 +95,11 @@ static void tree(const Scene &s, int i, int y, uint8_t *out) {
 // The sky's bands, the glow around a low sun, the aurora, the stars, the moon and the sun
 static void sky_row(const Scene &s, int y, uint8_t *out) {
   const uint8_t *ix = s.ix;
+  uint8_t sky[4];  // band_at() goes by x & 3
+  for (int x = 0; x < 4; x++)
+    sky[x] = ix[C_SKY + band_at(x, y)];
   for (int x = 0; x < W; x++)
-    out[x] = ix[C_SKY + band_at(x, y)];
+    out[x] = sky[x & 3];
   if (y > HORIZON)
     return;
   if (s.glow) {
@@ -184,10 +187,12 @@ static void rainbow_row(const Scene &s, int y, uint8_t *out) {
 // Hill l, the far one with the mountains' ridge behind it and snow above the snow line
 static void hill_row(const Scene &s, int y, uint8_t *out, int l) {
   const Land &land = *s.land;
-  if (l == 0 && s.ridge)
+  if (l == 0 && s.ridge && y >= land.ridge_top)
     for (int x = 0; x < W; x++)
       if (y >= land.ridge[x])
         out[x] = s.ix[C_RIDGE];
+  if (y < land.hill_top[l])
+    return;
   const uint8_t *top = land.hill[l];
   uint8_t c = s.ix[C_HILL + l];
   if (l == 0 && s.ground == G_MOUNTAINS) {
@@ -219,6 +224,8 @@ static void sea_row(const Scene &s, int y, uint8_t *out) {
 }
 
 static void fog_row(const Scene &s, int y, uint8_t *out, int l) {
+  if (y < s.fog_from[l])
+    return;
   for (int x = 0; x < W; x++)
     if (y >= s.fog_top[l][x])
       out[x] = s.ix[C_FOG];

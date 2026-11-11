@@ -258,6 +258,33 @@ int main() {
   latest_version = -1;
   CHECK(version_text(0x00020A) == "0.2.10");
 
+  // Pre-releases: a GitHub URL to the latest release's file goes by the API's list, and the list's newest file
+  std::string file;
+  CHECK(release_list("https://github.com/MSkjel/flexit-ci600-firmware/releases/latest/download/ci600.fxup", &file) ==
+            "https://api.github.com/repos/MSkjel/flexit-ci600-firmware/releases?per_page=5" &&
+        file == "ci600.fxup");
+  CHECK(release_list("https://github.com/MSkjel/flexit-ci600-firmware/releases/download/v0.1.10/ci600.fxup", &file)
+            .empty());
+  CHECK(release_list("http://192.168.1.42:8000/ci600.fxup", &file).empty());
+  CHECK(release_list("https://github.com/MSkjel/flexit-ci600-firmware/releases/latest/download/", &file).empty());
+  CHECK(release_list("https://github.com/MSkjel/releases/latest/download/ci600.fxup", &file).empty());
+  auto newest = [](const std::string &json) {
+    Newest n;
+    n.file = "ci600.fxup";
+    for (size_t i = 0; i < json.size(); i += 7)  // as it streams
+      n.scan(json.data() + i, std::min<size_t>(7, json.size() - i));
+    return n.url;
+  };
+  const std::string d = "https://github.com/MSkjel/flexit-ci600-firmware/releases/download/";
+  CHECK(newest(R"([{"tag_name":"v0.1.11","prerelease":true,"assets":[{"name":"ci600.bin","browser_download_url":")" +
+               d + R"(v0.1.11/ci600.bin"},{"name":"ci600.fxup","browser_download_url":")" + d +
+               R"(v0.1.11/ci600.fxup"}]},{"tag_name":"v0.1.10","assets":[{"browser_download_url":")" + d +
+               R"(v0.1.10/ci600.fxup"}]}])") == d + "v0.1.11/ci600.fxup");
+  CHECK(newest(R"([{"tag_name":"v0.1.12","assets":[]},{"tag_name":"v0.1.11","assets":[{"browser_download_url":")" + d +
+               R"(v0.1.11/old-ci600.fxup"},{"browser_download_url":")" + d + R"(v0.1.11/ci600.fxup"}]}])") ==
+        d + "v0.1.11/ci600.fxup");
+  CHECK(newest(R"({"message":"API rate limit exceeded"})").empty());
+
   // Another link version: said once, so it stays the last status, and gone when it's sorted
   on_change = [&changes]() { changes++; };
   changes = 0;

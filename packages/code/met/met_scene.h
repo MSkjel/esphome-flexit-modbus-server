@@ -236,6 +236,8 @@ struct Land {
   uint8_t hill[3][W];  // far, middle, near. Top row in each column, NONE for none
   uint8_t ridge[W];    // mountains, a higher and hazier ridge behind the peaks
   int8_t cap[W];       // mountains, the snow line's wave
+  // The highest of each one's rows, so row() passes over the rows above
+  uint8_t hill_top[3], ridge_top;
 };
 
 struct Pt {
@@ -306,6 +308,7 @@ struct Scene {
   bool bolt;
   int16_t bolt_x[7], bolt_y[7];
   uint8_t fog_top[2][W];  // over the far and the middle hills, NONE without fog
+  uint8_t fog_from[2];    // the highest of each one's rows
   Ground ground;
   bool snow_trees;  // snow on the spruces' tiers
   int16_t snowline;

@@ -26,14 +26,10 @@ panel with this firmware works fine without the ESP, just switch ESP off under S
 ```yaml
 substitutions:
   flexit_address: "1"
-  flexit_ref: main
-  flexit_refresh: 1d
 
 packages:
   flexit:
     url: https://github.com/MSkjel/esphome-flexit-modbus-server
-    ref: ${flexit_ref}
-    refresh: ${flexit_refresh}
     files:
       - packages/core.yaml
       - packages/controls.yaml
@@ -53,6 +49,7 @@ Clean Build Files, or ESPHome keeps the old library.
 `panel.yaml` gives Home Assistant `Panel Connected`, `Panel Temperature` (the panel's own sensor),
 `Panel Firmware`, `Panel Action` (filter reset and the like, picked on the panel), the screensaver and LED
 selects, `Panel Brightness`, `Panel Idle Brightness`, `Panel Night Mode`, `Panel Key Lock` and `Panel Restart`.
+`Panel Restart` starts off disabled: turn it on among the device's entities in Home Assistant when you want it.
 `Panel Link Windows Too Short`, `Panel Link Unanswered` and `Panel Link Lost` count link trouble since the ESP
 started. The rest of the panel's settings are in its own menu and [`panel_set`](#panel-settings).
 
@@ -826,12 +823,19 @@ so above quality 95 the busiest tiles lose their faint detail.
 `Panel Firmware Update`. A file the ESP refuses, like the version the panel already has, goes on anyway with
 `Panel Firmware Force` on. It's off again after a restart. The steps, and what to do when it doesn't work, are in
 the firmware's [flashing docs](https://github.com/MSkjel/flexit-ci600-firmware/blob/main/docs/flashing.md#from-home-assistant).
+`Panel Firmware URL`, `Panel Firmware Force`, `Panel Firmware Pre-releases` and `Panel Firmware Progress` start off
+disabled, turn them on among the device's entities when you need them.
 
 `Panel Firmware` is the same thing as an update in Home Assistant. Every 6 h (`check_interval`, `never` for only
 when you ask it to look) the ESP reads the
 version from the start of the file at `Panel Firmware URL`, and when that's newer than the panel it shows up under
 Settings > Updates, where Install does what the button does. It compares version numbers only, and a panel that
 doesn't report one, like a stock panel or one with another link version, shows as unknown. The button works for those.
+
+`Panel Firmware Pre-releases` takes the firmware's pre-releases too, the versions being tried out on its dev branch
+before they're released. With it on, the update and the button go by the newest release that has the file, a
+pre-release or not, as long as `Panel Firmware URL` is a GitHub link to the latest release's file, like the default.
+Turned off again, the panel stays on what it has until a release is newer.
 
 The file doesn't say which link version it has. If a flash leaves the panel on another one than the ESP,
 `Panel Firmware Update` says which of the two to update, and so does `Panel Firmware`'s summary.

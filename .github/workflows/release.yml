@@ -1,0 +1,31 @@
+# A release moves the release branch, the repo's default, to its tag: configs without a ref get it, see flexit_ref
+# in packages/core.yaml. A pre-release doesn't, nor a release that isn't the latest, such as a fix to an older
+# version.
+name: Release
+
+on:
+  release:
+    types: [released]
+
+permissions:
+  contents: write
+
+jobs:
+  branch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: The release branch to the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" -q .tag_name)
+          if [ "$latest" != "$TAG" ]; then
+            echo "$TAG isn't the latest release, $latest is"
+            exit 0
+          fi
+          git push --force origin "HEAD:refs/heads/release"

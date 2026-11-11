@@ -371,20 +371,22 @@ inline size_t data_max(bool sheet = false) {
 }
 
 // What making it takes of the ESP's RAM besides its pixels' own, and the biggest piece of that. First the colour
-// counts with the colours that occur. Then, with `counted`, the colour table, three frames, the records and
-// pdeflate's work for a frame, in three blocks: a still has one frame and no deflate.
+// counts, the colours that occur looked for once they're counted. Then, with `counted`, the colour table, three
+// frames, the records and pdeflate's work for a frame, in three blocks: a still has one frame and no deflate. With
+// colours of its own only the frames' hashes are counted, and nothing is looked up in a table.
 struct Ram {
   size_t bytes, block;
 };
 inline Ram ram_for(bool counted) {
   const Overlay &a = *W.a;
-  size_t f = a.frame_bytes(), data = data_max(), px = (size_t) a.src->frames * a.w * a.h;
-  if (!counted)  // W.hist, median_cut()'s bins and W.hash
-    return {BINS * 4 + 2 * std::min<size_t>(BINS, px) + 4 * a.src->frames, BINS * 4};
+  size_t bins = a.src->colours.empty() ? BINS : 0;  // the colours binned
+  size_t f = a.frame_bytes(), data = data_max();
+  if (!counted)  // W.hist and W.hash
+    return {4 * bins + 4 * a.src->frames, 4 * bins};
   if (a.still)
-    return {BINS + f + data, std::max<size_t>({BINS, data, f})};
+    return {bins + f + data, std::max<size_t>({bins, data, f})};
   size_t work = PDEFLATE_ENC + PDEFLATE_TOK(f) + PDEFLATE_REST(f), sheet = W.own ? data_max(true) : 0;
-  return {BINS + 3 * f + data + sheet + work, std::max<size_t>({BINS, data, PDEFLATE_ENC, PDEFLATE_TOK(f), sheet})};
+  return {bins + 3 * f + data + sheet + work, std::max<size_t>({bins, data, PDEFLATE_ENC, PDEFLATE_TOK(f), sheet})};
 }
 // All of it, from start to end
 inline Ram ram_for() {
@@ -626,29 +628,33 @@ inline bool start() {
     ESP_LOGW("panel", "Animation %s: the ESP has the RAM to make it at half size only", a.name.c_str());
   }
   a.looks = 0;
-  W.hist.assign(BINS, 0);
+  bool own = !s.colours.empty();
+  if (!own)
+    W.hist.assign(BINS, 0);
   W.hash.clear();
   W.sum = FNV_START;
   W.any_transp = false;
-  W.f = W.y = 0;
+  W.f = own && s.frames == 1 ? 1 : 0;  // counted already: no colours to bin, nor frames that repeat
+  W.y = 0;
   W.phase = COUNT;
   under_way = "making " + label(a);
   status(shown());
   return true;
 }
 
-// Counts the colours of a row or a few, and at the end of a frame its hash
+// Counts the colours of a row or a few, and at the end of a frame its hash. Only the hash with colours of its own.
 inline void count() {
   Overlay &a = *W.a;
   uint32_t h = W.sum;
+  uint32_t *hist = W.hist.empty() ? nullptr : W.hist.data();
   for (int n = 0; n < ROWS_PX && W.y < a.h; n += a.w, W.y++)
     for (int x = 0; x < a.w; x++) {
       uint32_t c = px(W.f, x, W.y);
       h = (h ^ c) * FNV_PRIME;
-      if (opaque(c))
-        W.hist[bin(c)]++;
-      else
+      if (!opaque(c))
         W.any_transp = true;
+      else if (hist)
+        hist[bin(c)]++;
     }
   W.sum = h;
   if (W.y < a.h)
@@ -678,6 +684,11 @@ inline void palette() {
     W.colours = (int) std::min<size_t>(own.size(), 16);
     std::copy_n(own.begin(), W.colours, a.pal);
   } else {
+    size_t used = 2 * occurring(W.hist);  // median_cut()'s bins
+    if (!panel::has_ram(used, used)) {
+      short_of_ram();
+      return;
+    }
     W.colours = median_cut(W.hist, W.any_transp ? 15 : 16, a.pal, bins);
     for (int i = 0; i < W.colours; i++)
       a.pal[i] |= 0xFF000000u;  // and 15 clear if any pixel is
@@ -690,7 +701,8 @@ inline void palette() {
     short_of_ram();
     return;
   }
-  W.lut.assign(BINS, 0xFF);  // filled as make() meets the colours
+  if (own.empty())
+    W.lut.assign(BINS, 0xFF);  // filled as make() meets the colours
   a.data.clear();
   a.data.reserve(data_max());  // so it never moves
   W.sheet.clear();
@@ -821,11 +833,17 @@ inline bool make(uint32_t deadline_us, bool fresh) {
     bool own = !a.src->colours.empty();
     uint8_t *lut = W.lut.data();
     const std::vector<uint32_t> &glows = a.src->glows;
+    uint32_t last = 0;  // the colour before, and its own nearest, as runs of one are common
+    uint8_t last_i = own ? nearest_own(last, a.pal, W.colours) : 0;
     for (int n = 0; n < ROWS_PX && W.y < a.h; n += a.w, W.y++) {
       uint8_t *row = W.frame.data() + (size_t) W.y * ((a.w + 1) / 2);
       for (int x = 0; x < a.w; x++) {
         uint32_t c = px(W.f, x, W.y);
-        uint8_t i = own ? nearest_own(c, a.pal, W.colours) : opaque(c) ? lut_index(lut, c, a.pal, W.colours) : 15;
+        if (own && c != last) {
+          last = c;
+          last_i = nearest_own(c, a.pal, W.colours);
+        }
+        uint8_t i = own ? last_i : opaque(c) ? lut_index(lut, c, a.pal, W.colours) : 15;
         if (opaque(c) && std::find(glows.begin(), glows.end(), c & 0xFFFFFF) != glows.end())
           a.glows |= (uint16_t) (1u << i);
         row[x / 2] = (uint8_t) (x & 1 ? row[x / 2] | i : i << 4);

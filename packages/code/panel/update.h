@@ -8,6 +8,7 @@
 #include <functional>
 #include <string>
 #include "esphome/core/defines.h"
+#include "json_scan.h"
 
 #ifndef USE_ESP32
 #error "The panel packages need an ESP32"
@@ -56,6 +57,22 @@ inline std::string link_note;        // which one to update if the panel has ano
 
 // A status when it changes, so it's still the last one there after the flash that caused it
 void set_link_note(const std::string &note);
+
+// ---- pre-releases, the Panel Firmware Pre-releases switch ----------------------------------------------
+// GitHub's releases/latest is the newest release that isn't a pre-release. With prereleases a URL to its file goes by
+// the newest release that has the file, a pre-release too, from the API's list of releases.
+inline bool prereleases = false;
+
+// The API's list for url when it's https://github.com/OWNER/REPO/releases/latest/download/FILE, with FILE into file.
+// Else "".
+std::string release_list(const std::string &url, std::string *file);
+
+// The list as it streams: the first asset that's file, the newest release's
+struct Newest : JsonScan {
+  std::string file, url;
+  void value(int depth, const char *key, int index, const char *v) override;
+  void end(int, const char *) override {}
+};
 
 // ---- the Modbus function 0x64 bootloader protocol -----------------------------------------------------
 inline constexpr uint8_t BL_ADDR = 1;  // the bootloader always answers here
