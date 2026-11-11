@@ -91,13 +91,17 @@ inline bool psram_has(size_t bytes, size_t block) {
   return left >= bytes && piece >= block;
 }
 
-// Whether the ESP has `bytes` of internal RAM free with some to spare, `block` of it in one piece: vectors and new
-// come from there. `big` more, `big_block` the biggest, are RAMAllocator's blocks, which go in PSRAM if it has room
+// What has_ram() leaves free of internal RAM: some for the rest of the ESP, and a request's while one runs
+inline size_t ram_spare() { return 8192 + requests * REQUEST_RAM; }
+
+// Whether the ESP has `bytes` of internal RAM free with ram_spare() left, `block` of it in one piece: vectors and
+// new come from there. `big` more, `big_block` the biggest, are RAMAllocator's blocks, which go in PSRAM if it has
+// room
 inline bool has_ram(size_t bytes, size_t block, size_t big = 0, size_t big_block = 0) {
   if (big && psram_has(big, big_block))
     big = big_block = 0;
   RAMAllocator<uint8_t> ram(RAMAllocator<uint8_t>::ALLOC_INTERNAL);
-  return ram.get_free_heap_size() >= bytes + big + 8192 + requests * REQUEST_RAM &&
+  return ram.get_free_heap_size() >= bytes + big + ram_spare() &&
          ram.get_max_free_block_size() >= std::max(block, big_block);
 }
 

@@ -25,11 +25,12 @@ inline constexpr int CABIN_L = -29, CABIN_CORNER = -7, CABIN_R = 28, EAVES_L = -
 inline constexpr int RIDGE_L = -16, RIDGE_R = 19, CHIMNEY_X = 12;
 inline constexpr int CABIN_EAVES = 21, CABIN_RIDGE = 32, CABIN_TOP = 38, POLE_H = 56;
 // The panel's clock and date go over the bottom left of the picture, its temperatures over the bottom right, with
-// the texts where most have them. What a show parks on the land goes in the gap between them, or under the
+// the texts where most have them. What an act parks on the land goes in the gap between them, or under the
 // temperatures right of the date.
 inline constexpr int GAP_L = 126, GAP_R = 228, DATE_R = 154, TEMPS_BOT = 222;
-inline constexpr int OV_H = 64;                        // rows of the forecast overlay, at the top
-inline constexpr int BANDS = 3;                        // of sky, each shading into the next
+inline constexpr int TEXTS_TOP = 168;  // the first row a text has, what's wholly above it is clear of them
+inline constexpr int OV_H = 64;        // rows of the forecast overlay, at the top
+inline constexpr int BANDS = 3;        // of sky, each shading into the next
 inline constexpr int16_t BAND[BANDS] = {0, 56, 120};   // first row of each
 inline constexpr int RB_RX = 100, RB_RY = 96;          // the rainbow's outer radii
 inline constexpr int LH_X = 268;                       // the lighthouse, on the coast's point
@@ -269,7 +270,7 @@ struct At {
   bool yule;    // from 1 December, or the first Sunday in Advent before it, to the twentieth day of Christmas
   int8_t wdir;  // which way the wind blows things, 1 to the right
   uint8_t season, hour, month, day, weekday;  // weekday 0 Sunday, season see season_of()
-  uint32_t turn;                              // half hours of local time, for the shows that take turns
+  uint32_t clock;                             // minutes of local time, for the turns the features take
   float light;                                // 0 night .. 1 day
   float fog, cover, wind, gust, sun_el;       // gust 0 if MET didn't say
 };

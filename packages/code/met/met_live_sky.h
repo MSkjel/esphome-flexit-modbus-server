@@ -3,13 +3,9 @@
 #pragma once
 #include "met_live.h"
 #include "met_live_land.h"
+#include "met_live_town.h"
 
 namespace flexit::panel::met::live {
-
-// The pool's bytes a show here plans for, a little under the panel's, less the most the forecast over the picture
-// takes while it's shown
-inline constexpr int SKY_POOL = OVERLAY_POOL - 144, FORECAST_BYTES = 4200;
-inline int sky_pool(const Scene &s) { return SKY_POOL - (s.overlay ? FORECAST_BYTES : 0); }
 
 // Pool bytes the sky's sprites take besides their frame, upper bounds of what the panel's encoder makes of them.
 // The firmware's sim/esp_yaml/live_sky.inc checks them.
@@ -32,6 +28,9 @@ struct CloudCost {
 inline constexpr CloudCost CIRRUS_COST = {5, 405}, CUMULUS_COST = {6, 235};
 // The flag next to the clouds
 inline constexpr int FLAG_BYTES = 600;
+// What a copy takes besides: a layer of rain or snow for its box, shaped to the clouds' bases in up to SHAPE_RUNS
+// runs, and how it falls, and a cloud for its drift
+inline constexpr int FALL_COPY = 200, CLOUD_COPY = 30;
 
 // A layer of rain or snow and its copy: its kinds, its still's size, how fast they fall and how far they sway either
 // way all together, px/s and px. Or its frames, flakes swaying each on its own in a tile as high as they fall in them.
@@ -42,7 +41,7 @@ struct Layer {
   int frames;
 };
 
-// What the sky shows keep between redraws
+// What the sky's acts keep between redraws
 struct Sky {
   Layer layer[2];                          // the rain or snow, the nearer first
   float dens;                              // streaks or flakes per px
@@ -51,6 +50,7 @@ struct Sky {
   uint8_t top[W];                          // the skyline it strikes behind
   int16_t shoot[6][3];                     // where a shooting star may start, and which way, x 0 for none
   int16_t sat, sat_dy;                     // the row a satellite crosses from and how much higher it ends, -1 none
+  bool clear;                              // the night sky is, for them
 };
 inline Sky SKY;
 
@@ -83,9 +83,8 @@ inline float prec_dens(const Scene &s) {
 // The layers of rain (0), snow (1) or sleet (2), d streaks or flakes per px between them: the near rain and the far
 // one, fainter and slower, the bigger flakes and the smaller ones, or the drops and the flakes. With each, the flakes
 // sway each on its own.
-inline void layers(const Scene &s, int kind, float d, bool each) {
+inline void layers(const Scene &s, int kind, float d, bool each, Layer *l) {
   uint32_t rain = s.rgb[C_RAIN], far = mix(rain, s.rgb[C_LOW - 1], 0.3f), snow = s.rgb[C_SNOW];
-  Layer *l = SKY.layer;
   int n = each ? 32 : 0;  // their frames, 110 ms each
   if (kind == 0) {
     l[0] = {{{7, rain, 0.7f * d, false}}, 1, 80, 64, 74, 0, 0};
@@ -157,22 +156,44 @@ inline void fall_place(const Scene &s, int i, bool again) {
   place(fall_name(i), 0, 0, top, t + shape, {}, {.depth = (uint8_t) (D_AIR - i)});
 }
 
-// Rain or snow in room bytes of the pool, thinned if it would take more
+// 0 rain, 1 snow, 2 both
+inline int prec_kind(const Scene &s) { return s.at.snow ? (s.at.rain ? 2 : 1) : 0; }
+
+// What the scene's rain or snow takes of the pool: at its fullest, the flakes swaying each on its own, with them
+// swaying together, and with none at all
+struct FallBytes {
+  float full, together, none;
+};
+inline FallBytes prec_bytes(const Scene &s) {
+  Layer l[2];
+  FallBytes b{};
+  layers(s, prec_kind(s), prec_dens(s), true, l);
+  b.full = fall_bytes(l[0]) + fall_bytes(l[1]);
+  layers(s, prec_kind(s), prec_dens(s), false, l);
+  b.together = fall_bytes(l[0]) + fall_bytes(l[1]);
+  for (const Layer &k : l)
+    b.none += (float) (FALL_COST.start + FALL_COST.row * k.h);
+  return b;
+}
+// What it takes at the least, half as thick as the scene's, with its two copies, and what more at its fullest
+inline int prec_least(const Scene &s) {
+  FallBytes b = prec_bytes(s);
+  return (int) ceilf((b.none + b.together) / 2) + 2 * FALL_COPY;
+}
+inline int prec_more(const Scene &s) { return (int) ceilf(prec_bytes(s).full) + 2 * FALL_COPY - prec_least(s); }
+
+// Rain or snow in room bytes of the pool: the flakes swaying together if each on its own takes more, and thinned if
+// that does too
 inline void prec_start(const Scene &s, int room) {
   SKY.dens = prec_dens(s);
-  SKY.kind = s.at.snow ? (s.at.rain ? 2 : 1) : 0;
+  SKY.kind = prec_kind(s);
   SKY.slant = prec_slant(s);
   if (!s.nprec)
     return;
-  auto all = [] { return fall_bytes(SKY.layer[0]) + fall_bytes(SKY.layer[1]); };
-  layers(s, SKY.kind, SKY.dens, true);
-  if (all() > (float) room)  // the flakes swaying together, which takes less, and fewer if it's still too much
-    layers(s, SKY.kind, SKY.dens, false);
-  float start = 0, most = all();
-  for (const Layer &l : SKY.layer)
-    start += (float) (FALL_COST.start + FALL_COST.row * l.h);
-  if (most > (float) room)
-    layers(s, SKY.kind, SKY.dens * clamp01(((float) room - start) / (most - start)), false);
+  FallBytes b = prec_bytes(s);
+  bool each = b.full <= (float) room;
+  float thin = each || b.together <= (float) room ? 1 : clamp01(((float) room - b.none) / (b.together - b.none));
+  layers(s, SKY.kind, SKY.dens * thin, each, SKY.layer);
   for (int i = 0; i < 2; i++) {
     add(fall_name(i), fall_still(i));
     fall_place(s, i, false);
@@ -221,13 +242,9 @@ inline uint32_t flash() {
       ON_PANEL);
 }
 
-// The pool's bytes for the rain and snow: less the bolt's in thunder, and in a gale RARE_BYTES for something
-// blowing by
-inline int prec_room(const Scene &s) {
-  return sky_pool(s) - (s.at.thunder ? bolt_bytes(s) : gale(s.at) ? RARE_BYTES : 0);
-}
-// What the rain and snow are made of: whether it blows a gale, so they start again with room for it or without
-inline uint32_t in_gale(const Scene &s) { return gale(s.at); }
+// The pool's bytes for the rain's and snow's stills of what the act was granted: less their copies', and the bolt's
+// in thunder
+inline int prec_room(const Scene &s) { return granted().bytes - 2 * FALL_COPY - (s.at.thunder ? bolt_bytes(s) : 0); }
 
 inline void thunderstorm(const Scene &s) {
   keep_bolt(s);
@@ -262,7 +279,7 @@ inline uint32_t shoot() {
   for (int i = 0; i < 6 && !SKY.shoot[k][0]; i++)
     k = (k + 1) % 6;
   const int16_t *c = SKY.shoot[k];
-  if (!c[0])
+  if (!c[0] || !SKY.clear)
     return 0;
   int x = c[2] > 0 ? c[0] : c[0] + 40;  // the box from its start to where it goes out
   place("shooting", 0, x, c[1], "blend add; frame 0; move x, y over 490; wait rounds 1; end",
@@ -292,7 +309,7 @@ inline void shoot_spots(const Scene &s) {
 
 // A satellite glides across the sky at 4 px/s, rising a little, a faint dot that flares up once. The ms it takes.
 inline uint32_t satellite() {
-  if (SKY.sat < 0)
+  if (SKY.sat < 0 || !SKY.clear)
     return 0;
   uint32_t ms = (W + 6) * 1000 / 4;
   place("satellite", 0, -3, SKY.sat, "blend add; frame 0; area -10, 0, 400, 240 cross; drift 4, vy; wait ms; end",
@@ -300,23 +317,21 @@ inline uint32_t satellite() {
   return ms;
 }
 
-// The sky turns: the stars sparkle where they are now, and shooting stars and satellites go where it's clear now
+// The sky turns: the stars sparkle where they are now, as many as the act has places for and not behind the
+// lighthouse's beam, and shooting stars and satellites go where it's clear now
 inline void stars_turn(const Scene &s) {
-  twinkle_stars(s);
+  twinkle_stars(s, s.lighthouse ? sweep_box(s) : Box{}, std::min(6, granted().places));
   shoot_spots(s);
   SKY.sat_dy = (int16_t) rnd(10, 40);
   SKY.sat = (int16_t) sky_line(s, 3, 3, 50, 120, -SKY.sat_dy);
+  SKY.clear = s.at.cover < 40;
 }
 
-// The stars sparkle, and about every 5 minutes a shooting star, from where the sky is clear, never the moon. Now and
-// then a satellite crosses, or by the cabin a fox trots by.
-inline void starry_night(const Scene &s) {
+// The stars sparkle, and on a clear night about every 5 minutes a shooting star, from where the sky is clear, never
+// the moon, and now and then a satellite crosses
+inline void stars(const Scene &s) {
   stars_turn(s);
-  sometimes(minutes(5), minutes(1), shoot);
-  bool cabin = s.cabin;
-  int y = std::min(s.cabin_y + 6, H - 9), stop = window_x(s) - 2;
-  visitors(minutes(8), minutes(1, 6), 2,
-           [=](int k) -> uint32_t { return k ? (cabin ? fox_by(y, stop) : 0) : satellite(); });
+  visitors(minutes(4), minutes(1), 4, [](int k) { return k ? shoot() : satellite(); });
 }
 
 // ---- the clouds
@@ -350,20 +365,18 @@ inline Frames cloud(const Scene &s, int i, int *x, int *y) {
   return cumulus_cloud(c.e, c.n, c.top, c.base, c.shade, s.rgb[C_LIT + l], s.rgb[C_SHADE + l]);
 }
 
-// Whether the high clouds, or the middle and low ones, fit the panel as an animation each, next to the flag.
-inline bool clouds_fit(const Scene &s, bool high) {
-  bool flag = s.at.flag_up && s.pole_x >= 0;
-  int n = 0, bytes = flag ? FLAG_BYTES : 0;
+// What the high clouds, or the middle and low ones, take as an animation each
+inline Room clouds_cost(const Scene &s, bool high) {
+  Room r{};
   for (int i = 0; i < s.nclouds; i++)
     if (high_cloud(s, i) == high) {
       int x, y;
       Frames sp = cloud(s, i, &x, &y);
       int frame = (sp.w + 1) / 2 * sp.h;
       const CloudCost &c = high ? CIRRUS_COST : CUMULUS_COST;
-      bytes += frame * c.fifths / 5 + c.start;
-      n++;
+      r = r + Room{1, 1, frame * c.fifths / 5 + c.start + CLOUD_COPY};
     }
-  return n <= 4 - flag && bytes <= sky_pool(s);
+  return r;
 }
 
 // The high clouds drift with the wind at 1 to 2 px/s, the higher ones slower, thinning and thickening on slow
@@ -386,7 +399,18 @@ inline void drift_clouds(const Scene &s, bool high) {
 inline void high_clouds(const Scene &s) { drift_clouds(s, true); }
 inline void lower_clouds(const Scene &s) { drift_clouds(s, false); }
 
-// ---- the northern lights
+// ---- the flag and the northern lights
+
+// The hoist next to the pole, waving in place of the picture's the way the wind blows, in the light there is.
+// Where it flies so already it's left as it is.
+inline void flag_up(const Scene &s) {
+  int x = s.at.wdir < 0 ? s.pole_x - 16 : s.pole_x + 1;
+  const overlay::Overlay *a = overlay::find(key("flag"));
+  if (a && !a->copies.empty() && a->copies[0].used && a->copies[0].x == x)
+    return;
+  in_light("flag", 0);
+  place("flag", 0, x, s.pole_top, "", {}, {.left = s.at.wdir > 0});
+}
 
 // Where the picture's wide ribbon is and what colour, another when it has moved or changed. 0 without one.
 inline uint32_t lights_at(const Scene &s) {
@@ -406,7 +430,6 @@ inline void northern_lights(const Scene &s) {
     top = std::min<int>(top, from[x]);
     bottom = std::max<int>(bottom, to[x]);
   }
-  unload("lights");
   add_field("lights", W, bottom - top, OVERLAY_FIELD_NOISE, 1, 22,
             light(mix(s.rgb[C_AUR_EDGE], 0xFFFFFF, 0.15f),
                   [](float v) { return 0.75f * powf(std::max(0.0f, sinf(kPiF * v)), 3); }));

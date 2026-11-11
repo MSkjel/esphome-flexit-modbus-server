@@ -2,8 +2,8 @@
 // the coast at dusk, a Viking longship by day, a troll on the ridge with the sun down, a wolf howling at the full moon,
 // a witch across the moon, a flying saucer on a clear night, the huldra at the forest's edge on a summer evening, a
 // nisse on his way to the cabin before Christmas, draugen rowing on a windy night, orcas up north in winter, a lynx
-// at twilight, a sea eagle's catch or a ski jumper. Over any show, when the panel has room for one more, but not on
-// the days with a show of their own.
+// at twilight, a sea eagle's catch or a ski jumper. Over any cast that leaves the panel room for one more, but not
+// on the days with acts of their own.
 #pragma once
 #include "met_live.h"
 #include "met_live_land.h"
@@ -139,9 +139,9 @@ inline void rare_off() {
     unload(R.rare);
 }
 
-// Whether the panel has room for one more animation for ms: a slot and a place, RARE_BYTES of the pool, nothing
-// being made or sent, and nothing of the show's due before it's over
-inline bool rare_room(uint32_t ms) {
+// Whether one may come now: no visitor is here, the acts on leave the room for one, the panel has a slot, a place
+// and RARE_BYTES of the pool, and nothing is being made or sent, so its sprite gets there in time
+inline bool rare_room() {
   bool slot = false;
   int places = 0;
   for (auto &a : overlay::overlays) {
@@ -154,14 +154,8 @@ inline bool rare_room(uint32_t ms) {
     for (auto &c : a.copies)
       places += c.used;
   }
-  if (!slot || places >= OVERLAY_PLACES || overlay::W.phase != overlay::IDLE ||
-      overlay::used_by_others(nullptr) + RARE_BYTES > OVERLAY_POOL)
-    return false;
-  uint32_t end = millis() + ms;
-  for (const Timer &t : R.timers)
-    if (!t.rare && (int32_t) (t.at - end) < 0)
-      return false;
-  return true;
+  return visitor_room() && slot && places < OVERLAY_PLACES && overlay::W.phase == overlay::IDLE &&
+         overlay::used_by_others(nullptr) + RARE_BYTES <= OVERLAY_POOL;
 }
 
 // The encounter's sprite n, in the light there is but never darker than least, placed where it starts doing what
@@ -469,9 +463,11 @@ inline constexpr int NRARE = sizeof RARE / sizeof *RARE;
 
 // Encounter k now if the panel has room for it, whatever the odds. False if it hasn't, or one is on.
 inline bool encounter(int k) {
-  if (!R.rare.empty() || !rare_room(RARE_WAIT + RARE[k].ms))
+  if (!R.rare.empty() || !rare_room())
     return false;
   ESP_LOGI("met", "Something rare: %s", RARE[k].name);
+  As nobody(-1);
+  R.guest = VISIT;
   come(
       [k] {
         RARE[k].go();
@@ -495,10 +491,10 @@ inline uint32_t rare_roll() {
   return 0;
 }
 
-// The rolls, from a minute or so after the show starts
+// The rolls, from a minute or so after the first acts come on
 inline void rare_start() {
+  As nobody(-1);
   sometimes(RARE_EVERY, minutes(1, 20), rare_roll);
-  R.timers.back().rare = true;
 }
 
 }  // namespace flexit::panel::met::live

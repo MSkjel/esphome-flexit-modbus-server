@@ -6,8 +6,9 @@
 # colours. facing is the compass direction in the middle of the picture, where the sun, moon and stars are drawn:
 # 0 north, 90 east, 180 south (the default), 270 west. scene and aurora start the Panel Weather Scene and Aurora
 # selects; on auto the aurora shows when NOAA's Kp reaches what it takes where you are. "Panel Animation Weather"
-# brings it to life and takes the panel's animations, so turn your others off with it. The weather now is also a tile
-# under Display > Home screen > Dashboard tiles.
+# brings it to life and takes the panel's animations, so turn your others off with it. "Panel Weather Feature" asks
+# for one of the features that otherwise take turns, which then is on whenever it fits. The weather now is also a
+# tile under Display > Home screen > Dashboard tiles.
 # Weather data: MET Norway, CC BY 4.0. Kp: NOAA SWPC.
 defaults:
   name: weather
@@ -59,6 +60,36 @@ select:
       - lambda: |-
           flexit::panel::met::options.aurora = flexit::panel::met::aurora_of(x.c_str());
           flexit::panel::met::redraw();
+  # the features of code/met/met_live_cast.h's ACTS
+  - platform: template
+    id: panel_weather_feature
+    name: "Panel Weather Feature"
+    entity_category: config
+    icon: "mdi:bird"
+    options:
+      - "auto"
+      - "Gulls"
+      - "Crows"
+      - "Eiders"
+      - "Glitter on the water"
+      - "A moose at dusk"
+      - "Reindeer and a golden eagle"
+      - "Lambs, a wagtail and geese"
+      - "Bullfinches at the julenek"
+      - "Summer butterflies"
+      - "A skier, and snow off the spruces"
+      - "Birch leaves and geese"
+      - "High clouds"
+      - "Drifting clouds"
+      - "Evening in town"
+      - "A day in town"
+    initial_option: "auto"
+    optimistic: true
+    restore_value: true
+    set_action:
+      - lambda: |-
+          flexit::panel::met::live::ask_for(x.c_str());
+          flexit::panel::met::redraw();
 
 switch:
   - platform: template
@@ -107,6 +138,7 @@ esphome:
             flexit::panel::met::options.ground = flexit::panel::met::ground_of(id(panel_weather_scene).current_option().c_str());
             flexit::panel::met::options.aurora = flexit::panel::met::aurora_of(id(panel_weather_aurora).current_option().c_str());
             flexit::panel::met::options.facing = ${facing};
+            flexit::panel::met::live::ask_for(id(panel_weather_feature).current_option().c_str());
 
 interval:
   - interval: 50ms  # what the weather animations do next

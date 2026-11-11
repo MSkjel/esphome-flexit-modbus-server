@@ -879,7 +879,7 @@ static constexpr uint16_t LONGSHIP_MS[] = {320, 320, 320, 320};
 static constexpr uint16_t WOLF_MS[] = {1600, 300, 2400, 300, 1400, 300, 2800, 300, 900};
 static constexpr uint16_t WITCH_MS[] = {240, 200, 240, 200};
 
-// two hops first, which the show moves it on over, then it stands about
+// two hops first, which its act moves it on over, then it stands about
 static constexpr uint16_t MAGPIE_MS[] = {90,  130, 90,  130, 160, 1100, 700, 500, 220, 180,  220, 900,
                                          160, 700, 800, 600, 220, 180,  220, 180, 220, 1000, 160, 900};
 static constexpr uint16_t CROWFLY_MS[] = {130, 110, 130, 110};
@@ -893,14 +893,14 @@ static constexpr uint16_t CROW_MS[] = {260, 300,  260, 220,  1400, 900, 600, 280
 // they sit and bob a while, then lift off together, wheel round and settle again
 static constexpr uint16_t PIGEONS_MS[] = {1400, 900, 1100, 700, 1300, 800, 1200, 600, 160, 160, 160,
                                           160,  160, 160,  160, 160,  160, 160,  160, 160, 180, 220};
-// eight steps first, which the show moves it on over, then it stands and pecks
+// eight steps first, which its act moves it on over, then it stands and pecks
 static constexpr uint16_t PTARMIGAN_MS[] = {180, 180, 180, 180, 180, 180, 180, 180, 700, 220, 200, 220, 900, 600};
 // two quick beats, the wings through the frames between up and down, a glide, one beat and a glide
 static constexpr uint16_t SWALLOW_MS[] = {50, 50, 50, 50,  50, 50, 50, 50, 50, 50, 50, 50, 50,
                                           50, 50, 50, 450, 50, 50, 50, 50, 50, 50, 50, 50, 300};
 // as the golden eagle, but slower
 static constexpr uint16_t SEAEAGLE_MS[] = {2200, 900, 1800, 300, 300, 180, 160, 180, 320, 200, 300};
-// the glide down as long as the show takes to bring it down to the water, the last as long as it takes it away
+// the glide down as long as its act takes to bring it down to the water, the last as long as it takes it away
 static constexpr uint16_t SEAEAGLECATCH_MS[] = {3400, 300, 250, 350, 260, 260, 280, 300, 3800};
 // a bound: gathered, off, stretched out, landing on its front feet
 static constexpr uint16_t SQUIRREL_MS[] = {110, 90, 120, 100};
@@ -956,7 +956,7 @@ static constexpr uint16_t SJARK_MS[] = {1400, 200, 200, 200, 1600, 200, 200, 200
 // firewin's flicker three times over, the cat doing something now and then
 static constexpr uint16_t FIREWINCAT_MS[] = {170, 120, 240, 140, 200, 110, 260, 150, 180, 130, 250, 140,
                                              190, 120, 240, 160, 170, 120, 230, 150, 200, 110, 250, 140};
-// she stands a while, turns, and walks off; played once, the show moving her from the turn on
+// she stands a while, turns, and walks off; played once, her act moving her from the turn on
 static constexpr uint16_t HULDRA_MS[] = {2200, 900, 1800, 500, 340, 340, 340, 340,
                                          340,  340, 340,  340, 340, 340, 340, 340};
 // played once: in on short steps, a stop to hold up the lantern and look back and ahead, then on again
@@ -1235,7 +1235,7 @@ static constexpr Fixed FIXED[] = {
     {"ptarmigan", 7, 6, PTARMIGAN_MS, [](int f, const Canvas &c) { ptarmigan_pose(c, f, false); }},
     {"ptarmiganw", 7, 6, PTARMIGAN_MS, [](int f, const Canvas &c) { ptarmigan_pose(c, f, true); }},
     // A barn swallow flying right, from the side: steel blue, its face rusty red, its belly cream and its tail
-    // forked. Quick beats and short glides. The show sends two of them along curves low over the meadow
+    // forked. Quick beats and short glides. Their act sends two of them along curves low over the meadow
     {"swallow", 13, 7, SWALLOW_MS,
      [](int f, const Canvas &c) {
        // up, half up, level toward you, half down, down, swept back to glide
@@ -1482,7 +1482,7 @@ static constexpr Fixed FIXED[] = {
     {"firelight", 7, 6, FIREWIN_MS,
      [](int f, const Canvas &c) { firelight(c, pose<FIREWIN_MS>("21312032", f), pose<FIREWIN_MS>("01001010", f)); }},
     // The cabin's window with the cat sitting on the sill, black against the firelight, which flickers like
-    // firewin's: it flicks its tail, looks one way and the other and licks a paw. The show swaps it for firewin when
+    // firewin's: it flicks its tail, looks one way and the other and licks a paw. Its act swaps it for firewin when
     // it's jumped down
     {"firewincat", 7, 6, FIREWINCAT_MS,
      [](int f, const Canvas &c) {
@@ -2530,7 +2530,7 @@ static constexpr Fixed FIXED[] = {
      }},
     // The sea eagle's rare catch, flying right, the water at its bottom row: it glides down with its talons out,
     // throws its wings up and strikes, the spray flies round its feet, and it beats up off the water with a fish and
-    // flies off with it. The show brings it down to the water over the first frame, holds it there to the end of the
+    // flies off with it. Its act brings it down to the water over the first frame, holds it there to the end of the
     // first beat, so the spray stays on the water, and takes it away over the rest
     {"seaeaglecatch", 24, 18, SEAEAGLECATCH_MS,
      [](int f, const Canvas &c) {

@@ -488,7 +488,7 @@ Now::Now(const Weather &weather, const Options &options, double la, double lo, u
   white = std::isnan(o.snow_cm) ? snow_likely(w, month) : w.ok && o.snow_cm >= 1;
   season = (uint8_t) season_of(doy, lat, white);
   leaves = !white && doy >= 125 + late && doy < 298 - late;  // from 5 May to 25 October in Oslo
-  turn = local / 1800;
+  clock = local / 60;
   xmas = month == 12 && day >= 24 && day <= 26;
   // Advent's first Sunday is three weeks before the last Sunday before Christmas Day, 27 November at the earliest
   int xmas_day = day_of_year(year, 12, 25), sunday = (int) ((days_from_civil(year, 12, 25) + 4) % 7);

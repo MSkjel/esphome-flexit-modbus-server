@@ -14,7 +14,7 @@
 #include "../panel/picture.h"
 #include "../panel/picture_marks.h"
 #include "met_kp.h"
-#include "met_live_shows.h"
+#include "met_live_cast.h"
 #include "met_raster.h"
 
 // True in fireplace mode. Weak, since packages/code/fireplace.h only defines it when that package is included.
@@ -399,6 +399,7 @@ void setup(double latitude, double longitude, const char *picture, const char *e
            S &&status, K &&kp_status) {
   lat = latitude;
   lon = longitude;
+  live::turned = redraw;
   // MET Norway wants at most 4 decimals, more can get a 403
   snprintf(forecasts.url, sizeof forecasts.url,
            "https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=%.4f&lon=%.4f", lat, lon);

@@ -339,7 +339,7 @@ PSRAM.
 | `picture.yaml` | `name`, `file` (PNG or JPEG next to your config). `encoding`: `auto`, `palette` (16 colours) or `jpeg`; a palette picture that doesn't fit the panel's 14 KB goes as a JPEG anyway. `quality`: the JPEG quality, or `auto` for the best that fits |
 | `online_picture.yaml` | `name`, `url`, `update_interval` (like `10min`, `1.5h` or `1d`, `never` = only when shown), `format` (PNG, JPEG, BMP or AUTO), `resize` (160x120 default, blown up to the screen; 320x240 needs PSRAM), plus `encoding` and `quality`. A failed download is retried after 30 s, then twice as long each time. Before each download the ESP asks the server about the file and skips one it doesn't have the RAM for, with the reason in `Panel Picture Status`. A JPEG has to fit in RAM whole, so the server has to send its size; PNG and BMP are read a bit at a time. For a Home Assistant camera use `ha_picture.yaml` |
 | `ha_picture.yaml` | `name`, `entity_id` (a `camera.` or `image.` entity, with `kind: image` for the latter), `ha_url` (`http://homeassistant.local:8123`), `width` (320, HA scales the camera picture down to it when the camera can), plus `update_interval`, `resize`, `format`, `encoding` and `quality` as above. HA only hands out camera pictures with a token that changes now and then; the ESP follows the entity's `access_token` attribute, so nothing to set up. If the camera won't scale, the full picture is often too big for an ESP without PSRAM and is skipped; a Frigate camera's own `latest.jpg?h=120` through `online_picture.yaml` is the way round that |
-| `animation.yaml` | `name`, `file` (a GIF), `resize` (64x64 default), `x`, `y` (top left on the 320x240 screen), `scale` (1, or 2 to draw each pixel 2x), `frame_ms` (40 to 2550, the GIF's own timing isn't used), `drift_x`, `drift_y` (pixels per second it drifts, wrapping round the screen seamlessly), `fade_ms` (300, how long copies fade in and out), `clips` and `script` (see [animation scripts](#animation-scripts)). The panel plays all its animations from 8.75 KB, up to 7 at a time in up to 9 places, so keep them small: about 64x64 with a few frames, or more frames if little changes between them. A single frame goes as a still, which the panel keeps packed, so it takes only that, not w x h / 2 bytes. Too big at scale 1 and it's made at half size and drawn 2x. `Panel Animation Status` says how full the panel is, then what's shown, what's on its way and what didn't fit, like `4 of 7, 7 of 9 places, 3.1 of 8.8 KB: kite (wandering), ball ×3, weather: Thunderstorm (3), forecast`. The weather's animations are one entry with the show's name, and over Home Assistant's 255 characters the list ends with how many more there are |
+| `animation.yaml` | `name`, `file` (a GIF), `resize` (64x64 default), `x`, `y` (top left on the 320x240 screen), `scale` (1, or 2 to draw each pixel 2x), `frame_ms` (40 to 2550, the GIF's own timing isn't used), `drift_x`, `drift_y` (pixels per second it drifts, wrapping round the screen seamlessly), `fade_ms` (300, how long copies fade in and out), `clips` and `script` (see [animation scripts](#animation-scripts)). The panel plays all its animations from 8.75 KB, up to 7 at a time in up to 9 places, so keep them small: about 64x64 with a few frames, or more frames if little changes between them. A single frame goes as a still, which the panel keeps packed, so it takes only that, not w x h / 2 bytes. Too big at scale 1 and it's made at half size and drawn 2x. Making one takes free RAM on the ESP for a moment, 25 KB for a small still and about 60 KB for 64x64 with frames. While the ESP is short of that, the animation waits and the status says so; after half a minute it's made at half size if the RAM is enough for that. `Panel Animation Status` says how full the panel is, then what's shown, what's on its way, what waits and what didn't fit, like `4 of 7, 7 of 9 places, 3.1 of 8.8 KB: kite (wandering), ball ×3, weather: Thunderstorm (3), forecast`. The weather's animations are one entry with the show's name, and over Home Assistant's 255 characters the list ends with how many more there are |
 | `field.yaml` | `name`, `kind` (`linear`, `radial`, `cone` or `noise`), `w`, `h`, `x`, `y`, `colours`, and for its kind `mirror`, `down`, `apex`, `layers` and `grain`, plus `fade_ms` and `script`. See [fields](#fields). It takes 4 bytes of the panel's 8.75 KB |
 | `met.yaml` | `latitude`, `longitude`, `scene` (hills, coast, mountains, city), `aurora` (auto, off, always, see below), `facing` (the compass direction in the middle of the picture for the sun, moon and stars: 0 north, 90 east, 180 south by default, 270 west), `redraw_interval`, `name` (weather). The forecast is asked for again once MET says it has expired. `Panel Weather Scene`, `Panel Weather Aurora` and `Panel Weather Forecast` change it from Home Assistant, `Panel Animation Weather` brings it to life |
 
@@ -357,7 +357,7 @@ minute later, then less often, up to every half hour.
 
 With `Panel Weather Forecast` on, the weather now and the next hours go over the picture as a still animation, in
 front of the weather's own animations, so the letters stay sharp. It takes up to about 4 KB of the panel's 8.75 KB for
-animations, and the weather's shows make do with the rest.
+animations, and the weather's own make do with the rest.
 
 On a clear dark night the aurora follows the planetary Kp from
 [NOAA SWPC](https://www.swpc.noaa.gov/products/planetary-k-index), asked for every 3 hours while `Panel Weather
@@ -374,19 +374,37 @@ the forecast, and again once it expires. Nothing is written when it rounds to 0.
 Inland MET has no waves, and outside its area it answers 422; either way nothing is written and the ESP asks again
 the next day.
 
-`Panel Animation Weather`, on unless you turn it off, adds slow animations that fit the picture, one show at a time:
-crows over the cabin or gulls by the sea, rain and snow falling from under the clouds (the far rain fainter and slower
-behind the near, the flakes swaying), the stars sparkling, the lighthouse's beam turning, light shimmering on the sea,
-small out at the horizon and wider toward the shore, fog creeping along the valley in banks that thicken and thin,
-lambs and a wagtail in spring, bullfinches at the julenek through Christmas, a moose at dusk, the sailboat, the town's
-windows, the lights on the Christmas spruce, fireworks on New Year's Eve, the flag waving on flag days and more, some
-of them by chance now and then. The days' and the weather's shows run whenever they fit. The rest take half-hour
-turns, the night's with each other and the day's with each other. The aurora is part of the picture and shifts a
-little every hour, and its wide ribbon glows: light wanders along it and reaches up over it. Very seldom something
-stranger comes by. The picture leaves out what they draw, and tells the panel what in it is nearer, so they go behind
-it where they should: the sailboat behind the point and the flagpole, a roe deer out of the forest from behind a
-spruce. Your own animations are always in front of all of it. They take the panel's animations, so turn your other
-ones off with it.
+`Panel Animation Weather`, on unless you turn it off, adds slow animations that fit the picture, several at a time,
+as many as the panel has room for: 7 animations, 9 copies of them on the screen and its 8.75 KB. They get the room in
+this order:
+
+- **The day's own:** Christmas Eve, fireworks on New Year's Eve, Easter, 17 May, the bonfire at Sankthans, Halloween
+  and Valentine's Day.
+- **The weather:** rain and snow falling from under the clouds (the far rain fainter and slower behind the near, the
+  flakes swaying), lightning, and fog creeping along the valley in banks that thicken and thin. Rain and snow are as
+  thick as the room left allows.
+- **What lives in the picture,** on whenever the picture has it: the lighthouse's beam turning, the sailboat, the
+  lights on the Christmas spruce, the flag waving on flag days, the northern lights' ribbon glowing, the stars
+  sparkling, smoke from the chimney, firelight in the window, the town antenna's light, and light shimmering on the
+  sea, small out at the horizon and wider toward the shore. So the beam goes round in the rain too.
+- **The features,** which take turns of 20 to 40 minutes, two at a time when both fit, drawn by lot each turn and
+  never the same twice running: gulls or crows, eiders, glitter on the water, a moose at dusk (which mostly gets its
+  hour), reindeer, lambs and a wagtail in spring, bullfinches at the julenek through Christmas, butterflies, a skier,
+  birch leaves, drifting clouds and the town's windows and streets. The two change at different minutes, so one
+  thing changes at a time, and what stays goes on as it was. `Panel Weather Feature` asks for one of them, which is
+  then on whenever it fits; `auto` leaves it to the draw. Of the two gulls or crows that fly back and forth, one
+  comes down about every five minutes, against the wind: on the cabin's ridge, the flagpole, the lighthouse, a
+  spruce's top or a flat roof in town, smaller on its way to one that's far off, and flies up again.
+- **Who comes by,** one at a time when the others leave room for one more: a squirrel or a magpie about the cabin,
+  a crow or a gull down on one of those perches while none are flying, a fox at night, a sjark, a porpoise or a sea
+  eagle off the coast, the coastal express past the lighthouse, a shooting star, and those the features bring. Very
+  seldom something stranger.
+
+The aurora is part of the picture and shifts a little every hour. The picture leaves out what the animations draw,
+and tells the panel what in it is nearer, so they go behind it where they should: the sailboat behind the point and
+the flagpole, a roe deer out of the forest from behind a spruce. Your own animations are always in front of all of
+it. The weather takes the panel's animations, so turn your other ones off with it. `Panel Animation Status` names
+what's on.
 
 ### Space pictures
 

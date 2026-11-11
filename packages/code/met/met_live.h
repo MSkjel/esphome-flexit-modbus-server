@@ -1,8 +1,9 @@
-// The weather picture's animations, one show at a time: what fits the weather, the light and the day, like gulls
-// over the cabin, rain from under the clouds or the lights on the Christmas spruce. met_sprites.h draws them in
+// The weather picture's animations, a cast of acts at a time: what fits the weather, the light and the day, like
+// rain from under the clouds, the lighthouse's beam, the sailboat and gulls over it. met_sprites.h draws them in
 // their frames, and each copy runs a script on the panel, see overlay_script.h: how it moves, what frames it plays
-// and when it goes. Now and then something comes by. The picture leaves out what a show draws itself. The shows are
-// in met_live_*.h, met_live_shows.h picks one, met.h runs it, see the Panel Animation Weather switch in met.yaml.
+// and when it goes. Now and then something comes by. The picture leaves out what an act draws itself. The acts are
+// in met_live_*.h, met_live_cast.h picks those that are on, met.h runs them, see the Panel Animation Weather switch
+// in met.yaml.
 #pragma once
 #include <algorithm>
 #include <climits>
@@ -17,42 +18,101 @@
 
 namespace flexit::panel::met::live {
 
+// What the panel has room for, and what an act takes of it: animations, their copies on screen and bytes of the pool
+struct Room {
+  int slots, places, bytes;
+  bool has(const Room &r) const { return slots >= r.slots && places >= r.places && bytes >= r.bytes; }
+  Room operator+(const Room &r) const { return {slots + r.slots, places + r.places, bytes + r.bytes}; }
+  Room operator-(const Room &r) const { return {slots - r.slots, places - r.places, bytes - r.bytes}; }
+  // as much of r as there is of each here, none where there's less than none
+  Room within(const Room &r) const {
+    return {std::max(0, std::min(r.slots, slots)), std::max(0, std::min(r.places, places)),
+            std::max(0, std::min(r.bytes, bytes))};
+  }
+};
+// The most of the pool a visitor's or a rare encounter's sprite takes. The firmware's sim/esp_yaml/live_rare.inc
+// checks it.
+inline constexpr int RARE_BYTES = 1200;
+// What one of them takes while it's there, with the script it runs. The acts leave it when they can, one comes at a
+// time.
+inline constexpr Room VISIT = {1, 1, RARE_BYTES + 200};
+
 struct Timer {
   uint32_t at;                   // millis()
   std::function<uint32_t()> fn;  // the ms it takes, for sometimes()
   uint32_t mean;                 // sometimes()'s, 0 for once
-  bool rare = false;             // the roll for a rare encounter, see met_live_rare.h
+  int act;                       // whose it is, -1 no act's: the roll for a rare encounter, see met_live_rare.h
 };
 
-// The show that runs and what it made
+// An act that's on, see met_live_cast.h
+struct On {
+  int act;                                        // ACTS'
+  const char *name;                               // its animations' in Panel Animation Status
+  uint32_t sig;                                   // the place, the landscape and what it's made of, see apply()
+  Room grant;                                     // what it may take: its cost, and what more there was for it
+  std::vector<std::function<uint32_t()>> visits;  // its visitors, each the ms it takes to come by, see visitors()
+};
+// A panel animation and the act that made it
+struct Made {
+  std::string key;
+  int act;
+};
+
+// The acts that are on and what they made
 struct Running {
   bool on;                           // the switch
-  int show = -1;                     // met_live_shows.h's SHOWS, -1 none
-  std::string label;                 // its animations', for Panel Animation Status
-  uint32_t where;                    // the place, the landscape and what the show is made of, see apply()
-  bool flag;                         // the flag is up with it
-  int8_t flown;                      // the way the wind blew it when it went up
-  uint32_t lights;                   // the northern lights glow with it: lights_at() of their ribbon, 0 without
+  std::vector<On> cast;              // the acts on
+  int cur = -1;                      // the one that's starting, or whose timer runs: what's made is its. -1 none.
+  Room spare;                        // what they leave of the panel's room, see visitor_room()
+  Room guest = VISIT;                // what the visitor that's here may take of it: more with room_for()
+  uint32_t busy;                     // the millis() a visitor with no sprite of its own is here till
+  uint32_t gone;                     // acts that went so far, see loop()
+  uint32_t turn_at;                  // the millis() a feature's turn ends, 0 with none on
   int16_t sun_x;                     // the sun's now, -1 down
+  int8_t wdir;                       // the way the wind blows things now, 1 to the right
   float light;                       // the scene's now, see in_light()
   std::map<std::string, float> lit;  // the sprites in it, and the least light each is in
   std::vector<Timer> timers;
-  std::map<std::string, Frames> sprites;   // the show's, by name
-  std::vector<std::string> names;          // the panel animations it made
+  std::map<std::string, Frames> sprites;   // the acts', by name
+  std::vector<Made> names;                 // the panel animations they made
   std::map<std::string, uint32_t> comers;  // the sprites of visits and encounters, and the millis() they go by
   Rng rng{1};
   std::vector<uint8_t> px;  // the frame frame_pixel() drew last, empty without the RAM for it
   Colours cols;             // its colours
   const Frames *drawn;
   int drawn_f;
-  std::string rare;                    // the sprite of the rare encounter on, see met_live_rare.h
-  std::function<uint32_t(int)> visit;  // the show's visitors, see visitors()
-  int visits;
-  int turn = -1;  // which of the shows that take turns is on, -1 by the picture's half hour
+  std::string rare;       // the sprite of the rare encounter on, see met_live_rare.h
+  int pin = -1;           // the feature asked for, which comes on whenever it fits, -1 none
+  uint64_t only = ~0ull;  // a bit for each act that may come on: all of them, but for a test of one
 };
 inline Running R;
+// When a feature's turn ends: the picture is drawn again, and with it the cast picked. met.h sets it.
+inline void (*turned)() = nullptr;
 
-// ---- what the shows use
+// The act that's on as number act of ACTS, null if it isn't
+inline On *on(int act) {
+  for (On &o : R.cast)
+    if (o.act == act)
+      return &o;
+  return nullptr;
+}
+
+// What the act that's starting, or whose timer runs, may take
+inline Room granted() {
+  const On *o = on(R.cur);
+  return o ? o->grant : Room{};
+}
+
+// While it lives, what's made is act's
+struct As {
+  int was;
+  explicit As(int act) : was(R.cur) { R.cur = act; }
+  ~As() { R.cur = was; }
+  As(const As &) = delete;
+  As &operator=(const As &) = delete;
+};
+
+// ---- what the acts use
 
 // a or more, below b
 inline float rnd(float a, float b) { return a + (b - a) * R.rng.f(); }
@@ -91,10 +151,10 @@ inline uint32_t frame_pixel(const Frames *sp, int f, int x, int y) {
   return i ? 0xFF000000u | R.cols.rgb[i] : 0;
 }
 
-// A sprite the show made itself, like a cloud from the picture's. Before it's placed.
+// A sprite an act made itself, like a cloud from the picture's. Before it's placed.
 inline void add(const std::string &name, Frames sp) { R.sprites[name] = std::move(sp); }
 
-// name's sprite, the show's own or one from met_sprites.h made the first time. Null if there's none.
+// name's sprite, an act's own or one from met_sprites.h made the first time. Null if there's none.
 inline const Frames *frames_of(const std::string &name) {
   auto it = R.sprites.find(name);
   if (it == R.sprites.end()) {
@@ -129,6 +189,12 @@ inline int out_of(const Edge &e, const std::string &name, int y) {
 // The colour the scene's goes toward as the light goes, see met::mix()
 inline constexpr uint32_t NIGHT = 0x223344;
 
+// What Panel Animation Status calls what's made now: the act's name, or what comes by on no act's account
+inline std::string label() {
+  const On *o = on(R.cur);
+  return std::string("weather: ") + (o ? o->name : "an encounter");
+}
+
 // name's sprite as a panel animation, a strip's clips for its scripts. Its light goes toward NIGHT, but for LAMP.
 inline bool ready(const std::string &name) {
   std::string k = key(name);
@@ -139,15 +205,16 @@ inline bool ready(const std::string &name) {
     return false;
   auto pixel = [sp](int f, int x, int y) { return frame_pixel(sp, f, x, y); };
   overlay::Source s{sp->w, sp->h, sp->count(), 100, 0, 0, 1, pixel};
+  s.ram = (size_t) sp->w * sp->h;  // frame_pixel()'s frame
   s.delays = sp->delays;
   s.fade_ms = 300;
   s.glows = {LAMP};
   s.shade = NIGHT;
-  s.label = R.label;
+  s.label = label();
   for (auto &[n, c] : sp->clips)
     s.clips[n] = {c.first, c.last, c.w, c.h};
   overlay::add(k, std::move(s));
-  R.names.push_back(k);
+  R.names.push_back({k, R.cur});
   return true;
 }
 
@@ -164,9 +231,9 @@ inline void add_field(const std::string &name, int w, int h, int kind, int a, in
   std::string k = key(name);
   overlay::Source s = overlay::field(w, h, kind, a, b, std::move(colours));
   s.fade_ms = 300;
-  s.label = R.label;
+  s.label = label();
   if (!overlay::sources.count(k))
-    R.names.push_back(k);
+    R.names.push_back({k, R.cur});
   overlay::add(k, std::move(s));
 }
 
@@ -175,7 +242,8 @@ inline void unload(const std::string &name) {
   std::string k = key(name);
   overlay::clear(k);
   overlay::sources.erase(k);
-  R.names.erase(std::remove(R.names.begin(), R.names.end(), k), R.names.end());
+  R.names.erase(std::remove_if(R.names.begin(), R.names.end(), [&](const Made &m) { return m.key == k; }),
+                R.names.end());
   R.sprites.erase(name);
   R.comers.erase(name);
   R.lit.erase(name);
@@ -358,7 +426,7 @@ inline Walk walk(const NearHill &h, int x0, int x1, float speed, int mid, int dy
 // fn by chance, first after first ms, then about every mean ms after the last one ended, or just once with mean
 // 0. It returns the ms it takes.
 inline void sometimes(uint32_t mean, uint32_t first, std::function<uint32_t()> fn) {
-  R.timers.push_back({millis() + first, std::move(fn), mean});
+  R.timers.push_back({millis() + first, std::move(fn), mean, R.cur});
 }
 // fn in ms, once
 template<class F> void later(uint32_t ms, F fn) {
@@ -374,11 +442,11 @@ inline constexpr uint32_t ON_PANEL = 5000;
 // fn, a visit or an encounter, which places what comes and returns the ms it takes, and what it newly placed goes
 // when its scripts end it, or by then and wait. The ms with wait, 0 if it doesn't fit.
 inline uint32_t come(const std::function<uint32_t()> &fn, uint32_t wait) {
-  std::vector<std::string> had = R.names;
+  std::vector<Made> had = R.names;
   uint32_t ms = fn();
-  for (const std::string &k : R.names)
-    if (std::find(had.begin(), had.end(), k) == had.end())
-      R.comers[k.substr(2)] = millis() + ms + wait;
+  for (const Made &m : R.names)
+    if (std::none_of(had.begin(), had.end(), [&](const Made &h) { return h.key == m.key; }))
+      R.comers[m.key.substr(2)] = millis() + ms + wait;
   return ms ? ms + wait : 0;
 }
 // A script ended the last copy of animation k: a visitor's sprite goes
@@ -387,15 +455,40 @@ inline void emptied(const std::string &k) {
     unload(k.substr(2));
 }
 
-// The show's visitors, one at a time so the panel has room for them: about every mean ms one of n at random. fn(k)
-// brings the k-th and returns the ms it takes, 0 if it doesn't fit the picture.
+// Whether a visitor may come: none is here, nor a rare encounter, and the acts on leave the room for one
+inline bool visitor_room() {
+  return R.comers.empty() && (int32_t) (millis() - R.busy) >= 0 && R.rare.empty() && R.spare.has(VISIT);
+}
+// For a visitor that takes more than VISIT: whether the acts on leave that too, which it then has
+inline bool room_for(const Room &more) {
+  if (!R.spare.has(VISIT + more))
+    return false;
+  R.guest = VISIT + more;
+  return true;
+}
+
+// Visitors of the act, which can have several lots of them: about every mean ms one of these n at random, if no
+// other visitor is here, so the panel has room for them. fn(k) brings the k-th and returns the ms it takes, 0 if it
+// doesn't fit the picture.
 inline void visitors(uint32_t mean, uint32_t first, int n, std::function<uint32_t(int)> fn) {
-  R.visit = [fn](int k) { return come([&] { return fn(k); }, ON_PANEL); };
-  R.visits = n;
-  sometimes(mean, first, [n] {
+  On *o = on(R.cur);
+  if (!o)
+    return;
+  size_t from = o->visits.size();
+  for (int k = 0; k < n; k++)
+    o->visits.push_back([fn, k] {
+      size_t here = R.comers.size();
+      R.guest = VISIT;
+      uint32_t ms = come([&] { return fn(k); }, ON_PANEL);
+      if (ms && R.comers.size() == here)  // a copy of what's on already, with no sprite to go when it has
+        R.busy = millis() + ms;
+      return ms;
+    });
+  sometimes(mean, first, [n, from, act = R.cur] {
+    const On *o = on(act);
     uint32_t ms = 0;
-    for (int k = (int) rnd(0, (float) n), tries = 0; !ms && tries < n; k = (k + 1) % n, tries++)
-      ms = R.visit(k);
+    for (int k = (int) rnd(0, (float) n), tries = 0; o && visitor_room() && !ms && tries < n; k = (k + 1) % n, tries++)
+      ms = o->visits[from + (size_t) k]();
     return ms;
   });
 }
@@ -518,13 +611,13 @@ inline Ride witch_ride(int moon_x, int moon_y, int top) {
   return r;
 }
 
-// ---- shared by the shows
+// ---- shared by the acts
 
 // A full gale or storm gusts, wind that takes what isn't tied down. The rain and snow leave room then for something
 // blowing by, see met_live_rare.h.
 inline bool gale(const At &a) { return a.wind >= 17 || a.gust >= 25; }
-// The most of the pool a rare encounter's sprite takes. The firmware's sim/esp_yaml/live_rare.inc checks it.
-inline constexpr int RARE_BYTES = 1200;
+// rain, snow or thunder
+inline bool wet(const At &a) { return a.rain || a.snow || a.thunder; }
 
 // Copy 0 of n, drawn facing right, from x0, y0 off one edge across to x1, y1 off the other in ms, facing the way it
 // goes, doing what also says on the way, then it's gone. The ms.
@@ -562,15 +655,16 @@ struct Bird {
   float s0, s1;
   int top, bottom;
 };
-inline void flock(const char *n, int copy, const char *clip, std::initializer_list<Bird> birds) {
+// How one of them goes on its way, at its speeds s0 to s1: what a move it made has to be followed by
+inline constexpr const char *ROAMS = "wander s0, s1, 0, 20, 3000, 9000, 0, 0\n";
+inline void flock(const char *n, int copy, const char *clip, const std::vector<Bird> &birds) {
   int i = 0;
   for (const Bird &b : birds) {
     place(n, copy + i, b.x, b.y, (*clip ? std::string("clip ") + clip : std::string()) + R"(
       area -24, top, 344, bottom bounce
       wave speed 70, 130, 4000, 4000 hold 2000, 2000 jitter 50 random slow both
       face 0 mirror level
-      wander s0, s1, 0, 20, 3000, 9000, 0, 0
-    )" + (i ? "rate " + num(100 + 9 * i) : ""),
+    )" + ROAMS + (i ? "rate " + num(100 + 9 * i) : ""),
           {{"top", b.top}, {"bottom", b.bottom}, {"s0", b.s0}, {"s1", b.s1}});
     i++;
   }
@@ -578,14 +672,16 @@ inline void flock(const char *n, int copy, const char *clip, std::initializer_li
 
 // Puffs of name, after one another so they overlap into a plume, with their middle at x, y: each rises rise px and
 // drifts drift px downwind for exactly as long as its frames last, growing and thinning as it goes, then starts
-// again from there. Thinner higher up too. Each but the first hidden till it starts.
-inline void chimney(const char *name, int puffs, int x, int y, int rise, int drift, int wdir) {
+// again from there. Thinner higher up too. Each but the first hidden till it starts. Those from from to to - 1 of
+// them.
+inline void chimney(const char *name, int puffs, int x, int y, int rise, int drift, int wdir, int from = 0,
+                    int to = INT_MAX) {
   const Frames *sp = frames_of(name);
   if (!sp)
     return;
   int ms = sp->ms();
   int left = wdir < 0 ? drift + 20 : 20, right = wdir < 0 ? 30 : drift + 30, x0 = x - sp->w / 2;
-  for (int i = 0; i < puffs; i++)
+  for (int i = from; i < std::min(puffs, to); i++)
     place(name, i, x0, y - sp->h / 2,
           std::string(i ? "glide opacity 0\n" : "") + R"(
             area l, t, r, b screen
@@ -643,11 +739,22 @@ inline void twinkle_stars(const Scene &s, Box skip = {}, int most = 6) {
       remove("twinkle", i);
 }
 
-// Every animation of the show goes, faded out
+// The act's animations go, faded out, with its timers and its visitors
+inline void drop(int act) {
+  for (size_t k = R.names.size(); k-- > 0;)
+    if (R.names[k].act == act)
+      unload(R.names[k].key.substr(2));
+  R.timers.erase(std::remove_if(R.timers.begin(), R.timers.end(), [act](const Timer &t) { return t.act == act; }),
+                 R.timers.end());
+  R.cast.erase(std::remove_if(R.cast.begin(), R.cast.end(), [act](const On &o) { return o.act == act; }), R.cast.end());
+  R.gone++;
+}
+
+// Every act goes, its animations faded out
 inline void stop() {
-  for (auto &k : R.names) {
-    overlay::clear(k);
-    overlay::sources.erase(k);
+  for (const Made &m : R.names) {
+    overlay::clear(m.key);
+    overlay::sources.erase(m.key);
   }
   R.names.clear();
   R.sprites.clear();
@@ -655,17 +762,17 @@ inline void stop() {
   R.lit.clear();
   R.timers.clear();
   free_px();
-  R.show = -1;
-  R.flag = false;
-  R.lights = 0;
+  R.cast.clear();
   R.rare.clear();
-  R.visit = nullptr;
-  R.visits = 0;
+  R.spare = {};
+  R.busy = millis();
+  R.turn_at = 0;
+  R.gone++;
 }
 
 // Every 50 ms or so: what's due. shown: the weather is the panel's picture.
 inline void loop(bool shown) {
-  if (R.show < 0)
+  if (R.cast.empty())
     return;
   if (!R.on || !shown) {
     stop();
@@ -674,6 +781,11 @@ inline void loop(bool shown) {
   if (overlay::W.phase != overlay::COUNT && overlay::W.phase != overlay::MAKE)
     free_px();  // overlay.h only reads it while it counts or makes frames
   uint32_t now = millis();
+  if (R.turn_at && (int32_t) (now - R.turn_at) >= 0) {
+    R.turn_at = 0;
+    if (turned)
+      turned();
+  }
   for (auto it = R.comers.begin(); it != R.comers.end();) {
     std::string n = (it++)->first;
     if ((int32_t) (now - R.comers[n]) >= 0)
@@ -682,14 +794,14 @@ inline void loop(bool shown) {
   for (size_t i = 0; i < R.timers.size(); i++) {
     if ((int32_t) (now - R.timers[i].at) < 0)
       continue;
-    std::function<uint32_t()> fn = R.timers[i].fn;  // it may add timers, or stop the show
-    uint32_t mean = R.timers[i].mean;
+    std::function<uint32_t()> fn = R.timers[i].fn;  // it may add timers, or an act may go
+    uint32_t mean = R.timers[i].mean, gone = R.gone;
+    As as(R.timers[i].act);
     float k = mean ? rnd(0.4f, 1.6f) : 0;
     if (!mean)
       R.timers.erase(R.timers.begin() + (long) i--);
-    int show = R.show;
     uint32_t ms = fn();
-    if (R.show != show)
+    if (R.gone != gone)
       return;
     if (mean)
       R.timers[i].at = now + ms + (uint32_t) (mean * k);

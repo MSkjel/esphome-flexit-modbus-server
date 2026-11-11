@@ -47,6 +47,7 @@ struct Source {
   // Not frames but an OVERLAY_FIELD_* of w x h, -1 for none, with what it takes: the panel draws how much of it
   // there is at each pixel as that far along its 16 colours
   int field = -1, field_a = 0, field_b = 0;
+  size_t ram = 0;  // what pixel() takes of the ESP's RAM while it's made, like a frame it draws
 };
 
 // ms frame f of s shows
@@ -112,6 +113,8 @@ struct Overlay {
   uint16_t frame_rate = 100;  // percent, 0 = paused
   std::string why;            // when it failed
   bool lasting = false;       // it would fail again, so it waits until it's shown again
+  uint8_t looks = 0;          // times in a row the ESP hadn't the RAM to make it, 0 when it isn't waiting for that
+  uint32_t looked = 0;        // millis() at the last of them
   size_t frame_bytes() const { return (size_t) (w + 1) / 2 * h; }
   size_t panel_frame() const { return still || sheet ? 0 : frame_bytes(); }  // what the panel keeps of its frame
 };
@@ -120,6 +123,10 @@ inline Overlay overlays[OVERLAY_SLOTS];
 // count() builds the palette from all frames, make() the records, send() sends them. One overlay at a time.
 enum Phase { IDLE, COUNT, MAKE, SEND };
 inline constexpr int ROWS_PX = 256;  // pixels a call takes at least, a row or a few, so the time is looked at seldom
+// One the ESP hasn't the RAM to make waits, and the RAM is looked at again every RAM_LOOK_MS: a picture being made
+// or a request holds some for a while. After RAM_LOOKS it's made at half size, if there's the RAM for that.
+inline constexpr uint32_t RAM_LOOK_MS = 2000;
+inline constexpr int RAM_LOOKS = 15;
 inline constexpr uint32_t FNV_START = 2166136261u, FNV_PRIME = 16777619u;  // FNV-1a, for the frames' hashes
 
 struct Work {
@@ -195,6 +202,11 @@ inline std::string shown() {
     slots++;
     if (a.state == FAILED)
       after += "; " + label(a) + ": " + a.why;
+    if (a.state == WANT && a.looks) {
+      std::string waits = "; " + label(a) + ": waiting for the ESP's RAM";
+      if (after.find(waits) == std::string::npos)  // once for those with one label
+        after += waits;
+    }
     if (a.state != SENT)
       continue;
     int n = 0;
@@ -330,25 +342,78 @@ inline std::string too_big(size_t n) {
   return (W.a->half ? "too big even at half size (over " : "too big at scale 2 (over ") + std::to_string(n) + " bytes)";
 }
 
-// The most the records take while it's made: up to the room there can be, and one record over. A still's pieces up
-// to the pool.
-inline size_t data_max() {
-  if (W.a->still)
-    return OVERLAY_POOL;
-  return OVERLAY_POOL - W.a->frame_bytes() + OVERLAY_RECORD_HEAD + PDEFLATE_BOUND(W.a->frame_bytes());
+// ms in OVERLAY_TICK_MS, 1 at least
+inline uint32_t ticks_of(uint32_t ms) { return std::max<uint32_t>(1, (ms + OVERLAY_TICK_MS / 2) / OVERLAY_TICK_MS); }
+
+// The records after a frame's own that make it last ms, OVERLAY_DELAY_MAX each
+inline uint32_t more_records(uint32_t ms) {
+  return (std::max<uint32_t>(ticks_of(ms), OVERLAY_DELAY_MAX) - 1) / OVERLAY_DELAY_MAX;
 }
 
-// Whether the ESP has the RAM to make it: the colour counts, then the colour table, three frames, the records and
-// pdeflate's work for a frame, in three blocks. A still has one frame and no deflate. Without exceptions a failed
-// allocation restarts the ESP.
-inline bool has_ram() {
-  size_t f = W.a->frame_bytes();
+// The most a frame takes as a still's pieces, as plink_overlay_pieces() counts them
+inline size_t pieces_max() {
+  size_t row = (size_t) (W.a->w + 1) / 2, pieces = (size_t) (W.a->h + OVERLAY_PIECE_ROWS - 1) / OVERLAY_PIECE_ROWS;
+  return pieces * OVERLAY_RECORD_HEAD + W.a->h * (row + row / 128 + 1);
+}
+
+// The most its records take while it's made, or those of its frames as a sheet: a record a frame with those that
+// make it last, and the one back to the first, but no more than the room there can be and a record over. A still's
+// pieces.
+inline size_t data_max(bool sheet = false) {
   if (W.a->still)
-    return panel::has_ram(std::max<size_t>(COUNT_RAM, BINS + f + data_max()),
-                          std::max<size_t>({BINS * 4, data_max(), f}));
-  size_t work = PDEFLATE_ENC + PDEFLATE_TOK(f) + PDEFLATE_REST(f), sheet = W.own ? OVERLAY_POOL : 0;
-  return panel::has_ram(std::max<size_t>(COUNT_RAM, BINS + 3 * f + data_max() + sheet + work),
-                        std::max<size_t>({BINS * 4, data_max(), PDEFLATE_ENC, PDEFLATE_TOK(f), sheet}));
+    return std::min<size_t>(OVERLAY_POOL, pieces_max());
+  const Source &s = *W.a->src;
+  size_t f = W.a->frame_bytes(), record = OVERLAY_RECORD_HEAD + (sheet ? pieces_max() : PDEFLATE_BOUND(f));
+  size_t n = sheet ? 0 : record;
+  for (int i = 0; i < s.frames; i++)
+    n += record + more_records(frame_ms(s, i)) * OVERLAY_RECORD_HEAD;
+  return std::min<size_t>(n, sheet ? OVERLAY_POOL : OVERLAY_POOL - f + record);
+}
+
+// What making it takes of the ESP's RAM besides its pixels' own, and the biggest piece of that. First the colour
+// counts with the colours that occur. Then, with `counted`, the colour table, three frames, the records and
+// pdeflate's work for a frame, in three blocks: a still has one frame and no deflate.
+struct Ram {
+  size_t bytes, block;
+};
+inline Ram ram_for(bool counted) {
+  const Overlay &a = *W.a;
+  size_t f = a.frame_bytes(), data = data_max(), px = (size_t) a.src->frames * a.w * a.h;
+  if (!counted)  // W.hist, median_cut()'s bins and W.hash
+    return {BINS * 4 + 2 * std::min<size_t>(BINS, px) + 4 * a.src->frames, BINS * 4};
+  if (a.still)
+    return {BINS + f + data, std::max<size_t>({BINS, data, f})};
+  size_t work = PDEFLATE_ENC + PDEFLATE_TOK(f) + PDEFLATE_REST(f), sheet = W.own ? data_max(true) : 0;
+  return {BINS + 3 * f + data + sheet + work, std::max<size_t>({BINS, data, PDEFLATE_ENC, PDEFLATE_TOK(f), sheet})};
+}
+// All of it, from start to end
+inline Ram ram_for() {
+  Ram count = ram_for(false), make = ram_for(true);
+  return {W.a->src->ram + std::max(count.bytes, make.bytes), std::max(count.block, make.block)};
+}
+
+// Whether the ESP has that now: all of it before it starts, the rest once it's counted, since a picture or a
+// request may have taken some meanwhile. Without exceptions a failed allocation restarts the ESP.
+inline bool has_ram(bool counted = false) {
+  Ram r = counted ? ram_for(true) : ram_for();
+  return panel::has_ram(r.bytes, r.block);
+}
+
+// The one in hand waits for the ESP's RAM: it stays wanted, and loop() starts it again after RAM_LOOK_MS. Always
+// false.
+inline bool short_of_ram() {
+  Overlay &a = *W.a;
+  if (!a.looks) {
+    [[maybe_unused]] Ram r = ram_for();  // only logged, unused when ESP_LOGW compiles out
+    ESP_LOGW("panel", "Animation %s: waiting for the RAM to make it, %u KB with %u KB in one piece. The ESP has %s",
+             a.name.c_str(), (unsigned) ((r.bytes + ram_spare() + 1023) / 1024), (unsigned) ((r.block + 1023) / 1024),
+             ram_left().c_str());
+  }
+  a.looks += a.looks < UINT8_MAX;
+  a.looked = millis();
+  stop();
+  status(shown());
+  return false;
 }
 
 // ---- the link's messages
@@ -508,8 +573,9 @@ inline uint16_t bits_of(const uint32_t *pal, const std::vector<uint32_t> &colour
   return bits;
 }
 
-// False if it doesn't fit on the screen or next to the others, or the ESP hasn't the RAM. Straight to half size if
-// a frame alone is over what's left, or the ESP only has the RAM for that, and it can. A field is sent as it is.
+// False if it doesn't fit on the screen or next to the others, or it waits for the ESP's RAM. Straight to half size
+// if a frame alone is over what's left and it can, or the ESP has had the RAM for no more through RAM_LOOKS. A field
+// is sent as it is.
 inline bool start() {
   Overlay &a = *W.a;
   const Source &s = *a.src;
@@ -538,6 +604,7 @@ inline bool start() {
   W.own = 0;
   for (const Copy &c : a.copies)
     W.own += c.used && c.own;
+  bool was_half = a.half, short_of = false;  // short_of: the RAM for it as it was
   for (;;) {
     a.scale = s.scale * (a.half ? 2 : 1);
     a.w = a.half ? (s.w + 1) / 2 : s.w;
@@ -546,13 +613,19 @@ inline bool start() {
     bool fits = a.panel_frame() <= left;
     if (fits && has_ram())
       break;
-    if (!can_halve())
-      return fits ? fail("the ESP doesn't have the RAM to make it") : fail(too_big(a.frame_bytes()), true);
-    if (fits) {
-      ESP_LOGW("panel", "Animation %s: the ESP has the RAM to make it at half size only", a.name.c_str());
+    if (!fits && !can_halve())
+      return fail(too_big(a.frame_bytes()), true);
+    if (fits && (a.looks < RAM_LOOKS || !can_halve())) {
+      a.half = was_half;
+      return short_of_ram();
     }
+    short_of |= fits;
     a.half = true;
   }
+  if (short_of) {
+    ESP_LOGW("panel", "Animation %s: the ESP has the RAM to make it at half size only", a.name.c_str());
+  }
+  a.looks = 0;
   W.hist.assign(BINS, 0);
   W.hash.clear();
   W.sum = FNV_START;
@@ -612,13 +685,17 @@ inline void palette() {
   a.glows = 0;  // as make() meets them
   a.cycles = bits_of(a.pal, a.src->cycles);
   drop(W.hist);
-  drop(bins);                // the lut takes their place, so has_ram()'s peak holds
+  drop(bins);
+  if (!has_ram(true)) {
+    short_of_ram();
+    return;
+  }
   W.lut.assign(BINS, 0xFF);  // filled as make() meets the colours
   a.data.clear();
   a.data.reserve(data_max());  // so it never moves
   W.sheet.clear();
   if (W.own && !a.still)
-    W.sheet.reserve(OVERLAY_POOL);
+    W.sheet.reserve(data_max(true));
   W.frame.resize(a.frame_bytes());
   if (!a.still) {
     W.prev.resize(a.frame_bytes());
@@ -630,9 +707,6 @@ inline void palette() {
   W.record_us = UINT32_MAX;
   W.phase = MAKE;
 }
-
-// ms in OVERLAY_TICK_MS, 1 at least
-inline uint32_t ticks_of(uint32_t ms) { return std::max<uint32_t>(1, (ms + OVERLAY_TICK_MS / 2) / OVERLAY_TICK_MS); }
 
 // An empty record that only waits. x says what for: OVERLAY_RECORD_MORE or OVERLAY_RECORD_FRAME.
 inline void waits(std::vector<uint8_t> &d, uint8_t delay, uint8_t x) {
@@ -766,10 +840,11 @@ inline bool make(uint32_t deadline_us, bool fresh) {
   W.y = 0;
   size_t left = room();
   if (a.still) {
-    a.data.resize(left);
+    size_t cap = std::min(left, data_max());
+    a.data.resize(cap);
     uint8_t delay = (uint8_t) std::min<uint32_t>(ticks_of(frame_ms(*a.src, 0)), OVERLAY_DELAY_MAX);
     uint32_t n =
-        plink_overlay_pieces(W.frame.data(), a.w, a.h, clear_colours(a.pal), delay, a.data.data(), (uint32_t) left);
+        plink_overlay_pieces(W.frame.data(), a.w, a.h, clear_colours(a.pal), delay, a.data.data(), (uint32_t) cap);
     a.data.resize(n);
     W.f = 1;
     made(true, left, n ? n : left + 1);
@@ -1381,7 +1456,7 @@ inline void loop(uint32_t deadline_us) {
     if (!link::connected)
       return;
     for (auto &a : overlays)
-      if (!a.name.empty() && a.state == WANT) {
+      if (!a.name.empty() && a.state == WANT && (!a.looks || millis() - a.looked >= RAM_LOOK_MS)) {
         W.a = &a;
         if (!a.data.empty()) {  // made already, sent again after a hello. It fit before, so it fits again.
           W.t.reset();

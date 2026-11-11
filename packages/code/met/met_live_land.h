@@ -9,7 +9,7 @@ namespace flexit::panel::met::live {
 // How far the smoke drifts downwind, px
 inline int smoke_drift(const Scene &s) { return std::min(60, 10 + (int) (s.at.wind * 4)); }
 
-// What the land shows are made of, so they start again when it changes: the cabin, so the landscape, then the way
+// What the land's acts are made of, so they start again when it changes: the cabin, so the landscape, then the way
 // the wind blows, then the smoke's puffs, drift and colour and Christmas
 inline uint32_t cabin_at(const Scene &s) { return (uint32_t) s.cabin_x << 8 | (uint32_t) s.cabin_y; }
 inline uint32_t cabin_wind(const Scene &s) { return cabin_at(s) | (uint32_t) (s.at.wdir > 0) << 17; }
@@ -18,51 +18,201 @@ inline uint32_t cabin_smoke(const Scene &s) {
          (uint32_t) (s.at.dark + (s.at.light < 0.5f)) << 25 | (uint32_t) s.at.yule << 27;
 }
 
-inline constexpr int GLIDE_IN = 21000, FLY_OFF = 17000;  // a visiting gull's glide in and flight off, ms
-
-// The top row of what a show sets about the meadow in front of the cabin, below its floor
+// The top row of what an act sets about the meadow in front of the cabin, below its floor
 inline int meadow(const Scene &s) { return std::min(s.cabin_y + 10, H - 16); }
 
-// A gull's visit to the ridge: it glides in, lands, looks about, preens and takes off again on a flat beat. x, y
-// are where it stands, its feet on the ridge. The ms it takes.
-inline uint32_t gull_visit(int x, int y, bool from_right) {
-  place("gullvisit", 0, from_right ? W + 2 : -21, y - 43, R"(
-    clip fly
-    frame 7                # gliding by the time it's there
-    move gx, y over glide
-    wait glide
-    clip stay
-    move sx, y
-    wait rounds 1
-    clip fly
-    frame 2
-    move gx, y + 4
-    move away, 96 over off ease in
-    wait off
-    end
-  )",
-        {{"gx", x + 1}, {"sx", x}, {"y", y}, {"glide", GLIDE_IN}, {"away", from_right ? -21 : W + 2}, {"off", FLY_OFF}},
-        {.left = from_right});
-  return (uint32_t) (GLIDE_IN + ms_of("gullvisit", "stay") + FLY_OFF);
+// ---- birds that come down
+
+// Where a bird can come down: the column its feet's middle is at and the row they stand on, how big it's seen there,
+// percent, and how deep it is there, so what's nearer is in front of it. What's far off is smaller.
+struct Perch {
+  int16_t x, y;
+  uint8_t size, depth;
+};
+inline constexpr int FAR_BIRD = 60;  // percent a bird is seen at on the middle hill, the lighthouse and the town
+
+// The picture's, each in full view with room for a bird on it clear of the forecast and of the panel's texts: the
+// cabin's ridge left of its chimney, the flagpole's top, the lighthouse's, and the town's flat roofs. With trees,
+// the tops of the near spruces too, and of those on the middle hill.
+inline std::vector<Perch> perches(const Scene &s, bool trees) {
+  std::vector<Perch> all;
+  // whether something nearer than the middle hill stands over column x at row y: the near hill, its spruces, the
+  // cabin or the pole
+  auto behind = [&](int x, int y) {
+    x = std::clamp(x, 0, W - 1);
+    bool hid =
+        s.land->hill[2][x] <= y || (s.pole_x >= 0 && abs(x - s.pole_x) < 2 && y >= s.pole_top) ||
+        (s.cabin && x >= s.cabin_x + EAVES_L - 1 && x <= s.cabin_x + EAVES_R + 1 && y >= s.cabin_y - CABIN_TOP - 1);
+    for (int i : near_trees(s, -1))
+      hid = hid || (abs(x - s.tree[i].x) <= (s.tree[i].base - s.tree[i].top) / 2 + 2 && y >= s.tree[i].top);
+    return hid;
+  };
+  auto add = [&](int x, int y, bool far) {
+    constexpr int HALF = 11, UP = 15;  // half the widest of the birds, and the tallest
+    bool texts = y >= TEXTS_TOP && (x - HALF < GAP_L || x + HALF > GAP_R);
+    if (x - HALF < 0 || x + HALF >= W || y - UP < (s.overlay ? OV_H : 0) || texts)
+      return;
+    for (int dx = -5; far && dx <= 5; dx += 5)
+      if (behind(x + dx, y) || behind(x + dx, y - UP * FAR_BIRD / 100))
+        return;
+    all.push_back({(int16_t) x, (int16_t) y, (uint8_t) (far ? FAR_BIRD : 100), (uint8_t) (far ? D_MID_ON : D_AIR)});
+  };
+  if (s.cabin)
+    add(s.cabin_x + RIDGE_L + 15, ridge_y(s), false);
+  if (s.pole_x >= 0)
+    add(s.pole_x, s.pole_top, false);
+  if (s.lighthouse)
+    add(LH_X, s.lh_y - 34, true);
+  for (int i = 0; trees && i < s.ntrees; i++)
+    if (s.tree[i].kind == 0 && s.tree[i].layer)
+      add(s.tree[i].x, s.tree[i].top, s.tree[i].layer < 2);
+  for (int i = 0; i < s.nbld; i++)
+    if (!s.bld[i].back && s.bld[i].kind == 0 && s.bld[i].w >= 14)
+      add(s.bld[i].x + s.bld[i].w / 2, s.bld[i].top - 1, true);
+  return all;
 }
 
-// A hooded crow's visit to the ridge: it flies in from the left over the trees and down onto it, caws and looks
-// about, and flies back off the way it came. x, y are where it stands, its feet on the ridge. The ms it takes.
-inline uint32_t crow_visit(int x, int y) {
-  in_light("crow");
-  place("crow", 0, -11, y - 31, "clip fly\n" + path({{x - 60, y - 31, 4300}, {x, y, 2200}}) + R"(
-    clip sit
-    wait rounds 1
-    flip x
-    clip fly
-    frame 3
-    move fx, y + 1
-    move -20, y - 56 over 5000 ease in
-    wait 5000
-    end
-  )",
-        {{"fx", x}, {"y", y}});
-  return (uint32_t) (4300 + 2200 + ms_of("crow", "sit") + 5000);
+// A bird that comes down: its sprite, with a clip it flies in and one it lands, stays and takes off in, the frames it
+// flies in and off from, and the box it stands in. Where its flying box is in that one as it comes and as it leaves,
+// how far above its perch it comes in from and leaves to, how far short of the perch it starts down from level
+// flight, 0 for all the way, its px/s in and off, whether it flies back the way it came, whether it's lit as the
+// scene is, and what its sprite takes of the pool over a visitor's.
+struct Lander {
+  const char *sprite, *fly, *stay;
+  int8_t fly_in, fly_off, w, h, dx, dy_off, lean;
+  int16_t drop, rise, lead;
+  float in, off;
+  bool back, lit;
+  int16_t more;
+};
+// A herring gull glides in against the wind, flares, lands, looks about, calls and preens, and flies on. A hooded
+// crow comes in level and drops onto it, caws and looks about, and flies back the way it came.
+inline constexpr Lander GULL = {.sprite = "gullvisit",
+                                .fly = "fly",
+                                .stay = "stay",
+                                .fly_in = 7,
+                                .fly_off = 2,
+                                .w = 21,
+                                .h = 15,
+                                .dx = 1,
+                                .dy_off = 4,
+                                .lean = 1,
+                                .drop = 43,
+                                .rise = 50,
+                                .lead = 0,
+                                .in = 13,
+                                .off = 19,
+                                .back = false,
+                                .lit = false,
+                                .more = 600};
+inline constexpr Lander CROW = {.sprite = "crow",
+                                .fly = "fly",
+                                .stay = "sit",
+                                .fly_in = 0,
+                                .fly_off = 3,
+                                .w = 11,
+                                .h = 9,
+                                .dx = 0,
+                                .dy_off = 1,
+                                .lean = 0,
+                                .drop = 31,
+                                .rise = 56,
+                                .lead = 60,
+                                .in = 32,
+                                .off = 40,
+                                .back = true,
+                                .lit = true,
+                                .more = 0};
+
+// Whether copy i of a flying sprite is on the panel
+inline bool flying(const char *n, int i) { return overlay::copy_for(key(n), i).second; }
+
+// The longest one of two that fly back and forth is given to go out of sight on the side it's waited for at, across
+// the picture and back, ms
+inline constexpr uint32_t OUT_OF_SIGHT = 200000;
+
+// One of the two of a sprite that fly back and forth: its copy and how it flies
+struct Flying {
+  const char *sprite;
+  int copy;
+  Bird bird;
+};
+
+// Bird b comes down on perch p: in from off the right or the left, smaller on its way to one far off, it lands,
+// stays a round of its clip, takes off and flies off, as big as it was by then. As one of two flying back and forth:
+// that one goes out of sight on the side it comes from first, at one of its turns, and stays away till it has left,
+// then comes back in where it went. The ms it takes at the most, 0 without the room for it.
+inline uint32_t land(const Lander &b, Perch p, bool from_right, const Flying *flock = nullptr) {
+  if (b.more && !room_for({0, 0, b.more}))
+    return 0;
+  const Frames *sp = frames_of(b.sprite);
+  if (!sp)
+    return 0;
+  int dir = from_right ? -1 : 1, x = p.x - b.w / 2 - dir * b.lean, y = p.y - b.h + 1;  // its box, standing
+  int x0 = from_right ? W + 2 : -b.w - 2, x1 = b.back ? x0 : W - b.w - x0;             // in from, and off to
+  int level = b.lead && abs(x - x0) > b.lead ? x - dir * b.lead : x0;                  // where it starts down
+  int in = abs(level - x0) * 1000 / (int) b.in, down = std::max(2000, abs(x - level) * 1000 / (int) b.in);
+  int off = std::max(3000, abs(x1 - x) * 1000 / (int) b.off), stay = ms_of(b.sprite, b.stay);
+  bool far = p.size < 100;
+  std::string size = far ? "pivot 50, 100\nglide size " + num(p.size) + " over " + num(in + down) + "\n" : "";
+  std::string t = std::string(flock ? "shared lit, away\nwait until away == 1\n" : "") + "clip " + b.fly + "\nframe " +
+                  num(b.fly_in) + "\n" + size + path({{level, y - b.drop, in}, {x + b.dx, y, down}}) +
+                  (far ? "depth " + num(p.depth) + "\n" : "") + "clip " + b.stay + "\nmove sx, sy\nwait rounds 1\n" +
+                  (b.back ? from_right ? "flip none\n" : "flip x\n" : "") + "clip " + b.fly + "\nframe " +
+                  num(b.fly_off) + "\n" + (far ? "depth " + num(D_AIR) + "\nglide size 100 over off\n" : "") + R"(
+    move sx + dx, sy + dy
+    move x1, sy - rise over off ease in
+    wait off
+  )" + (flock ? "away = 2\n" : "") +
+                  "end";
+  if (b.lit)
+    in_light(b.sprite);
+  place(b.sprite, 0, x0, y - b.drop, t,
+        {{"sx", x}, {"sy", y}, {"dx", b.dx}, {"dy", b.dy_off}, {"x1", x1}, {"rise", b.rise}, {"off", off}},
+        {.left = from_right});
+  uint32_t ms = (uint32_t) (in + down + stay + off);
+  if (!flock)
+    return ms;
+  // out at a turn on the side the other comes in from, if it gets there in time, away while that one's here, and
+  // back in where it flew off
+  script(flock->sprite, flock->copy,
+         R"(
+    shared lit, away
+    away = 0
+    t = ms + out
+    wait until ms > t or )" +
+             std::string(from_right ? "x >= 322" : "x <= -20") + R"(
+    if ms > t goto late
+    glide opacity 0
+    away = 1
+    t = ms + limit
+    wait until away == 2 or ms > t
+    away = 0
+    move back, y1
+    glide opacity 100
+    )" + ROAMS +
+             "late:\n",
+         {{"out", OUT_OF_SIGHT - 20000},
+          {"limit", ms + 10000},
+          {"back", x1 < 0 ? -20 : 322},
+          {"y1", y - b.rise},
+          {"s0", flock->bird.s0},
+          {"s1", flock->bird.s1}});
+  return OUT_OF_SIGHT + ms;
+}
+
+// Two of a sprite fly back and forth, copies from first, in its clip if it has one, and about every five minutes one
+// of them comes down on one of the picture's perches, against the wind there is by then
+inline void flock_lands(const Scene &s, const Lander &b, const char *sprite, int first, const char *clip, bool trees,
+                        const std::vector<Bird> &two) {
+  flock(sprite, first, clip, two);
+  std::vector<Perch> where = perches(s, trees);
+  if (!where.empty())
+    visitors(minutes(4.5f), minutes(1, 3), 1, [=, &b](int) {
+      int i = (int) rnd(0, 2);
+      Flying one{sprite, first + i, two[(size_t) i]};
+      return land(b, where[(size_t) rnd(0, (float) where.size())], R.wdir > 0, &one);
+    });
 }
 
 // A red squirrel's visit to the roof: it bounds along the hill from off the left through the forest, up the gable's
@@ -118,31 +268,28 @@ inline uint32_t squirrel_visit(const NearHill &h, int cx, int cy) {
   return (uint32_t) (up.n * up.leg(14) + 2 * (300 + 900 + 500) + ms_of("squirrel", "nut") + run);
 }
 
-// Gulls by the sea and hooded crows inland, and about every 7 minutes a visitor on the cabin's ridge: a crow comes
-// to caw, a red squirrel runs up over the roof, or by the sea a gull glides in against the wind, lands, looks about,
-// preens and takes off again
-inline void roof_birds(const Scene &s) {
-  bool sea = s.ground == G_COAST, from_right = s.at.wdir > 0;
-  if (sea) {
-    flock("gull", 0, "", {{60, 120, 6, 10, 100, 150}, {230, 105, 5, 8, 95, 140}});
-  } else {  // the crow that visits is copy 0
-    in_light("crow");
-    flock("crow", 1, "fly", {{70, 112, 8, 12, 96, 140}, {240, 100, 7, 11, 92, 134}});
-  }
-  int cx = s.cabin_x, cy = s.cabin_y, x = cx + RIDGE_L, ry = ridge_y(s);  // they stand on the ridge left of the chimney
-  NearHill h(s);
-  visitors(minutes(7), minutes(0.5f, 3), sea ? 3 : 2, [=](int k) {
-    if (k == 0)
-      return crow_visit(x + 7, ry - 8);
-    if (k == 1)
-      return squirrel_visit(h, cx, cy);
-    return gull_visit(x + (from_right ? 6 : 4), ry - 14, from_right);
-  });
+// Two gulls over the sea, one of which comes down now and then, where a gull would
+inline void gulls(const Scene &s) {
+  flock_lands(s, GULL, "gull", 0, "", false, {{60, 120, 6, 10, 100, 150}, {230, 105, 5, 8, 95, 140}});
+}
+// and two hooded crows inland, on the spruces too: the one that's down is copy 0
+inline void crows(const Scene &s) {
+  in_light("crow");
+  flock_lands(s, CROW, "crow", 1, "fly", true, {{70, 112, 8, 12, 96, 140}, {240, 100, 7, 11, 92, 134}});
 }
 
-// Puffs from the chimney top, drifting downwind further the more it blows
-inline void stove_smoke(const Scene &s, const char *name) {
-  chimney(name, s.puffs, s.chimney.x, s.chimney.y, 52, smoke_drift(s), s.at.wdir);
+// Puffs from the chimney top, drifting downwind further the more it blows, dark against the night: as many of the
+// scene's, which go by the heat, as the act has places for. Those that are there stay as they are.
+inline void chimney_smoke(const Scene &s) {
+  const char *name = s.at.dark ? "puffnight" : s.at.light < 0.5f ? "puffdusk" : "puff";
+  const overlay::Overlay *a = overlay::find(key(name));
+  for (int i = 0, n = std::min<int>(s.puffs, granted().places); i < s.puffs; i++) {
+    bool there = a && (size_t) i < a->copies.size() && a->copies[i].used;
+    if (i < n && !there)
+      chimney(name, s.puffs, s.chimney.x, s.chimney.y, 52, smoke_drift(s), s.at.wdir, i, i + 1);
+    else if (i >= n && there)
+      remove(name, i);
+  }
 }
 
 // A magpie or a wagtail, n, hops about the meadow in front of the cabin a while, in the gap between the date and the
@@ -162,14 +309,26 @@ inline uint32_t lawn_bird(const char *n, int top) {
   return 60000;
 }
 
-// Smoke from the stove, by the heat, through Christmas a paper star in the window, and by day now and then a magpie
-inline void smoke(const Scene &s) {
-  stove_smoke(s, s.at.dark ? "puffnight" : s.at.light < 0.5f ? "puffdusk" : "puff");
-  if (s.at.yule)
-    place("adventstar", 0, window_x(s), window_y(s));
-  int top = meadow(s);
-  if (!s.at.dark)
-    visitors(minutes(6), minutes(1, 4), 1, [top](int) { return lawn_bird("magpie", top); });
+// Through Christmas a paper star in the window
+inline void advent_star(const Scene &s) { place("adventstar", 0, window_x(s), window_y(s)); }
+
+// By day about every 7 minutes someone comes to the cabin: a red squirrel up over the roof, a magpie about the
+// meadow, and while none are flying about, a crow that comes down on one of the picture's perches, or by the sea a
+// gull
+inline void about_the_cabin(const Scene &s) {
+  bool sea = s.ground == G_COAST;
+  int cx = s.cabin_x, cy = s.cabin_y, top = meadow(s);
+  NearHill h(s);
+  std::vector<Perch> crow = perches(s, true), gull = perches(s, false);
+  visitors(minutes(7), minutes(0.5f, 3), sea ? 4 : 3, [=](int k) -> uint32_t {
+    if (k == 0)
+      return flying("crow", 1) || crow.empty() ? 0 : land(CROW, crow[(size_t) rnd(0, (float) crow.size())], R.wdir > 0);
+    if (k == 1)
+      return squirrel_visit(h, cx, cy);
+    if (k == 2)
+      return lawn_bird("magpie", top);
+    return flying("gull", 0) || gull.empty() ? 0 : land(GULL, gull[(size_t) rnd(0, (float) gull.size())], R.wdir > 0);
+  });
 }
 
 // Copy 0 of n walks in from off one side along row y at speed px/s to stop, its walk clip's frames, where it's a
@@ -207,19 +366,20 @@ inline uint32_t fox_by(int y, int stop) {
   return stop_by("fox", "trot", "look", stop, y, 0, 10);
 }
 
-// Firelight in the window and smoke dark against the night. Now and then the cat sits on the sill a while, or a fox
-// trots by.
-inline void cosy(const Scene &s) {
-  int x = window_x(s), y = window_y(s), fox = std::min(s.cabin_y + 6, H - 9);
-  place("firewin", 0, x, y, "clip fire");
-  stove_smoke(s, "puffnight");
-  visitors(minutes(6), minutes(1, 4), 2, [=](int k) {
-    if (k)
-      return fox_by(fox, x - 2);
+// Firelight in the window, and now and then the cat sits on the sill a while
+inline void firelight(const Scene &s) {
+  place("firewin", 0, window_x(s), window_y(s), "clip fire");
+  sometimes(minutes(12), minutes(1, 4), [] {
     int sits = (int) rnd(2, 5);  // whole rounds of it
     script("firewin", 0, "clip fire; wait 8000; clip cat; wait rounds sits; clip fire", {{"sits", sits}});
     return (uint32_t) (8000 + sits * ms_of("firewin", "cat"));
   });
+}
+
+// By night now and then a fox trots by the cabin
+inline void cabin_by_night(const Scene &s) {
+  int y = std::min(s.cabin_y + 6, H - 9), stop = window_x(s) - 2;
+  visitors(minutes(12), minutes(1, 6), 1, [=](int) { return fox_by(y, stop); });
 }
 
 // A moose, n, comes in along the meadow from x0 to x1, grazes there and goes back, a cow with her calf behind her,
@@ -479,15 +639,13 @@ inline void skier(const Scene &s) {
   if (!s.cabin)
     return;
   Edge edge = forest_edge(s);
-  int top = meadow(s), kick = s.cabin_y + 4;
+  int kick = s.cabin_y + 4;
   bool hills = s.ground == G_HILLS;
-  visitors(minutes(5), minutes(1, 5), 4, [=](int k) -> uint32_t {
+  visitors(minutes(5), minutes(1, 5), 3, [=](int k) -> uint32_t {
     if (k == 1)
       return hills ? sledge(h) : 0;
     if (k == 2)
       return edge.x >= 0 ? hare_out(h, edge) : 0;
-    if (k == 3)
-      return lawn_bird("magpie", top);
     return kick_sled(kick);
   });
 }
@@ -521,7 +679,7 @@ inline uint32_t mow(int y) {
   return (uint32_t) (strips * leg);
 }
 
-// Three sheep grazing on the middle hill's face for the while the show's on, shifting a little now and then, but
+// Three sheep grazing on the middle hill's face for the while the act's on, shifting a little now and then, but
 // for the town. With lambs there are three more beside them at half the size.
 inline void sheep(const Scene &s, bool lambs) {
   int x = GAP_L + 5, mid = s.land->hill[1][x + 14], near = s.land->hill[2][x + 14];
@@ -616,13 +774,10 @@ inline uint32_t to_the_nek(const char *n, Pt nek, int dx, int dy, bool left, int
 }
 
 // Through Christmas the small birds come to the julenek: a bullfinch cock and his hen and a great tit fly in one
-// after the other, peck at the oats and fly off again, and now and then a magpie is about under it
+// after the other, peck at the oats and fly off again
 inline void julenek(const Scene &s) {
   Pt nek = s.nek;
-  int top = meadow(s);
-  visitors(minutes(2), minutes(0.1f, 0.5f), 3, [nek, top](int k) {
-    if (k == 2)
-      return lawn_bird("magpie", top);
+  visitors(minutes(3), minutes(0.1f, 0.5f), 1, [nek](int) {
     bool left = chance(0.5f);
     uint32_t ms = to_the_nek("bullfinch", nek, -4, 2, left, 0);
     ms = std::max(ms, to_the_nek("finchhen", nek, 4, 2, !left, 2500));
