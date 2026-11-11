@@ -1,8 +1,8 @@
 // Text and marks over a panel picture, drawn on the ESP: Noto Sans (marks_font.h) and 1-bit bitmaps, like a pixel
 // font. A Layer lists them like a drawing. The text, dots, bitmaps and marks go to the panel sharp, as a still overlay
 // with colours of its own: each ink a few opacities, so the edges stay smooth. The lines, glows, boxes, scrims and
-// the soft shadow under it all go into the picture, where the JPEG keeps them smooth. Both are drawn BAND rows at a
-// time as they're asked for, so neither is held whole. picture_marks.h puts a layer over a picture. Plain C++
+// the soft shadow under it all go into the picture, where the JPEG keeps them smooth. Both are drawn a band of rows at
+// a time as they're asked for, so neither is held whole. picture_marks.h puts a layer over a picture. Plain C++
 // without ESPHome.
 #pragma once
 #include <algorithm>
@@ -25,6 +25,8 @@ namespace flexit::panel::marks {
 inline constexpr int W = PIC_MAX_W, H = PIC_MAX_H;
 inline constexpr int BAND = 8;  // rows drawn at a time, a JPEG's MCU row
 inline constexpr int PAD = 2;   // rows above and below a band the shadow reaches it from
+// The overlay's rows drawn at a time. overlay.h asks for it a row at a time, so a few are enough and take little RAM
+inline constexpr int SHARP_BAND = 2;
 inline constexpr uint32_t WHITE = 0xFFFFFF, INK = 0x08090E, CYAN = 0x62E2FF, WARM = 0xFFEED4;
 
 struct Box {
@@ -435,8 +437,8 @@ struct Soft {
 // The overlay's band, premultiplied 0xAARRGGBB
 struct Sharp {
   int y0 = INT_MIN;
-  uint32_t px[W * BAND];
-  uint8_t cov[W * BAND];
+  uint32_t px[W * SHARP_BAND];
+  uint8_t cov[W * SHARP_BAND];
 };
 
 inline bool casts(const Op &o) { return o.kind != Op::SCRIM && o.kind != Op::GLOW_DOT && o.kind != Op::GLOW_LINE; }
@@ -537,7 +539,7 @@ inline void draw_soft(const Layer &l, const std::function<uint32_t(int, int)> &b
 // Rows y0.. of the overlay, premultiplied
 inline void draw_sharp(const Layer &l, Sharp &b, int y0) {
   b.y0 = y0;
-  int y1 = std::min(y0 + BAND, H);
+  int y1 = std::min(y0 + SHARP_BAND, H);
   std::fill(std::begin(b.px), std::end(b.px), 0);
   for (const Op &o : l.ops)
     for (int edge = o.outline ? 1 : 0; !o.soft && edge >= 0; edge--) {

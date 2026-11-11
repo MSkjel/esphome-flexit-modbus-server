@@ -47,7 +47,7 @@ inline uint32_t sharp_pixel(Marks &m, int x, int y) {
     m.sharp.reset(new (std::nothrow) Sharp());
   if (!m.sharp || sx >= W || sy >= H)
     return 0;
-  int y0 = sy / BAND * BAND;
+  int y0 = m.oy + y / SHARP_BAND * SHARP_BAND;  // from its top, so a pixel at half size has its 2 x 2 in one band
   if (m.sharp->y0 != y0)
     draw_sharp(m.layer, *m.sharp, y0);
   uint32_t p = m.sharp->px[(sy - y0) * W + sx], a = p >> 24;
@@ -124,6 +124,7 @@ inline void set(const std::string &name, Layer l) {
     m.ow = std::min(W - m.ox, (int) ceilf(b.x1) - m.ox + 1);
     m.oh = std::min(H - m.oy, (int) ceilf(b.y1) - m.oy + 1);
     overlay::Source s{m.ow, m.oh, 1, 500, m.ox, m.oy, 1, [&m](int, int x, int y) { return sharp_pixel(m, x, y); }};
+    s.ram = sizeof(Sharp);
     s.colours = colours_of(m.layer);
     s.fade_ms = 300;
     s.label = m.label;

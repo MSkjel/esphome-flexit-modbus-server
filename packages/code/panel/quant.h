@@ -1,6 +1,7 @@
 // 16 colours for a picture or an animation from its 4-bit-per-channel histogram, and a 16-colour version's error.
 // Plain C++ without ESPHome.
 #pragma once
+#include <algorithm>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -11,6 +12,11 @@ namespace flexit::panel {
 inline constexpr int BINS = 4096;  // colours at 4 bits per channel, see bin()
 // RAM to count colours: the counts, the bins and the colour table
 inline constexpr uint32_t COUNT_RAM = BINS * 4 + BINS * 2 + BINS;
+
+// The colours that occur, each a bin in Cut
+inline size_t occurring(const std::vector<uint32_t> &hist) {
+  return BINS - (size_t) std::count(hist.begin(), hist.end(), 0u);
+}
 
 // Median cut to `colours` colours, max 16, a split at a time so the loop can get back to the bus between them.
 // Keeps splitting the box with the biggest spread times pixel count at its median.

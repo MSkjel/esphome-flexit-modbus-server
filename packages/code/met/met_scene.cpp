@@ -836,6 +836,9 @@ static void shape(Land &d, Ground g, const float *ph) {
       d.hill[2][x] = (uint8_t) (int) (b.near - 8 * sinf(x / 71.0f + ph[5]) - 4 * sinf(x / 29.0f + ph[6]));
     }
   }
+  for (int l = 0; l < 3; l++)
+    d.hill_top[l] = *std::min_element(d.hill[l], d.hill[l] + W);
+  d.ridge_top = g == G_MOUNTAINS ? *std::min_element(d.ridge, d.ridge + W) : NONE;
 }
 
 // A skerry, drawn once the trees stand
@@ -1050,6 +1053,8 @@ static void fog_edges(Scene &s, const Now &n, float ph) {
       int edge = f == 0 ? HORIZON - 4 - (int) (n.fog * 0.1f) : CITY_GROUND_Y - (int) (n.fog * 0.12f);
       s.fog_top[f][x] = (uint8_t) (on ? edge + (int) (3 * sinf(x / 17.0f + ph + f)) : NONE);
     }
+  for (int f = 0; f < 2; f++)
+    s.fog_from[f] = *std::min_element(s.fog_top[f], s.fog_top[f] + W);
 }
 
 // How far tree i reaches either side of its middle at row y, -1 above it

@@ -72,9 +72,9 @@ static int drawn(const marks::Op &t, int &l, int &r, int &top, int &bottom) {
   int n = 0;
   l = top = 9999;
   r = bottom = -1;
-  for (int y0 = 0; y0 < H; y0 += marks::BAND) {
+  for (int y0 = 0; y0 < H; y0 += marks::SHARP_BAND) {
     marks::draw_sharp(only, sharp, y0);
-    for (int y = y0; y < std::min(H, y0 + marks::BAND); y++)
+    for (int y = y0; y < std::min(H, y0 + marks::SHARP_BAND); y++)
       for (int x = 0; x < W; x++)
         if (sharp.px[(y - y0) * W + x] == (0xFF000000 | t.rgb)) {
           n++;
