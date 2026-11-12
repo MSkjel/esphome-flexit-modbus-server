@@ -105,11 +105,11 @@ text_sensor:
     update_interval: never
 
 event:
-  # fired when one of these is picked in the panel's menu
+  # fired when one of these is picked in the panel's menu, and message_closed when a notification is closed on it
   - platform: template
     id: panel_action
     name: "Panel Action"
-    event_types: [reset_filter, reset_alarms, clear_history, factory_reset]
+    event_types: [reset_filter, reset_alarms, clear_history, factory_reset, message_closed]
 
 # The panel's settings show what it reports, unknown until it has, and what's set from here. The rest of them are in
 # its own menu and the panel_set action.
@@ -218,11 +218,13 @@ button:
 api:
   actions:
     # in Home Assistant: esphome.<device>_panel_notify etc.
-    # A notification. level is info, warning or alarm, icon an id from code/panel/plink_icons.h in lower case.
+    # A notification. level is info, warning or alarm, icon an id from code/panel/plink_icons.h in lower case. While
+    # it's open the panel stays awake, without its screensaver, for stay seconds, -1 until it's closed, 0 not at all.
+    # Closed, "Panel Action" says message_closed. stay is new and required, so older automations need stay: 0.
     - action: panel_notify
-      variables: &notify {message: string, icon: string, level: string}
+      variables: &notify {message: string, icon: string, level: string, stay: int}
       then: &do_notify
-        - lambda: flexit::panel::notify(message, icon, level);
+        - lambda: flexit::panel::notify(message, icon, level, stay);
     # Lines on the screensaver in place of the temperatures, in the modes that show them. sizes in px, 16, 20 or 28,
     # one for each line, 16 for those without. No lines bring the temperatures back.
     - action: panel_saver_text
@@ -327,7 +329,7 @@ api:
       then: &do_set
         - lambda: flexit::panel::set(setting, value);
 
-# The same for your own YAML, like script.execute: {id: panel_notify, message: Hi, icon: bell, level: info}
+# The same for your own YAML, like script.execute: {id: panel_notify, message: Hi, icon: bell, level: info, stay: 0}
 script:
   - {id: panel_notify, parameters: *notify, then: *do_notify}
   - {id: panel_saver_text, parameters: *saver_text, then: *do_saver_text}

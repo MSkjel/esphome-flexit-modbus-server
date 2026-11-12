@@ -1,5 +1,6 @@
 // Code for packages/panel.yaml. Icons, views, actions and settings go by their ids in plink_*.h, in lower case.
 #pragma once
+#include <algorithm>
 #include <array>
 #include <bitset>
 #include <cctype>
@@ -62,11 +63,15 @@ inline std::bitset<0x200> seen, resend;
 inline std::array<std::string, SAVER_LINES> saver_lines;
 inline std::bitset<SAVER_LINES> saver_due;
 
-// loop() sends it
-inline void notify(const std::string &message, const std::string &icon_name, const std::string &level) {
+// loop() sends it. stay: s it keeps the panel awake while it's open, -1 until it's closed, 0 not at all.
+inline void notify(const std::string &message, const std::string &icon_name, const std::string &level, int stay = 0) {
   int lv = level == "alarm" ? NOTE_ALARM : level == "warning" ? NOTE_WARNING : NOTE_INFO;
   note = {(char) icon(icon_name.empty() ? "info" : icon_name), (char) lv};
   note += cut(message, PLINK_TEXT_MAX);
+  if (stay) {  // see NOTE_STAY
+    uint16_t s = stay < 0 ? NOTE_STAY : (uint16_t) std::min(stay, NOTE_STAY - 1);
+    note += {'\0', (char) (s & 0xFF), (char) (s >> 8)};
+  }
   note_queued = false;
 }
 
@@ -209,7 +214,7 @@ inline void setup(uint8_t panel_address) {
   });
   auto &h = handlers;
   h[K_ACTION] = [](uint32_t v) {  // an action picked in the panel's menu
-    if (v > A_NONE && v <= A_REMOTE_LAST) {
+    if ((v > A_NONE && v <= A_REMOTE_LAST) || v == A_MESSAGE_CLOSED) {
       std::string name = lower(ACTION_IDS[v]);
       ESP_LOGI("panel", "Panel: %s", name.c_str());
       id(panel_action).trigger(name);

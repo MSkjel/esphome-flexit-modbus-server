@@ -47,7 +47,8 @@ The panel packages need the current Modbus library, its `main`. If the ESP was b
 Clean Build Files, or ESPHome keeps the old library.
 
 `panel.yaml` gives Home Assistant `Panel Connected`, `Panel Temperature` (the panel's own sensor),
-`Panel Firmware`, `Panel Action` (filter reset and the like, picked on the panel), the screensaver and LED
+`Panel Firmware`, `Panel Action` (filter reset and the like, picked on the panel, and `message_closed` when a
+message is closed on it), the screensaver and LED
 selects, `Panel Brightness`, `Panel Idle Brightness`, `Panel Night Mode`, `Panel Key Lock` and `Panel Restart`.
 `Panel Restart` starts off disabled: turn it on among the device's entities in Home Assistant when you want it.
 `Panel Link Windows Too Short`, `Panel Link Unanswered` and `Panel Link Lost` count link trouble since the ESP
@@ -193,7 +194,7 @@ with `page: comfort`.
 ## Messages, views and settings
 
 Home Assistant gets these actions as `esphome.<device>_panel_...`. Your own ESPHome YAML has scripts with the same
-names, like `script.execute: {id: panel_notify, message: Hi, icon: bell, level: info}`.
+names, like `script.execute: {id: panel_notify, message: Hi, icon: bell, level: info, stay: 0}`.
 
 <table>
 <tr>
@@ -205,10 +206,13 @@ names, like `script.execute: {id: panel_notify, message: Hi, icon: bell, level: 
 
 | Action | Does |
 |---|---|
-| `panel_notify` (`message`, `icon`, `level`: info, warning, alarm) | A message that pops up on the panel and stays until it's closed |
+| `panel_notify` (`message`, `icon`, `level`: info, warning, alarm, `stay`) | A message that pops up on the panel and stays until it's closed. While it's open the panel stays awake, without its screensaver, for `stay` seconds, -1 until it's closed, 0 not at all. At night too, so send 0 then if it shouldn't. Closing it, with OK, BACK or HOME, makes `Panel Action` say `message_closed`, for an automation that blinks a light until then, say |
 | `panel_show_view` (`view`: dashboard, airflow, trends, sensors, comfort, smart_home) | Wakes the panel and opens that view |
 | `panel_set` (`setting`, `value`) | One of the panel's [settings](#panel-settings) |
 | `panel_saver_text` (`lines`, `sizes`) | [Lines on the screensaver](#lines-on-the-screensaver) in place of the temperatures |
+
+`stay` is new in `panel_notify` and required, as Home Assistant needs all of an action's values, so an automation
+from before it needs `stay: 0`.
 
 The pictures and animations have [their own actions](#picture-and-animation-actions).
 

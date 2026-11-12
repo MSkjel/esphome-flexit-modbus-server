@@ -27,7 +27,7 @@
 #define K_TIME 0x002       // ESP -> panel: local time, seconds since 2000-01-01
 #define K_ACTION 0x003     // ESP -> panel: run action A_*. Panel -> ESP: the user ran it
 #define K_SHOW_VIEW 0x004  // ESP -> panel: show home view VIEW_*
-#define K_NOTIFY 0x005     // ESP -> panel: a notification with icon, level (NOTE_*) and text
+#define K_NOTIFY 0x005     // ESP -> panel: a notification with icon, level (NOTE_*) and text, see NOTE_STAY
 // K_TIME's 2000-01-01 in Unix seconds. The panel's clock counts as not set before it.
 #define PLINK_EPOCH 946684800u
 // ESP -> panel: reg << 16 | value, a CX60 register the ESP has seen since it started. It sends them all after the
@@ -43,6 +43,9 @@
 #define K_SETTINGS 0x007
 #define SETTINGS_END 0xFFFF
 enum { NOTE_INFO, NOTE_WARNING, NOTE_ALARM };
+// After K_NOTIFY's text a 0 and how long the message keeps the panel awake while it's open, 16 bits: s, this for
+// until it's closed. A panel without it shows the text up to the 0, and a message without it doesn't keep it awake.
+#define NOTE_STAY 0xFFFF
 #define PLINK_TEXT_MAX 64  // max bytes of UTF-8 in a text
 
 #define K_FEATURE 0x080  // + equipment id (app/equipment.h): 0/1
@@ -581,7 +584,8 @@ enum { ITEM_NONE, ITEM_SENSOR, ITEM_TOGGLE, ITEM_NUMBER, ITEM_BUTTON, ITEM_TEXT 
 #define ITEMF_LEVELS 32  // coloured by its levels
 
 // ---- Value meanings
-// Actions for K_ACTION. The ESP's name for each is its id in lower case. The last two are panel-only.
+// Actions for K_ACTION. The ESP's name for each is its id in lower case. REMOVE_PERIOD and RESET_PANEL are
+// panel-only, and the panel sends MESSAGE_CLOSED when the ESP's message is closed.
 #define PLINK_ACTIONS(X) \
   X(NONE) \
   X(RESET_FILTER) \
@@ -590,7 +594,8 @@ enum { ITEM_NONE, ITEM_SENSOR, ITEM_TOGGLE, ITEM_NUMBER, ITEM_BUTTON, ITEM_TEXT 
   X(RESTART) \
   X(FACTORY_RESET) \
   X(REMOVE_PERIOD) \
-  X(RESET_PANEL)
+  X(RESET_PANEL) \
+  X(MESSAGE_CLOSED)
 #define A_ENUM(id) A_##id,
 typedef enum { PLINK_ACTIONS(A_ENUM) A_COUNT } action_t;
 #undef A_ENUM
