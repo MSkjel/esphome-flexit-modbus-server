@@ -13,6 +13,9 @@ The `XIAO-ESP32-C3` and `RS485 Breakout Board for Seeed Studio-XIAO` is easy to 
 
 <sub>Click images to view full size.</sub>
 
+A free socket has 12 V, GND, A and B. Each goes to the board's terminal of the same name, so the unit powers the
+board too and nothing else is needed.
+
 ## XIAO
 | Front | Back |
 |---|---|

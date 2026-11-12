@@ -1,68 +1,57 @@
 # ESPHome Flexit Modbus Server
 
-This project implements a Modbus server for Flexit ventilation systems using ESPHome.  
-**No Flexit CI66 adapter is required.**  
+Puts a Flexit ventilation unit in Home Assistant. An ESP with an RS-485 transceiver goes on the unit's panel bus and
+answers the controller like a CI600 panel does, so no Flexit CI66 adapter is needed. It's a set of ESPHome packages,
+and you pick the ones you want.
 
----
+> This is a hobby project, not made by or affiliated with Flexit. Use it at your own risk.
+
+- [Features](#features)
+- [What you need](#what-you-need)
+- [Quick start](#quick-start)
+- [Packages](#packages)
+  - [Customizing](#customizing)
+  - [Another branch or version](#another-branch-or-version)
+  - [In Home Assistant](#in-home-assistant)
+- [Limitations](#limitations)
+- [CI600 panel (replacement firmware)](#ci600-panel-replacement-firmware)
+- [TCP bridge](#tcp-bridge)
+- [License](#license)
+- [Credits](#credits)
 
 ## Features
 
-- Control Flexit ventilation systems (tested on CX60, may work with others compatible with CI600 panel)
-- Works with ESP8266 or ESP32 microcontrollers
-- Integrates with ESPHome for easy Home Assistant support
+- The unit in Home Assistant: mode, setpoint, heater, timers, temperatures, alarms, filter and run hours. Tested on a
+  CX60, others that take a CI600 panel may work
+- Boosts that raise the ventilation by themselves: fireplace mode, humidity, CO2 and summer cooling
+- The installer's settings from the CI600's menus
+- With the [replacement firmware](#ci600-panel-replacement-firmware) on a CI600: your sensors and switches on the
+  panel, messages, and pictures or the weather as its screensaver
 
----
+## What you need
 
-## Requirements
-
-- Flexit ventilation system with CX60 (or similar) controller
-- ESP8266 or ESP32 device
-- ESPHome 2026.9 or newer
-- UART-to-RS485 transceiver (e.g., MAX485, MAX1348)
-- Basic ESPHome YAML configuration knowledge
-
----
-
-## Recommended hardware
-
-| MCU             | RS485 Breakout Board | Notes                                                                 |
-|-----------------|---------------------|-----------------------------------------------------------------------|
-| XIAO ESP32-C3, or another ESP32 XIAO | XIAO RS485 Expansion Board | [Details](hardware/xiao-esp32-c3-rs485-breakout-board-for-seeed-studio-xiao-tp8485e.md) |
-
----
+- A Flexit unit with a CX60 controller, or one like it
+- An ESP32 or ESP8266 with a UART-to-RS485 transceiver (MAX485, MAX13487 and the like). A
+  [XIAO ESP32-C3 on the XIAO RS485 board](hardware/xiao-esp32-c3-rs485-breakout-board-for-seeed-studio-xiao-tp8485e.md)
+  is small, runs off the unit's 12 V and is what `example.yaml` is set up for
+- ESPHome 2026.9 or newer, and some practice with its YAML
 
 ## Quick start
 
-1. **Connect hardware:** wire the ESP to the RS485 transceiver and connect it to the Flexit controller
-   (see [Recommended hardware](#recommended-hardware)).
+1. **Wire it up.** A free RJ12 socket on the CX60, where its panels plug in, has 12 V, GND, A and B. The XIAO RS485
+   board has a terminal for each, so the socket powers it too. Another transceiver needs A, B and GND, and power of
+   its own unless it takes 12 V. The pinout is on the
+   [hardware page](hardware/xiao-esp32-c3-rs485-breakout-board-for-seeed-studio-xiao-tp8485e.md#cx60).
 
-2. **Create your ESPHome config.** Start from [`example.yaml`](example.yaml). It's set up for a XIAO ESP32-C3 on
-   the XIAO RS485 board. Another XIAO (C6, S3, ...) only needs its board name, the pins are the same. Other
-   hardware needs its pins too.
+2. **Make your config** from [`example.yaml`](example.yaml). It's set up for a XIAO ESP32-C3 on the XIAO RS485
+   board. Another XIAO (C6, S3, ...) only needs its board name, the pins are the same. Other hardware needs its
+   pins too.
 
-3. **Pick the packages you want** from the [table below](#packages) for the `files:` list, then flash. In
-   `example.yaml` that's:
-
-   ```yaml
-   files:
-     - packages/core.yaml         # required
-     - packages/controls.yaml
-     - packages/sensors.yaml
-     - packages/diagnostics.yaml
-     - packages/fan_speeds.yaml   # EC fans only
-     # - packages/fireplace.yaml       # needs controls, EC fans only
-     # - packages/humidity_boost.yaml  # needs controls + your own humidity sensor
-     # - packages/co2.yaml             # needs controls + your own CO2 sensor
-     # - packages/summer_cooling.yaml  # needs controls
-     # - packages/computed.yaml
-     # - packages/advanced.yaml
-   ```
+3. **Pick your packages** in its `files:` list, from the [table below](#packages), and install it on the ESP.
 
 4. **Restart the ventilation unit** (power off and on) with the ESP running. The CX60 only looks for panels when
    it starts, so until then it doesn't poll the ESP and the settings stay unknown. If CX60 Connected stays off,
    swap A and B, check the TX/RX pins, and that nothing else is at the ESP's address.
-
----
 
 ## Packages
 
@@ -116,12 +105,15 @@ On ESP32 the pin goes to the UART's RS-485 mode, which switches it right at the 
 GPIO will do.
 
 Other server options go in with `!extend server`: `persist_settings` and `persist_runtime_counters` (see
-[Saved settings and counters](#saved-settings-and-counters)) and the [TCP bridge](#optional-extras).
+[Saved settings and counters](#saved-settings-and-counters)) and the [TCP bridge](#tcp-bridge).
 
-Without a `ref` the packages come from the latest release: the `release` branch, the repo's default, moves to
-each new one, and ESPHome looks for it once a day. For a branch or a tag instead, `dev` to test what's coming,
-`main` for what's merged since the release or a tag like `v2.1.1` to stay on a version, set `flexit_ref`. It
-goes for the component too, so give it to the packages as their `ref`:
+### Another branch or version
+
+`ref: release`, as in `example.yaml`, is the latest release: the `release` branch moves to each new one, and
+ESPHome looks for it once a day. The component comes from there too. Without a `ref` the packages are `main`'s
+while the component is still the release's, and the two don't always fit, so keep it. For another branch or a tag
+instead, `dev` to test what's coming, `main` for what's merged since the release or a tag like `v2.3.0` to stay on
+a version, set `flexit_ref`. It goes for the component, so give it to the packages as their `ref` too:
 
 ```yaml
 substitutions:
@@ -166,13 +158,11 @@ A few things that are the same for all packages:
   level, so set `logger: level: INFO` while you are tuning. Their log tags start with `flexit.`, like
   `flexit.co2` and `flexit.mode`, and the component's is `flexit_modbus_server`.
 
----
-
 ## Limitations
 
 - **Start-up order.** The ESP has to be on before the CX60, or the CX60 won't poll it.
 - **Address.** The CX60 only takes the setpoint and the NORMAL fan speeds from the lowest address, and runs the
-  week program and boosts only when something answers at 1. With a stock CI600 at 1 the ESP has to use 3, and
+  week program and boosts only when something answers at 1. With a stock CI600 at 1 the ESP has to use 2 or 3, and
   then changing those from Home Assistant won't take, nor will CO2 control's proportional and PI modes. Heater
   on/off works from any address. A CI600 with the [replacement firmware](#ci600-panel-replacement-firmware) runs
   at 3, so the ESP can be 1.
@@ -206,8 +196,6 @@ flexit_modbus_server:
 An ESP8266 has little room for saved values unless `restore_from_flash` is on, and the build warns when WiFi
 credentials or an API key from Home Assistant won't fit next to these. The warning says which one to turn off.
 
----
-
 ## CI600 panel (replacement firmware)
 
 With the [replacement CI600 firmware](https://github.com/MSkjel/flexit-ci600-firmware), the panel and this ESP
@@ -220,89 +208,15 @@ only.
 How to set it up, every package with pictures of what it makes, the actions and the flashing are in
 **[docs/panel.md](docs/panel.md)**.
 
----
+## TCP bridge
 
-## Optional extras
-
-<details>
-<summary>TCP bridge</summary>
-
-The TCP bridge lets you watch the Modbus traffic over a TCP connection. This is useful for finding new registers.
-
-### How it works
-
-When enabled, the TCP bridge creates a server that:
-- Accepts TCP connections on the configured port (default: 502)
-- Mirrors all UART data to connected clients in real time (both TX and RX)
-- Sends each frame with its direction and the ESP's time, so you can tell sent and received frames apart and see
-  the gaps between them
-- Never waits for a client, so it can't hold up the bus. A client that reads too slowly misses data instead
-
-### Frame protocol
-
-Data is sent to TCP clients using a 7-byte header + payload format:
-```
-[Direction (1 byte)][Time (4 bytes)][Length (2 bytes)][Payload (N bytes)]
-```
-- **Direction**: `'T'` (0x54) for TX (sent by the ESP), `'R'` (0x52) for RX (received from the bus)
-- **Time**: the ESP's `micros()` when the frame ended, 32-bit big-endian. It wraps every 71 minutes, so only the
-  differences between blocks count.
-- **Length**: 16-bit big-endian payload length
-
-Each block is one frame. Bytes from the bus that aren't part of a valid frame come as an RX block of their own.
-
-How exact the time is:
-- **TX**: when the UART had sent the frame's last byte.
-- **RX**: the latest the frame can have ended: when the ESP read it, less a byte time (87 µs at 115200 baud) for
-  each byte read after it. That's late by as long as the UART held the bytes, up to 2 byte times or its RX
-  threshold's worth, and by how long the loop took to get to them.
-
-### Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `tcp_bridge_enabled` | boolean | `false` | Enable/disable TCP bridge |
-| `tcp_bridge_port` | integer | `502` | TCP port to listen on |
-| `tcp_bridge_max_clients` | integer | `4` | Maximum concurrent clients (1-10) |
-
-### Example
-
-```yaml
-flexit_modbus_server:
-  - id: !extend server
-    tcp_bridge_enabled: true
-    tcp_bridge_port: 8502
-    tcp_bridge_max_clients: 2
-```
-
-### Monitoring tool
-
-A Python script for monitoring and decoding the TCP bridge traffic is included in
-[scripts/tcp_bridge_monitor.py](scripts/tcp_bridge_monitor.py).
-
-**Features:**
-- Decodes Modbus RTU frames, writes (0x10) and the CX60's 0x64 included
-- Color-coded TX (sent by the ESP) and RX (received) traffic
-- When each frame started on the bus, in s from the first one, and how long the line was quiet before it. A
-  negative gap means the frame was on the line before the one above it had ended, like bytes heard while the ESP
-  was sending.
-- Track coil changes per server and address with `--coil-changes`
-- Save what the ESP sends with `--save`, and show it again later with `--file`
-
-```bash
-python3 scripts/tcp_bridge_monitor.py --host 192.168.1.50 --save capture.bin
-python3 scripts/tcp_bridge_monitor.py --file capture.bin --raw
-```
-
-</details>
-
----
+The component can mirror the bus's traffic to TCP clients, each frame with its direction and time, which is useful
+for finding new registers. It's off by default. Its options, the frame format and the tool that decodes it are in
+[docs/tcp_bridge.md](docs/tcp_bridge.md).
 
 ## License
 
-MIT License
-
----
+MIT, see [LICENSE.md](LICENSE.md).
 
 ## Credits
 

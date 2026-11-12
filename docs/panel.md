@@ -9,6 +9,7 @@ and control the panel, and the panel's firmware is flashed from Home Assistant. 
 - [The comfort packages](#the-comfort-packages)
 - [Messages, views and settings](#messages-views-and-settings)
 - [Pictures, animations and the weather](#pictures-animations-and-the-weather)
+- [The panel's screen in Home Assistant](#the-panels-screen-in-home-assistant)
 - [Flashing the panel](#flashing-the-panel)
 - [Icons](#icons)
 
@@ -30,6 +31,7 @@ substitutions:
 packages:
   flexit:
     url: https://github.com/MSkjel/esphome-flexit-modbus-server
+    ref: release
     files:
       - packages/core.yaml
       - packages/controls.yaml
@@ -48,11 +50,11 @@ Clean Build Files, or ESPHome keeps the old library.
 
 `panel.yaml` gives Home Assistant `Panel Connected`, `Panel Temperature` (the panel's own sensor),
 `Panel Firmware`, `Panel Action` (filter reset and the like, picked on the panel, and `message_closed` when a
-message is closed on it), the screensaver and LED
-selects, `Panel Brightness`, `Panel Idle Brightness`, `Panel Night Mode`, `Panel Key Lock` and `Panel Restart`.
-`Panel Restart` starts off disabled: turn it on among the device's entities in Home Assistant when you want it.
-`Panel Link Windows Too Short`, `Panel Link Unanswered` and `Panel Link Lost` count link trouble since the ESP
-started. The rest of the panel's settings are in its own menu and [`panel_set`](#panel-settings).
+message is closed on it), the screensaver and LED selects, `Panel Brightness`, `Panel Idle Brightness`,
+`Panel Night Mode`, `Panel Key Lock` and `Panel Restart`. `Panel Restart` starts off disabled: turn it on among the
+device's entities in Home Assistant when you want it. `Panel Link Windows Too Short`, `Panel Link Unanswered` and
+`Panel Link Lost` count link trouble since the ESP started. The rest of the panel's settings are in its own menu and
+[`panel_set`](#panel-settings).
 
 | File | What |
 |---|---|
@@ -60,7 +62,9 @@ started. The rest of the panel's settings are in its own menu and [`panel_set`](
 | `panel/ha_sensor.yaml`, `ha_binary_sensor.yaml`, `ha_text.yaml`, `ha_switch.yaml` | A Home Assistant entity on the panel |
 | `panel/sensor.yaml`, `binary_sensor.yaml`, `text.yaml`, `switch.yaml`, `number.yaml`, `button.yaml` | One of the ESP's own entities on the panel |
 | `panel/fireplace.yaml`, `humidity_boost.yaml`, `co2.yaml`, `summer_cooling.yaml` | That package on the panel's comfort page |
-| `panel/picture.yaml`, `online_picture.yaml`, `ha_picture.yaml`, `animation.yaml`, `met.yaml` | Screensaver pictures |
+| `panel/picture.yaml`, `online_picture.yaml`, `ha_picture.yaml`, `met.yaml` | Screensaver pictures |
+| `panel/animation.yaml`, `field.yaml` | Animations and light over the picture |
+| `panel/mars_today.yaml`, `earth_today.yaml`, `rover.yaml`, `probes.yaml` | Screensaver pictures from space |
 | `panel/update.yaml` | Flashes the panel's firmware from Home Assistant |
 | `panel/screen_camera.yaml` | What the panel shows, as a camera in Home Assistant |
 
@@ -342,7 +346,7 @@ PSRAM.
 | `ha_picture.yaml` | `name`, `entity_id` (a `camera.` or `image.` entity, with `kind: image` for the latter), `ha_url` (`http://homeassistant.local:8123`), `width` (320, HA scales the camera picture down to it when the camera can), plus `update_interval`, `resize`, `format`, `encoding` and `quality` as above. HA only hands out camera pictures with a token that changes now and then; the ESP follows the entity's `access_token` attribute, so nothing to set up. If the camera won't scale, the full picture is often too big for an ESP without PSRAM and is skipped; a Frigate camera's own `latest.jpg?h=120` through `online_picture.yaml` is the way round that |
 | `animation.yaml` | `name`, `file` (a GIF), `resize` (64x64 default), `x`, `y` (top left on the 320x240 screen), `scale` (1, or 2 to draw each pixel 2x), `frame_ms` (40 to 2550, the GIF's own timing isn't used), `drift_x`, `drift_y` (pixels per second it drifts, wrapping round the screen seamlessly), `fade_ms` (300, how long copies fade in and out), `clips` and `script` (see [animation scripts](#animation-scripts)). The panel plays all its animations from 8.75 KB, up to 7 at a time in up to 9 places, so keep them small: about 64x64 with a few frames, or more frames if little changes between them. A single frame goes as a still, which the panel keeps packed, so it takes only that, not w x h / 2 bytes. Too big at scale 1 and it's made at half size and drawn 2x. Making one takes free RAM on the ESP for a moment, 25 KB for a small still and about 60 KB for 64x64 with frames. While the ESP is short of that, the animation waits and the status says so; after half a minute it's made at half size if the RAM is enough for that. `Panel Animation Status` says how full the panel is, then what's shown, what's on its way, what waits and what didn't fit, like `4 of 7, 7 of 9 places, 3.1 of 8.8 KB: kite (wandering), ball ×3, weather: Thunderstorm (3), forecast`. The weather's animations are one entry with the show's name, and over Home Assistant's 255 characters the list ends with how many more there are |
 | `field.yaml` | `name`, `kind` (`linear`, `radial`, `cone` or `noise`), `w`, `h`, `x`, `y`, `colours`, and for its kind `mirror`, `down`, `apex`, `layers` and `grain`, plus `fade_ms` and `script`. See [fields](#fields). It takes 4 bytes of the panel's 8.75 KB |
-| `met.yaml` | `latitude`, `longitude`, `scene` (hills, coast, mountains, city), `aurora` (auto, off, always, see below), `facing` (the compass direction in the middle of the picture for the sun, moon and stars: 0 north, 90 east, 180 south by default, 270 west), `redraw_interval`, `name` (weather). The forecast is asked for again once MET says it has expired. `Panel Weather Scene`, `Panel Weather Aurora` and `Panel Weather Forecast` change it from Home Assistant, `Panel Animation Weather` brings it to life |
+| `met.yaml` | `latitude`, `longitude`, `scene` (hills, coast, mountains, city), `aurora` (auto, off, always, see below), `facing` (the compass direction in the middle of the picture for the sun, moon and stars: 0 north, 90 east, 180 south by default, 270 west), `redraw_interval`, `name` (weather). The forecast is asked for again once MET says it has expired. `Panel Weather Scene`, `Panel Weather Aurora` and `Panel Weather Forecast` change it from Home Assistant, `Panel Animation Weather` brings it to life, and `Panel Weather` says how asking MET last went |
 
 `met.yaml` draws the sky for the time of day and the next hour's weather from [MET Norway](https://api.met.no) (CC BY
 4.0). The weather right now is also an item, so it can be a dashboard tile, and the cabin's chimney smokes when the
@@ -851,7 +855,7 @@ snow, filter, humidity, co2, home, bell, alert, clock, sun, night, leaf, firepla
 plug, door, battery, solar, lock, motion, washer, vacuum, tv, cash and about 80 more.
 
 How the panel and the ESP share the bus is in the
-[firmware's README](https://github.com/MSkjel/flexit-ci600-firmware#the-esp-link). The C files in
-[`packages/code/panel/`](../packages/code/panel) are copies of its `proto/`. The `.cpp` files there are plain C++
-without ESPHome entities, like the colours, the JPEG's quality, the pieces a picture goes in and the flashing,
-which ESPHome builds on their own, so a change to your YAML doesn't build them again.
+[firmware's docs](https://github.com/MSkjel/flexit-ci600-firmware/blob/main/docs/development.md#the-esp-link).
+The C files in [`packages/code/panel/`](../packages/code/panel) are copies of its `proto/`. The `.cpp` files there
+are plain C++ without ESPHome entities, like the colours, the JPEG's quality, the pieces a picture goes in and the
+flashing, which ESPHome builds on their own, so a change to your YAML doesn't build them again.

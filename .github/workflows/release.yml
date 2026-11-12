@@ -1,7 +1,8 @@
 # A tag like v1.2.3 makes its release, with GitHub's notes from the pull requests since the last version, and an
 # annotated tag's message above them, for what a user has to change. A tag on main makes a release, one on dev a
-# pre-release. The latest release moves the release branch, the repo's default, to its tag: configs without a ref
-# get it, see flexit_ref in packages/core.yaml. A release made on GitHub's page keeps its notes and moves it too.
+# pre-release. The latest release moves the release branch to its tag: configs with ref: release get it, and the
+# component with it, see flexit_ref in packages/core.yaml. A release made on GitHub's page keeps its notes and moves
+# it too.
 name: Release
 
 on:

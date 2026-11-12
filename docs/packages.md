@@ -77,7 +77,7 @@ value changed in Home Assistant is saved and wins over the config.
 ```yaml
 packages:
   flexit:
-    # url, ref and refresh as in example.yaml
+    # url and ref as in example.yaml
     files:
       - packages/core.yaml
       - packages/controls.yaml
@@ -107,7 +107,7 @@ sensor. Point `flexit_humidity_sensor` at its `id`:
 ```yaml
 packages:
   flexit:
-    # url, ref and refresh as in example.yaml
+    # url and ref as in example.yaml
     files:
       - packages/core.yaml
       - packages/controls.yaml
@@ -186,7 +186,7 @@ or shorten the integral time a step at a time.
 ```yaml
 packages:
   flexit:
-    # url, ref and refresh as in example.yaml
+    # url and ref as in example.yaml
     files:
       - packages/core.yaml
       - packages/controls.yaml
@@ -234,7 +234,7 @@ Assistant, or given other starting values in the config:
 ```yaml
 packages:
   flexit:
-    # url, ref and refresh as in example.yaml
+    # url and ref as in example.yaml
     files:
       - packages/core.yaml
       - packages/controls.yaml
@@ -269,7 +269,7 @@ number:
 ```yaml
 packages:
   flexit:
-    # url, ref and refresh as in example.yaml
+    # url and ref as in example.yaml
     files:
       - packages/core.yaml
       - packages/computed.yaml
