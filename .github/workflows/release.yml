@@ -1,28 +1,38 @@
-# A release moves the release branch, the repo's default, to its tag: configs without a ref get it, see flexit_ref
-# in packages/core.yaml. A pre-release doesn't, nor a release that isn't the latest, such as a fix to an older
-# version.
+# A tag like v1.2.3 makes its release, with GitHub's notes from the pull requests since the last version, and an
+# annotated tag's message above them, for what a user has to change. A tag on main makes a release, one on dev a
+# pre-release. The latest release moves the release branch, the repo's default, to its tag: configs without a ref
+# get it, see flexit_ref in packages/core.yaml. A release made on GitHub's page keeps its notes and moves it too.
 name: Release
 
 on:
-  release:
-    types: [released]
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
 
 permissions:
   contents: write
 
 jobs:
-  branch:
+  release:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0  # main and the tags, for a pre-release and where the notes start
 
-      - name: The release branch to the tag
+      - name: The release, and the release branch to it
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ github.ref_name }}
         run: |
+          git fetch -q --force origin "refs/tags/$TAG:refs/tags/$TAG"  # as pushed, with its message
+          msg=
+          [ "$(git cat-file -t "$TAG")" = tag ] && msg=$(git tag -l --format='%(contents)' "$TAG")
+          prev=$(git tag --merged HEAD^ --sort=-v:refname -l 'v[0-9]*.[0-9]*.[0-9]*' | grep -vm1 '[^v0-9.]' || true)
+          pre=--prerelease
+          git merge-base --is-ancestor HEAD origin/main && pre=
+          gh release view "$TAG" > /dev/null 2>&1 ||
+            gh release create "$TAG" --generate-notes ${prev:+--notes-start-tag "$prev"} ${msg:+--notes "$msg"} $pre
           latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" -q .tag_name)
           if [ "$latest" != "$TAG" ]; then
             echo "$TAG isn't the latest release, $latest is"
