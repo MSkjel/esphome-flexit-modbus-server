@@ -171,16 +171,24 @@ static void clouds_row(const Scene &s, int y, uint8_t *out, bool over = false) {
   }
 }
 
-static void rainbow_row(const Scene &s, int y, uint8_t *out) {
-  if (!s.rainbow || y >= HORIZON)
+// The rainbow in the sky, and with front where it comes down in front of the far hills, onto the land nearer than
+// them or into the sea
+static void rainbow_row(const Scene &s, int y, uint8_t *out, bool front = false) {
+  if (!s.rainbow || (y >= HORIZON && (!front || s.sea)))
     return;
+  const uint8_t *far = s.land->hill[0];
+  auto put = [&](int x0, int x1, uint8_t col) {
+    for (int x = std::max(0, x0); x <= std::min(W - 1, x1); x++)
+      if (!front || (far[x] != NONE && y >= far[x]))
+        out[x] = col;
+  };
   for (int k = 0; k < 3; k++) {  // three bands, each 4 rows thick, red outermost
     int outer = half(y - s.rb_y, RB_RX - k * 4, RB_RY - k * 4),
         inner = half(y - s.rb_y, RB_RX - k * 4 - 4, RB_RY - k * 4 - 4);  // -1 below it
     if (outer < 0)
       continue;
-    span(out, s.rb_x - outer, s.rb_x - inner - 1, s.ix[C_RB + k]);
-    span(out, s.rb_x + inner + 1, s.rb_x + outer, s.ix[C_RB + k]);
+    put(s.rb_x - outer, s.rb_x - inner - 1, s.ix[C_RB + k]);
+    put(s.rb_x + inner + 1, s.rb_x + outer, s.ix[C_RB + k]);
   }
 }
 
@@ -432,6 +440,7 @@ void row(const Scene &s, int y, uint8_t *out) {
   stamps(s, y, out, IN_SKY);
   hill_row(s, y, out, 0);
   clouds_row(s, y, out, true);
+  rainbow_row(s, y, out, true);
   sea_row(s, y, out);
   fog_row(s, y, out, 0);
   stamps(s, y, out, ON_WATER);

@@ -352,13 +352,10 @@ PSRAM.
 4.0). The weather right now is also an item, so it can be a dashboard tile, and the cabin's chimney smokes when the
 heater is on. The land follows the year: spring comes three days later for each degree north of Oslo, where the grass
 is green from mid April and the birches in leaf from early May. MET's forecast doesn't say whether snow lies, so the
-ESP keeps count of what falls and melts; after a restart it goes by the temperature and the month. From the first
-Sunday in Advent, or 1 December, to 13 January a julenek stands by the cabin, a spruce has its lights after dark, a
-string of lights runs along the eaves from dusk to dawn and an arch of advent candles stands in a window. In snow
-there's a snow lantern by the door in the evening, and a snowman once enough has fallen. In town they stand in the
-park, and the lights are on the old houses. `The forecast hasn't changed (HTTP 304)` in the log is fine, MET has
-nothing newer yet. When MET is busy or down (HTTP 502, 503) the picture keeps the last forecast and asks again a
-minute later, then less often, up to every half hour.
+ESP keeps count of what falls and melts; after a restart it goes by the temperature and the month. In snow there's
+a snow lantern by the door in the evening, and a snowman once enough has fallen, in town in the park. `The forecast
+hasn't changed (HTTP 304)` in the log is fine, MET has nothing newer yet. When MET is busy or down (HTTP 502, 503)
+the picture keeps the last forecast and asks again a minute later, then less often, up to every half hour.
 
 With `Panel Weather Forecast` on, the weather now and the next hours go over the picture as a still animation, in
 front of the weather's own animations, so the letters stay sharp. It takes up to about 4 KB of the panel's 8.75 KB for
@@ -383,27 +380,21 @@ the next day.
 as many as the panel has room for: 7 animations, 9 copies of them on the screen and its 8.75 KB. They get the room in
 this order:
 
-- **The day's own:** Christmas Eve, fireworks on New Year's Eve, Easter, 17 May, the bonfire at Sankthans, Halloween
-  and Valentine's Day.
 - **The weather:** rain and snow falling from under the clouds (the far rain fainter and slower behind the near, the
   flakes swaying), lightning, and fog creeping along the valley in banks that thicken and thin. Rain and snow are as
   thick as the room left allows.
 - **What lives in the picture,** on whenever the picture has it: the lighthouse's beam turning, the sailboat, the
-  lights on the Christmas spruce, the flag waving on flag days, the northern lights' ribbon glowing, the stars
-  sparkling, smoke from the chimney, firelight in the window, the town antenna's light, and light shimmering on the
-  sea, small out at the horizon and wider toward the shore. So the beam goes round in the rain too.
+  flag waving on flag days, the northern lights' ribbon glowing, the stars sparkling, smoke from the chimney,
+  firelight in the window, the town antenna's light, and light shimmering on the sea, small out at the horizon and
+  wider toward the shore. So the beam goes round in the rain too.
 - **The features,** which take turns of 20 to 40 minutes, two at a time when both fit, drawn by lot each turn and
   never the same twice running: gulls or crows, eiders, glitter on the water, a moose at dusk (which mostly gets its
-  hour), reindeer, lambs and a wagtail in spring, bullfinches at the julenek through Christmas, butterflies, a skier,
-  birch leaves, drifting clouds and the town's windows and streets. The two change at different minutes, so one
-  thing changes at a time, and what stays goes on as it was. `Panel Weather Feature` asks for one of them, which is
-  then on whenever it fits; `auto` leaves it to the draw. Of the two gulls or crows that fly back and forth, one
-  comes down about every five minutes, against the wind: on the cabin's ridge, the flagpole, the lighthouse, a
-  spruce's top or a flat roof in town, smaller on its way to one that's far off, and flies up again.
-- **Who comes by,** one at a time when the others leave room for one more: a squirrel or a magpie about the cabin,
-  a crow or a gull down on one of those perches while none are flying, a fox at night, a sjark, a porpoise or a sea
-  eagle off the coast, the coastal express past the lighthouse, a shooting star, and those the features bring. Very
-  seldom something stranger.
+  hour), reindeer, lambs and a wagtail in spring, butterflies, a skier, birch leaves, drifting clouds and the town's
+  windows and streets. The two change at different minutes, so one thing changes at a time, and what stays goes on
+  as it was. `Panel Weather Feature` asks for one of them, which is then on whenever it fits; `auto` leaves it to
+  the draw. Of the two gulls or crows that fly back and forth, one comes down about every five minutes, against the
+  wind: on the cabin's ridge, the flagpole, the lighthouse, a spruce's top or a flat roof in town, smaller on its way
+  to one that's far off, and flies up again.
 
 The aurora is part of the picture and shifts a little every hour. The picture leaves out what the animations draw,
 and tells the panel what in it is nearer, so they go behind it where they should: the sailboat behind the point and

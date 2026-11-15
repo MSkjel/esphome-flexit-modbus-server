@@ -918,6 +918,13 @@ static constexpr uint16_t ROEDEER_MS[] = {1800, 500, 1300, 400, 1600, 180, 1000,
 // a bound: gathered, off its hind feet, in the air, landing on its front feet
 static constexpr uint16_t ROEDEERRUN_MS[] = {120, 110, 150, 120};
 
+static constexpr uint16_t CAT_MS[] = {120, 120};
+static constexpr uint16_t HAG_MS[] = {220, 220};
+static constexpr uint16_t TOR_MS[] = {150, 150};
+static constexpr uint16_t PIG_MS[] = {140, 140};
+// a glint on a coin now and then
+static constexpr uint16_t GOLD_MS[] = {1100, 140, 800, 140, 1400, 140};
+
 // each lifting its head from the grass and putting it down again in its own time, one at a time
 static constexpr uint16_t SHEEP_MS[] = {1400, 900, 1000, 800, 1100, 900, 300, 400};
 // three strides of its walk, then it stops, looks at you, behind it, at you again and ahead
@@ -3225,6 +3232,103 @@ static constexpr Fixed FIXED[] = {
          c.put(hx + S[f * 2], 4 + S[f * 2 + 1], 0x888888);
        }
        c.put(f % 2 ? 3 : 2, 4, 0x4A6699);  // the foot going round
+     }},
+    // A black cat facing right at a trot, its eye lit
+    {"blackcat", 13, 8, CAT_MS,
+     [](int f, const Canvas &c) {
+       static const char *const LEGS[] = {"..o.o...o.o|"
+                                          "..o.o...o.o",
+                                          ".o...o.o...o|"
+                                          "o.....o.....o"};
+       std::initializer_list<uint32_t> cols = {0x15151B, LAMP};
+       rows(c, ".........o.o|"
+               "o........oooo|"
+               "o........oeoo|"
+               ".o.ooooooooo|"
+               "..ooooooooo|"
+               "..oooooooo", "oe", cols);
+       rows(c, LEGS[f], "oe", cols, 0, 6);
+     }},
+    // A trollkjerring facing right, a troll hag in a red headscarf with her long nose and her arms flailing
+    {"hag", 11, 12, HAG_MS,
+     [](int f, const Canvas &c) {
+       static const char *const ARMS[] = {"sggggggggs", "s........s|"
+                                                        ".s......s"};
+       static const char *const KEYS = "rshengk";
+       std::initializer_list<uint32_t> cols = {0xC03A30, 0x949C74, 0xB8B8B0, LAMP, 0x7C8462, 0x3E5A44, 0x2A2218};
+       rows(c, "...rrrr|"
+               "..rrrrrr|"
+               "..rsssrr|"
+               ".hrsesnn|"
+               ".hhsssnnn|"
+               "..hsss|"
+               ".ggggggg|"
+               ".ggggggg|"
+               ".ggggggg|"
+               ".ggggggg|"
+               "ggggggggg", KEYS, cols);
+       rows(c, ARMS[f], KEYS, cols, 0, f ? 5 : 7);
+       rows(c, f ? "..k..k" : ".k....k", KEYS, cols, 0, 11);
+     }},
+    // Tor in his cart behind his two goats, Tanngnjost and Tanngrisne, his hammer up: what thunder is
+    {"tor", 36, 12, TOR_MS,
+     [](int f, const Canvas &c) {
+       static const char *const GOAT_LEGS[] = {"g.g..g.g|"
+                                               "g.g..g.g",
+                                               ".g.g.g.g|"
+                                               "g...g...g"};
+       static const char *const KEYS = "ghebsryumtcw";
+       std::initializer_list<uint32_t> cols = {0xE8E4D8, 0xB8A070, 0x1A1A1A, 0xB8B4A8, SKIN,     0xD0502A,
+                                               0xB8C2CC, 0x3A5AA0, 0x8A8F98, 0x7A5430, 0x8A6238, 0x4A3420};
+       for (int k = 0; k < 2; k++) {
+         int ox = 14 + 11 * k;
+         rows(c, ".......h.h|"
+                 ".......ggg|"
+                 ".......geg|"
+                 "gggggggggg|"
+                 "ggggggggbb|"
+                 "gggggggg", KEYS, cols, ox, 4);
+         rows(c, GOAT_LEGS[(f + k) % 2], KEYS, cols, ox, 10);
+       }
+       rows(c, "..yyy....mmm|"
+               ".yyyyy...mmm|"
+               "..sss.....t|"
+               "..rrr....st|"
+               ".uurruusss|"
+               ".uuuuu", KEYS, cols, 1, 0);
+       rows(c, "cccccccccccc|"
+               "cccccccccccctt|"
+               ".cccccccccc", KEYS, cols, 0, 6);
+       rows(c, f ? ".ww|w..w|w..w|.ww" : ".ww|wwww|wwww|.ww", KEYS, cols, 4, 8);
+     }},
+    // A pig with wings, flying right, flapping them
+    {"pig", 15, 8, PIG_MS,
+     [](int f, const Canvas &c) {
+       static const char *const KEYS = "pqesw";
+       std::initializer_list<uint32_t> cols = {0xF0A8B0, 0xD88090, 0x1A1A1A, 0xD06A80, 0xF8F8F8};
+       rows(c, "|"
+               "|"
+               "...........p.p|"
+               "q.pppppppppppp|"
+               ".qpppppppppepps|"
+               "..ppppppppppps|"
+               "..pppppppppp|"
+               "...p.p...p.p", KEYS, cols);
+       rows(c, f ? "wwww|.www|..w" : ".w|www|wwww", KEYS, cols, 4, f ? 4 : 0);
+     }},
+    // A pot of gold, a coin glinting now and then
+    {"gold", 9, 8, GOLD_MS,
+     [](int f, const Canvas &c) {
+       rows(c, "|"
+               "..yyyyy|"
+               ".yyYyyYy|"
+               "kkkkkkkkk|"
+               ".kkdkkkk|"
+               "kkdkkkkkk|"
+               "kkkkkkkkk|"
+               ".kkkkkkk", "yYkd", {0xE8C040, 0xFFE888, 0x26262E, 0x4A4A58});
+       if (f % 2)
+         cross(c, 2 + f, 1, 1, 0xFFFFFF);
      }},
 };
 
