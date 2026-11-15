@@ -467,6 +467,7 @@ Now::Now(const Weather &weather, const Options &options, double la, double lo, u
   if (w.ok && w.rain > 0.05f && !snow && !rain)
     (w.temp > 1 ? rain : snow) = true;
   thunder = has(w, "thunder") || w.thunder >= 30;
+  pouring = rain && !snow && w.rain >= POURING;
   fog = std::max(w.fog, has(w, "fog") ? 85.0f : 0.0f);
   cover = w.ok ? w.cloud : 0;
   grey = clamp01((cover - 45) / 50) * 0.9f + (rain || snow ? 0.1f : 0) + (thunder ? 0.15f : 0);

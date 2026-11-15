@@ -2,8 +2,12 @@
 // the coast at dusk, a Viking longship by day, a troll on the ridge with the sun down, a wolf howling at the full moon,
 // a witch across the moon, a flying saucer on a clear night, the huldra at the forest's edge on a summer evening, a
 // nisse on his way to the cabin before Christmas, draugen rowing on a windy night, orcas up north in winter, a lynx
-// at twilight, a sea eagle's catch or a ski jumper. Over any cast that leaves the panel room for one more, but not
-// on the days with acts of their own.
+// at twilight, a sea eagle's catch or a ski jumper. And what people say, when it happens: trollkjerringer in a
+// downpour, Tor's goats in thunder, a pig flying on 1 April, a black cat on Friday the 13th,
+// the cow over the moon, owls in the moss in fog, the fox whose tail sweeps up the northern lights, the falling
+// stars of a meteor shower, the one swallow that makes no summer, the pot of gold at the rainbow's end and the one
+// who jumps after Wirkola. Over any cast that leaves the panel room for one more, but not on the days with acts of
+// their own.
 #pragma once
 #include "met_live.h"
 #include "met_live_land.h"
@@ -44,6 +48,8 @@ struct Seen {
   bool coast;
   Edge edge;            // the forest's edge on the near hill, see forest_edge()
   int16_t jump_x = -1;  // where a ski jumper lands on the near hill, -1 if its flight there isn't clear
+  bool aurora;
+  int16_t gold_x = -1, gold_y;  // the top left of a pot where the rainbow comes down on the land, -1 without one
 };
 inline Seen SEEN;
 
@@ -95,6 +101,25 @@ inline void rare_seen(const Scene &s) {
     }
     if (clear)
       e.jump_x = (int16_t) land;
+  }
+  e.aurora = s.aurora;
+  // Where the rainbow's middle band comes down in front of the far hills, onto the land nearer than them, clear of
+  // the cabin, on the side that has it best in the picture
+  e.gold_x = -1;
+  for (int side : {-1, 1}) {
+    int foot = s.rb_x + side * (RB_RX - 6), row = NONE;
+    for (int k = 0; s.rainbow && !s.sea && k < 4 && foot >= 8 && foot < W - 8; k++) {
+      row = std::min(s.land->hill[1][foot], s.land->hill[2][foot]);
+      float v = (float) (row - s.rb_y) / (RB_RY - 6);
+      if (row == NONE || fabsf(v) >= 1)
+        break;
+      foot = s.rb_x + side * (int) ((RB_RX - 6) * sqrtf(1 - v * v));
+      if (k == 3 && row - 8 > e.top && (!s.cabin || abs(foot - s.cabin_x) > 50) &&
+          (e.gold_x < 0 || abs(foot - W / 2) < abs(e.gold_x + 4 - W / 2))) {
+        e.gold_x = (int16_t) (foot - 4);
+        e.gold_y = (int16_t) (row - 7);
+      }
+    }
   }
   // 16 px level to 4, the wolf's feet on its lowest so it doesn't float
   e.den_x = -1;
@@ -392,6 +417,168 @@ inline void ski_jump() {
           {{"x", land - 4}, {"low", low}, {"rest", all - fly}}, {.left = true, .fade = 0});
 }
 
+// One who jumps after Wirkola: the jumper again, and then the next one, who lands on his nose and goes down the
+// hill head over heels
+inline void after_wirkola() {
+  const Seen &e = SEEN;
+  int land = e.jump_x, low = e.hill.at(land + 11) - 12, fly = ms_of("skijumper", 0, 8), all = ms_of("skijumper");
+  std::string t;
+  for (int k = 1; k <= 10; k++) {
+    Flight f = flight(land, low, k / 10.0f);
+    t += path({{f.x, f.y, fly / 10}});
+  }
+  rare_on("skijumper", 0, 322, JUMP_TOP, t + R"(
+    move x, low over rest ease out
+    wait rest - 300
+    glide opacity 0 over 300
+    wait 300
+    move 322, top
+    glide opacity 100
+  )" + t + R"(
+    spin 500
+    move x - 30, low + 6 over rest ease out
+    wait rest - 1500
+    end fade 1500
+  )",
+          {{"x", land - 4}, {"low", low}, {"top", JUMP_TOP}, {"rest", all - fly}}, {.left = true, .fade = 0});
+}
+
+// It rains n: copy 0 comes down out of the rain head over heels five times, lands on its feet on the near hill,
+// stands there a moment and is gone
+inline void rains(const char *n) {
+  const Seen &e = SEEN;
+  const Frames *sp = frames_of(n);
+  std::string t;
+  for (int k = 0; k < 5; k++) {
+    int x = (int) rnd(16, W - 30), fall = (int) rnd(1100, 1500), turn = (int) rnd(200, 420) * (chance(0.5f) ? 1 : -1);
+    if (e.cabin_x >= 0 && abs(x - e.cabin_x) < 44)
+      x += x < e.cabin_x ? -50 : 50;
+    x = std::clamp(x, 4, W - sp->w - 4);
+    int y = e.hill.at(x + sp->w / 2) - sp->h + 1;
+    t += std::string("glide opacity 0 turn 0\nmove ") + num(x - e.at.wdir * 24) + ", " + num(e.top) + "\nspin " +
+         num(turn) + "\nglide opacity 100 over 200\n" + "move " + num(x) + ", " + num(y) + " over " + num(fall) +
+         " ease in\nwait " + num(fall) +
+         "\nspin 0\nglide turn 0 over 120\nwait 900\nglide opacity 0 over 400\nwait 500\n";
+  }
+  rare_on(n, 0.6f, -40, e.top, t + "end", {}, {.fade = 0});
+}
+inline constexpr uint32_t RAINS_MS = 5 * 3100;
+
+// Tor drives his goats across the sky under the thunderclouds, the cart bumping
+inline void tor() {
+  const Seen &e = SEEN;
+  bool left = chance(0.5f);
+  int y = e.top + (int) rnd(2, 26);
+  rare_on("tor", 0.7f, left ? W + 2 : -38, y,
+          "wave y -2, 2, 500, 500 jitter 30\n" + path({{left ? -38 : W + 2, y - 8, 9000}}) + "end", {},
+          {.left = left, .fade = 0});
+}
+
+// A pig flies across the sky on its little wings, bobbing with each beat
+inline void pig() {
+  const Seen &e = SEEN;
+  bool left = chance(0.5f);
+  int y = e.top + (int) rnd(6, 40);
+  rare_on("pig", 0.6f, left ? W + 2 : -17, y,
+          "wave y -3, 3, 700, 700 slow both\n" + path({{left ? -17 : W + 2, y - 10, 16000}}) + "end", {},
+          {.left = left, .fade = 0});
+}
+
+// A black cat crosses your path: along the near hill from one side to the other at a trot
+inline void black_cat() {
+  const Seen &e = SEEN;
+  bool right = chance(0.5f);
+  int x0 = right ? -15 : W + 2, x1 = right ? W + 2 : -15;
+  Walk w = walk(e.hill, x0, x1, 18, 6, 7);
+  rare_on("blackcat", 0.6f, x0, w.y[0], "b = n; d = 1; t = leg\n" + w.loop("go") + "end",
+          {{"n", w.n}, {"leg", w.leg(18)}}, {.left = !right, .fade = 0, .depth = D_NEAR_ON});
+}
+
+// The cow jumps over the moon: up from the skyline on one side of it, over its top and down to the other
+inline constexpr int COW_OVER = MOON_R + 13;  // its top over the moon's middle at the highest
+inline void cow_moon() {
+  const Seen &e = SEEN;
+  bool left = chance(0.5f);
+  int d = left ? -1 : 1, x0 = e.moon_x - 10 - 70 * d, x1 = e.moon_x - 10 + 70 * d, up = 2600;
+  int y0 = e.ridge.at(x0 + 10) - 8, y1 = e.ridge.at(x1 + 10) - 8;
+  rare_on("cow", 0.6f, x0, y0, R"(
+    glide x x1 over 2 * up
+    glide y top over up ease out
+    wait up
+    glide y y1 over up ease in
+    wait up - 300
+    end fade 300
+  )",
+          {{"x1", x1}, {"top", e.moon_y - COW_OVER}, {"y1", y1}, {"up", up}}, {.left = left, .fade = 400});
+}
+
+// Owls in the moss: one sits on the ground by the forest's edge in the fog, turns its head and hoots, and isn't
+// there any more
+inline void owl_moss() {
+  const Seen &e = SEEN;
+  int x = e.edge.x + 4;
+  rare_on("owlperch", 0.5f, x, e.hill.at(x + 4) - 9, "wait rounds 2\nend fade 2500", {},
+          {.left = chance(0.5f), .fade = 2500, .depth = D_NEAR_ON});
+}
+
+// The fox whose tail sweeps the snow up into the northern lights runs along the ridge under them
+inline void fox_fires() {
+  const Seen &e = SEEN;
+  bool right = chance(0.5f);
+  int span = e.ridge_r - e.ridge_l - 24, len = std::min(span, 140),
+      a = e.ridge_l + 4 + (int) rnd(0, (float) (span - len));
+  int x0 = right ? a : a + len, x1 = right ? a + len : a;
+  Walk w = walk(e.ridge, x0, x1, 16, 8, 7);
+  rare_on("foxtrot", 0.5f, x0, w.y[0], "b = n; d = 1; t = leg\n" + w.loop("go") + "end",
+          {{"n", w.n}, {"leg", w.leg(16)}}, {.left = !right, .fade = 1500});
+}
+
+// A meteor shower: falling stars one after another, each where it likes in the sky, all the same way
+inline constexpr int METEORS = 9;
+inline void meteors() {
+  const Seen &e = SEEN;
+  bool left = chance(0.5f);
+  rare_on("shooting", 1, 40, e.top, R"(
+    blend add
+    k = 0
+    again:
+      glide opacity 0
+      a = rand(20, 250); c = rand(top, low)
+      move a, c
+      frame 0
+      glide opacity 100
+      move a + d, c + 15 over 490
+      wait rounds 1
+      glide opacity 0
+      wait 300 to 2600
+      k += 1
+      if k < n goto again
+    end
+  )",
+          {{"top", e.top}, {"low", std::max(e.top + 1, 64)}, {"d", left ? -40 : 40}, {"n", METEORS}},
+          {.left = left, .fade = 0});
+}
+// The nights of the year's showers at their best: the Quadrantids, Lyrids, Perseids, Orionids, Leonids and Geminids
+inline bool shower_night(const At &a) {
+  static constexpr uint16_t NIGHTS[] = {103, 104, 422, 423, 811, 812, 813, 1021, 1022, 1117, 1118, 1213, 1214};
+  return std::find(std::begin(NIGHTS), std::end(NIGHTS), a.month * 100 + a.day) != std::end(NIGHTS);
+}
+
+// One swallow, which makes no summer: it swoops across over the snow that still lies
+inline void swallow() {
+  const Seen &e = SEEN;
+  bool left = chance(0.5f);
+  int y = e.top + (int) rnd(30, 70);
+  rare_on("swallow", 0.5f, left ? W + 2 : -15, y,
+          "wave y -12, 12, 1500, 1900 jitter 30 slow both\n" + path({{left ? -15 : W + 2, y, 7000}}) + "end", {},
+          {.left = left, .fade = 0});
+}
+
+// The pot of gold at the rainbow's end, a coin glinting, while nobody's near enough to take it
+inline void gold() {
+  rare_on("gold", 0.6f, SEEN.gold_x, SEEN.gold_y, "wait 20000\nend fade 3000", {}, {.fade = 3000, .depth = D_MID_ON});
+}
+
 // What a roll can bring: its odds when it fits, the longest it takes once its sprite is on the panel, whether it fits
 // the picture and what it does
 struct Rare {
@@ -407,6 +594,9 @@ inline bool dry(const Seen &e) { return !e.at.rain && !e.at.snow && e.at.fog < 3
 inline bool moonlit(const Seen &e) { return e.at.dark && e.moon_x >= 0 && e.at.cover < 50 && dry(e); }
 inline bool walkable(const Seen &e) { return e.ridge_r > e.ridge_l && !e.town; }
 inline bool twilight(const Seen &e) { return e.at.sun_el < 0 && !e.at.dark; }
+inline bool jumps(const Seen &e) { return e.jump_x >= 0 && e.at.white && !e.at.dark && e.at.light > 0.5f && dry(e); }
+// a downpour on the land, short of a gale
+inline bool pours(const Seen &e) { return e.at.pouring && !gale(e.at) && !e.town && !e.coast && e.at.light > 0.2f; }
 inline const Rare RARE[] = {
     {"a trampoline", 0.08f, 12000, blows, [] { blown("trampoline", 60); }},
     {"an umbrella", 0.05f, 12000, blows, [] { blown("umbrella", 280); }},
@@ -456,8 +646,31 @@ inline const Rare RARE[] = {
        return e.sea_r > e.sea_l && e.at.sun_el > 0 && e.at.light > 0.5f && e.at.wind < 10 && dry(e);
      },
      catch_fish},
-    {"a ski jumper", 0.02f, 10000,
-     [](const Seen &e) { return e.jump_x >= 0 && e.at.white && !e.at.dark && e.at.light > 0.5f && dry(e); }, ski_jump},
+    {"a ski jumper", 0.02f, 10000, jumps, ski_jump},
+    // what people say
+    {"trollkjerringer", 0.06f, RAINS_MS, pours, [] { rains("hag"); }},
+    {"Tor and his goats", 0.08f, 9000, [](const Seen &e) { return e.at.thunder; }, tor},
+    {"a flying pig", 0.3f, 16000,
+     [](const Seen &e) { return e.at.month == 4 && e.at.day == 1 && e.at.light > 0.5f && dry(e); }, pig},
+    {"a black cat", 0.3f, 19000,
+     [](const Seen &e) { return e.at.weekday == 5 && e.at.day == 13 && !e.town && e.at.light > 0.3f && dry(e); },
+     black_cat},
+    {"the cow over the moon", 0.004f, 5200,
+     [](const Seen &e) { return moonlit(e) && e.moon_y - COW_OVER >= e.top && e.moon_x >= 90 && e.moon_x < W - 90; },
+     cow_moon},
+    {"owls in the moss", 0.04f, 22000,
+     [](const Seen &e) {
+       return e.at.fog >= 30 && e.edge.x >= 0 && !e.at.white && !e.at.rain && !e.at.snow && e.at.light > 0.1f;
+     },
+     owl_moss},
+    {"the fox of the northern lights", 0.05f, 9000,
+     [](const Seen &e) { return e.aurora && e.at.dark && e.at.white && walkable(e) && dry(e); }, fox_fires},
+    {"a meteor shower", 0.5f, METEORS * 3600,
+     [](const Seen &e) { return shower_night(e.at) && e.at.dark && e.at.cover < 30 && dry(e); }, meteors},
+    {"one swallow", 0.05f, 7000,
+     [](const Seen &e) { return e.at.white && (e.at.month == 4 || e.at.month == 5) && e.at.fair && !e.town; }, swallow},
+    {"a pot of gold", 0.06f, 23000, [](const Seen &e) { return e.gold_x >= 0 && !e.town; }, gold},
+    {"one who jumps after Wirkola", 0.006f, 20000, jumps, after_wirkola},
 };
 inline constexpr int NRARE = sizeof RARE / sizeof *RARE;
 

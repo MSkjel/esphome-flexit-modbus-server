@@ -35,8 +35,9 @@ substitutions:
   flexit_address: "3"
 
 packages:
-  flexit:  # the latest release. A branch or tag instead: see Customizing in the README
+  flexit:
     url: https://github.com/MSkjel/esphome-flexit-modbus-server
+    ref: release  # the latest release. For a branch or tag instead, see the README
     files:
       - packages/core.yaml         # required
       - packages/controls.yaml

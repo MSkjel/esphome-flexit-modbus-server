@@ -42,6 +42,7 @@ inline constexpr uint8_t NONE = 255;                   // a row in the per-colum
 // Radii of the sun's disc and its halo, and of the moon's disc and its glow
 inline constexpr int SUN_R = 13, HALO_R = 24;
 inline constexpr int MOON_R = 9, MOON_GLOW_R = 15;
+inline constexpr float POURING = 5;  // mm of rain an hour that's a downpour
 // Rows the sun's halo, the moon's glow and the glow round a low sun shade out over at their rims
 inline constexpr int HALO_SOFT = 14, MOON_SOFT = 8, GLOW_SOFT = 24;
 // The lamps' and windows' warm light, the same so they share one of the 16 colours, and the animations' lit windows
@@ -265,9 +266,10 @@ struct Light {  // one of the Christmas spruce's
 // The moment, for the weather animations to pick theirs
 struct At {
   bool dark, rain, snow, thunder;
-  bool white;  // snow on the ground
-  bool fair;   // sunny enough for birds
-  bool north;  // from Nordland and north, from 65 degrees
+  bool pouring;  // rain of POURING mm an hour or more
+  bool white;    // snow on the ground
+  bool fair;     // sunny enough for birds
+  bool north;    // from Nordland and north, from 65 degrees
   bool xmas, newyear, easter_days, midsummer, halloween, valentine, may17, flag_up, fireplace;
   bool yule;    // from 1 December, or the first Sunday in Advent before it, to the twentieth day of Christmas
   int8_t wdir;  // which way the wind blows things, 1 to the right
