@@ -53,6 +53,11 @@ and you pick the ones you want.
    it starts, so until then it doesn't poll the ESP and the settings stay unknown. If CX60 Connected stays off,
    swap A and B, check the TX/RX pins, and that nothing else is at the ESP's address.
 
+   If everything reads fine but nothing you set sticks, your RS485 board is probably one that switches direction by
+   itself with a transistor, like M5Stack's Atomic RS485 Base. The CX60 can't read what those send, so it never
+   polls the ESP. A 120 ohm resistor across A and B on the adapter fixed that. Boards with a MAX13487 switch by
+   themselves too and work fine without one.
+
 ## Packages
 
 Each package is a YAML file in [`packages/`](packages). Add the ones you want to the `files:` list. Packages
