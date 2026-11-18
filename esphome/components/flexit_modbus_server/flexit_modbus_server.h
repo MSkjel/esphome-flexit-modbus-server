@@ -146,7 +146,10 @@ enum HoldingRegisterIndex {
   REG_CMD_DEICING_FAN_REDUCTION_TEMP = 0x15A,  // x0.1 C, signed
   REG_CMD_DEICING_ROTOR_SPEED = 0x15B,         // 15-180
 
-  MAX_NUM_HOLDING_REGISTERS = 0x169  // all the CI600 has, some CX60 versions use those past 0x15F
+  MAX_NUM_HOLDING_REGISTERS = 0x169,  // all the CI600 has, some CX60 versions use those past 0x15F
+  // The CX60 reads the coils from 0x14C with the end address as the count, 0x160 or 0x168, and takes an exception as
+  // no answer. Enough for that read, those past the registers are always 0.
+  NUM_COILS = 0x14C + 0x168
 };
 
 /// The unit's mode, in REG_MODE and REG_CMD_MODE. Stop also means not known yet.
