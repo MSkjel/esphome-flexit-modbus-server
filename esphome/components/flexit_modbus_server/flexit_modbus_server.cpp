@@ -106,8 +106,8 @@ void FlexitModbusServer::dump_config() {
 }
 
 void FlexitModbusServer::setup() {
-  // A coil per register, set = a value of ours the CX60 hasn't read yet
-  mb_.begin(&port_, baud_rate(), server_address_, tx_enable_pin_, tx_enable_direct_, MAX_NUM_HOLDING_REGISTERS,
+  // A coil per register, set = a value of ours the CX60 hasn't read yet, see NUM_COILS
+  mb_.begin(&port_, baud_rate(), server_address_, tx_enable_pin_, tx_enable_direct_, NUM_COILS,
             MAX_NUM_HOLDING_REGISTERS, 0, NUM_INPUT_REGISTERS);
   mb_.onRawBuffer = [this](uint8_t *data, size_t length) { return split_frames_(data, length); };
 

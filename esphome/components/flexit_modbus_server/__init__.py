@@ -109,7 +109,7 @@ CONFIG_SCHEMA = cv.All(
 # Without restore_from_flash an ESP8266 has 64 flash preference words, given out in setup order with a CRC word
 # per record: ours (checked in flexit_modbus_server.h), then runtime WiFi credentials, then an API key from HA.
 _FLASH_WORDS = 64
-_SETTINGS_WORDS = 47
+_SETTINGS_WORDS = 50
 _RUNTIME_WORDS = 10
 _WIFI_WORDS = 26
 _API_KEY_WORDS = 9

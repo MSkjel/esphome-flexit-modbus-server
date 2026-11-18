@@ -285,10 +285,10 @@ substitutions:
 
 ## Advanced settings
 
-`advanced.yaml` mirrors the installer settings in the CI600's *Advanced user* (PIN 1000) and *Service*
-(PIN 8888) menus: sensor enables and calibration, filter guard, external temperature control, cooling and
-coolness recovery, neutral zones, fire/smoke mode, home/away, start/stop sequence, AC-fan speeds, rotor alarm
-type, de-icing, and clearing the alarm log. They are `disabled_by_default`; enable the ones you need in
-Home Assistant. Some only apply to one hardware variant: the fan type (DIP switch DS4, shown by
-`diagnostics.yaml`) decides whether the EC fan percentages or the AC-fan speed settings are used, and the
-return water settings only matter for units with a water heating coil.
+`advanced.yaml` mirrors the installer settings in the CI600's *Advanced user* (PIN 1000) and *Service* (PIN 8888) menus:
+sensor enables and calibration, filter guard, external temperature control, cooling and coolness recovery, neutral
+zones, fire/smoke mode, home/away, start/stop sequence, AC-fan speeds, rotor alarm type, de-icing (its periods,
+frequencies, fan speed and ramp time only on controllers past 6.0), and clearing the alarm log. They are
+`disabled_by_default`; enable the ones you need in Home Assistant. Some only apply to one hardware variant: the fan type
+(DIP switch DS4, shown by `diagnostics.yaml`) decides whether the EC fan percentages or the AC-fan speed settings are
+used, and the return water settings only matter for units with a water heating coil.

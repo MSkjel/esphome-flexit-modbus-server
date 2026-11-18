@@ -145,8 +145,18 @@ enum HoldingRegisterIndex {
   REG_CMD_DEICING_START_TEMP = 0x159,          // x0.1 C, signed
   REG_CMD_DEICING_FAN_REDUCTION_TEMP = 0x15A,  // x0.1 C, signed
   REG_CMD_DEICING_ROTOR_SPEED = 0x15B,         // 15-180
+  // controllers past 6.0
+  REG_CMD_DEICING_ROTOR_PERIOD = 0x162,     // min
+  REG_CMD_DEICING_ROTOR_FREQUENCY = 0x163,  // per hour
+  REG_CMD_DEICING_FAN_PERIOD = 0x164,       // min
+  REG_CMD_DEICING_FAN_FREQUENCY = 0x165,    // per hour
+  REG_CMD_DEICING_FAN_SPEED = 0x166,        // %
+  REG_CMD_DEICING_RAMP_TIME = 0x167,        // min
 
-  MAX_NUM_HOLDING_REGISTERS = 0x169  // all the CI600 has, some CX60 versions use those past 0x15F
+  MAX_NUM_HOLDING_REGISTERS = 0x169,  // all the CI600 has, some CX60 versions use those past 0x15F
+  // The CX60 reads the coils from 0x14C with the end address as the count, 0x160 or 0x168, and takes an exception as
+  // no answer. Enough for that read, those past the registers are always 0.
+  NUM_COILS = 0x14C + 0x168
 };
 
 /// The unit's mode, in REG_MODE and REG_CMD_MODE. Stop also means not known yet.
@@ -377,6 +387,7 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
       {0x13F, 0x03},  // heater flags of panel 1-3
       {0x14B, 0x01},  // rotor alarm type
       {0x158, 0x04},  // de-icing
+      {0x162, 0x06},  // and its periods, frequencies, fan speed and ramp past 6.0
   };
   static constexpr size_t NUM_SAVED_REGISTERS = [] {
     size_t n = 0;
@@ -454,7 +465,7 @@ class FlexitModbusServer : public esphome::uart::UARTDevice, public Component {
     uint16_t low[NUM_RUNTIME_COUNTERS];
     uint8_t known;  // bit per counter
   };
-  static_assert((sizeof(SavedSettings) + 3) / 4 == 46 && (sizeof(SavedRuntime) + 3) / 4 == 9,
+  static_assert((sizeof(SavedSettings) + 3) / 4 == 49 && (sizeof(SavedRuntime) + 3) / 4 == 9,
                 "update the ESP8266 flash words in __init__.py");
 
   ESPPreferenceObject runtime_pref_;

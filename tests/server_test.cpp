@@ -69,15 +69,15 @@ int main() {
   log_on = getenv("LOG") != nullptr;
 
   const auto settings_read = frame({2, 0x01, 0x00, 0x00, 0x01, 0x4C});  // panel 2's settings, 47 byte reply
-  const auto counters_read = frame({2, 0x01, 0x01, 0x4C, 0x00, 0x14});  // panel 2's counters
-  const auto our_read = frame({1, 0x01, 0x01, 0x4C, 0x00, 0x14});
+  const auto counters_read = frame({2, 0x01, 0x01, 0x4C, 0x01, 0x68});  // panel 2's counters, as 7.0 asks
+  const auto our_read = frame({1, 0x01, 0x01, 0x4C, 0x01, 0x68});       // 50 byte reply
 
   // Panel 2 doesn't answer, and the CX60's next read to it starts like the reply would. Ours after it is
   // answered right away.
   {
     auto esp = std::make_unique<Esp>();
     esp->hear(settings_read + counters_read + our_read);
-    CHECK(esp->bus.tx.size() == 8 && esp->bus.tx[0] == 1 && esp->bus.tx[1] == 0x01);
+    CHECK(esp->bus.tx.size() == 50 && esp->bus.tx[0] == 1 && esp->bus.tx[1] == 0x01);
   }
 
   // Panel 2 answers in pieces. The reply is one frame, and ours after it is answered.
@@ -90,8 +90,8 @@ int main() {
     esp->hear(settings_read);
     esp->hear(std::vector<uint8_t>(reply.begin(), reply.begin() + 20));
     esp->hear(std::vector<uint8_t>(reply.begin() + 20, reply.end()) + our_read);
-    CHECK((esp->frames == std::vector<size_t>{8, 47, 8, 8}));
-    CHECK(esp->bus.tx.size() == 8);
+    CHECK((esp->frames == std::vector<size_t>{8, 47, 8, 50}));
+    CHECK(esp->bus.tx.size() == 50);
   }
 
   // The updater's probe of 3: its 13-byte reply a byte at a time, then silence. It arrives whole.
@@ -211,6 +211,33 @@ int main() {
     CHECK(esp->bus.tx.size() == 47 && (esp->bus.tx[3 + 39] & 0x84) == 0x80);
   }
 
+  // De-icing: the CX60 reads the coils from 0x14C past ours, 0x160 of them on 6.0 and 0x168 on 7.0. Both get them,
+  // 0x159 flagged, and then the value.
+  for (uint8_t count : {0x60, 0x68}) {
+    auto esp = std::make_unique<Esp>();
+    esp->server.send_cmd(REG_CMD_DEICING_START_TEMP, 200);
+    esp->hear(frame({1, 0x01, 0x01, 0x4C, 0x01, count}));
+    size_t bytes = (0x100 + count + 7) / 8, bit = REG_CMD_DEICING_START_TEMP - 0x14C;
+    CHECK(esp->bus.tx.size() == bytes + 5 && esp->bus.tx[1] == 0x01 && esp->bus.tx[2] == bytes);
+    CHECK(esp->bus.tx.size() > 3 + bit / 8 && esp->bus.tx[3 + bit / 8] == 1 << bit % 8);
+    esp->bus.tx.clear();
+    esp->hear(frame({1, 0x03, 0x01, 0x59, 0x00, 0x01}));
+    CHECK(esp->bus.tx.size() == 7 && esp->bus.tx[3] == 0 && esp->bus.tx[4] == 200);
+  }
+  // 7.0's read covers the newer de-icing settings too, and they're saved like the others
+  {
+    auto esp = std::make_unique<Esp>(3);
+    esp->server.send_cmd(REG_CMD_DEICING_FAN_SPEED, 60);
+    esp->hear(frame({1, 0x01, 0x01, 0x4C, 0x01, 0x68}));
+    size_t bit = REG_CMD_DEICING_FAN_SPEED - 0x14C;
+    CHECK(esp->bus.tx.size() == 50 && esp->bus.tx[3 + bit / 8] == 1 << bit % 8);
+    esp->hear(fc65(REG_CMD_DEICING_FAN_SPEED, 60));
+    now_us += 10000000;
+    esp->hear({});
+    global_preferences->sync();
+  }
+  CHECK(std::make_unique<Esp>(3)->server.real_value(REG_CMD_DEICING_FAN_SPEED) == 60);
+
   // Ours changed again between the CX60's read and its FC65: still flagged, and the next read gets the new one
   {
     auto esp = std::make_unique<Esp>();
@@ -240,7 +267,7 @@ int main() {
     auto esp = std::make_unique<Esp>();
     esp->hear(std::vector<uint8_t>{0x55} + our_read + counters_read);
     const uint32_t read = now_us;
-    CHECK((esp->frames == std::vector<size_t>{1, 8, 8, 8}));
+    CHECK((esp->frames == std::vector<size_t>{1, 8, 50, 8}));
     CHECK((esp->ends == std::vector<uint32_t>{read - 16 * PBUS_BYTE_US, read - 8 * PBUS_BYTE_US, read, read}));
   }
 
