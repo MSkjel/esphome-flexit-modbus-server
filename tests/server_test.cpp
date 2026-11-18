@@ -224,6 +224,19 @@ int main() {
     esp->hear(frame({1, 0x03, 0x01, 0x59, 0x00, 0x01}));
     CHECK(esp->bus.tx.size() == 7 && esp->bus.tx[3] == 0 && esp->bus.tx[4] == 200);
   }
+  // 7.0's read covers the newer de-icing settings too, and they're saved like the others
+  {
+    auto esp = std::make_unique<Esp>(3);
+    esp->server.send_cmd(REG_CMD_DEICING_FAN_SPEED, 60);
+    esp->hear(frame({1, 0x01, 0x01, 0x4C, 0x01, 0x68}));
+    size_t bit = REG_CMD_DEICING_FAN_SPEED - 0x14C;
+    CHECK(esp->bus.tx.size() == 50 && esp->bus.tx[3 + bit / 8] == 1 << bit % 8);
+    esp->hear(fc65(REG_CMD_DEICING_FAN_SPEED, 60));
+    now_us += 10000000;
+    esp->hear({});
+    global_preferences->sync();
+  }
+  CHECK(std::make_unique<Esp>(3)->server.real_value(REG_CMD_DEICING_FAN_SPEED) == 60);
 
   // Ours changed again between the CX60's read and its FC65: still flagged, and the next read gets the new one
   {

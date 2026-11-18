@@ -112,6 +112,31 @@ packages:
     file: parts/setting_number.yaml
     vars: {id: de_icing_rotor_speed, name: De-icing Rotor Speed, register: REG_CMD_DEICING_ROTOR_SPEED, min: 15,
            max: 180, zero_unknown: "true"}
+  # controllers past 6.0 only, the CI600 shows these then. 6.0 and older don't have them
+  de_icing_rotor_period: !include
+    file: parts/setting_number.yaml
+    vars: {id: de_icing_rotor_period, name: De-icing Rotor Period, register: REG_CMD_DEICING_ROTOR_PERIOD, min: 1,
+           max: 60, unit: min, zero_unknown: "true"}
+  de_icing_rotor_frequency: !include
+    file: parts/setting_number.yaml
+    vars: {id: de_icing_rotor_frequency, name: De-icing Rotor Frequency, register: REG_CMD_DEICING_ROTOR_FREQUENCY,
+           min: 1, max: 10, unit: /h, zero_unknown: "true"}
+  de_icing_fan_period: !include
+    file: parts/setting_number.yaml
+    vars: {id: de_icing_fan_period, name: De-icing Fan Period, register: REG_CMD_DEICING_FAN_PERIOD, min: 1,
+           max: 60, unit: min, zero_unknown: "true"}
+  de_icing_fan_frequency: !include
+    file: parts/setting_number.yaml
+    vars: {id: de_icing_fan_frequency, name: De-icing Fan Frequency, register: REG_CMD_DEICING_FAN_FREQUENCY,
+           min: 1, max: 10, unit: /h, zero_unknown: "true"}
+  de_icing_fan_speed: !include
+    file: parts/setting_number.yaml
+    vars: {id: de_icing_fan_speed, name: De-icing Fan Speed, register: REG_CMD_DEICING_FAN_SPEED, min: 20, max: 100,
+           unit: "%", zero_unknown: "true"}
+  de_icing_ramp_time: !include
+    file: parts/setting_number.yaml
+    vars: {id: de_icing_ramp_time, name: De-icing Ramp Time, register: REG_CMD_DEICING_RAMP_TIME, min: 1, max: 5,
+           unit: min, zero_unknown: "true"}
 
   # what happens on the fire/smoke input
   fire_smoke_mode: !include
