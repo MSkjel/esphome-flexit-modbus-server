@@ -26,7 +26,9 @@ int main() {
   // Max runs on the timer and is restarted, the mode setting is never changed
   start(MODE_NORMAL, MODE_STOP);
   controls::request("test", MODE_MAX);
-  run(15);
+  run(4);
+  CHECK(cx60.mode == MODE_MAX);  // right away
+  run(11);
   CHECK(cx60.mode == MODE_MAX && cx60.timer_s > 0);
   CHECK(cx60.timer_minutes == controls::TIMER_MINUTES);
   CHECK(cx60.timer_s <= controls::TIMER_MINUTES * 60u);  // started with our length, not the user's

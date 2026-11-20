@@ -40,11 +40,11 @@ inline uint16_t timer_left() {
   return id(server).read_holding_register(flexit_modbus_server::REG_SECONDS_REMAINING_MAX_TIMER);
 }
 
-inline const char START = 0;  // scheduler key for the start
+inline const char START = 0;  // scheduler key for the second start
 
 // Starts or restarts our max timer. Its length, and the mode it runs (Max Timer Speed), are sent as temporary
 // settings, so a reboot puts the user's back. The CX60 only gets those once the server has saved that they're
-// temporary (up to 3 s), so the start waits 5 s after sending them, or it would run the user's length.
+// temporary (up to 3 s), so a start sent with them can run the user's length: then it's sent again 5 s later.
 inline void start_timer(uint32_t now) {
   namespace fms = flexit_modbus_server;
   auto &s = id(server);
@@ -57,8 +57,10 @@ inline void start_timer(uint32_t now) {
     s.send_cmd(fms::REG_CMD_MAX_TIMER_SPEED, fms::MODE_MAX, true);
     sent = true;
   }
-  App.scheduler.set_timeout(&START, sent ? 5000 : 0,
-                            [] { id(server).send_cmd(flexit_modbus_server::REG_CMD_START_MAX_TIMER, 1); });
+  s.send_cmd(fms::REG_CMD_START_MAX_TIMER, 1);
+  if (sent)
+    App.scheduler.set_timeout(&START, 5000,
+                              [] { id(server).send_cmd(flexit_modbus_server::REG_CMD_START_MAX_TIMER, 1); });
   state.timer = true;
   state.sent_ms = now;
 }
