@@ -101,10 +101,10 @@ static void cx60_read(uint16_t reg) {
   hear(fc65(reg, v));
 }
 
-// Whether we flagged `reg` for the CX60 to read (its coil is set)
-static bool cx60_flagged(uint16_t reg) {
-  auto coils = hear(frame({1, 0x01, (uint8_t) (reg >> 8), (uint8_t) reg, 0x00, 0x01}));
-  return coils.size() > 3 && (coils[3] & 1);
+// Our coils, read in one go from 0 like the CX60 does: bit `reg` set = we flagged it for it to read
+static std::vector<uint8_t> cx60_coils() { return hear(frame({1, 0x01, 0x00, 0x00, 0x01, 0x4C})); }
+static bool flagged(const std::vector<uint8_t> &coils, uint16_t reg) {
+  return coils.size() > 3u + reg / 8 && (coils[3 + reg / 8] & (1 << (reg % 8)));
 }
 
 static uint16_t tenths(float c) { return (uint16_t) (int16_t) lroundf(c * 10); }
@@ -113,9 +113,10 @@ static uint16_t tenths(float c) { return (uint16_t) (int16_t) lroundf(c * 10); }
 // timeouts run, and the arbiter every 2 s as in controls.yaml.
 static void cx60_second() {
   now_ms += 1000;
+  auto coils = cx60_coils();
   for (uint16_t reg : {REG_CMD_MODE, REG_CMD_MAX_TIMER_SPEED, REG_CMD_MINUTES_MAX_TIMER, REG_CMD_START_MAX_TIMER,
                        REG_CMD_STOP_MAX_TIMER})
-    if (cx60_flagged(reg))
+    if (flagged(coils, reg))
       cx60_read(reg);
   if (cx60.timer_s)
     cx60.timer_s--;

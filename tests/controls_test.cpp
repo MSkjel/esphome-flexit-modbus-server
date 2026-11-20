@@ -26,9 +26,10 @@ int main() {
   // Max runs on the timer and is restarted, the mode setting is never changed
   start(MODE_NORMAL, MODE_STOP);
   controls::request("test", MODE_MAX);
-  run(5);
+  run(15);
   CHECK(cx60.mode == MODE_MAX && cx60.timer_s > 0);
   CHECK(cx60.timer_minutes == controls::TIMER_MINUTES);
+  CHECK(cx60.timer_s <= controls::TIMER_MINUTES * 60u);  // started with our length, not the user's
   run(40 * 60);
   CHECK(cx60.mode == MODE_MAX && cx60.setting == MODE_NORMAL);
   CHECK(controls::requested("test") == MODE_MAX);
@@ -40,7 +41,7 @@ int main() {
   start(MODE_NORMAL, MODE_MIN);
   CHECK(cx60.mode == MODE_MIN);
   controls::request("test", MODE_MAX);
-  run(5);
+  run(15);
   CHECK(cx60.mode == MODE_MAX);
   run(15 * 60);
   CHECK(cx60.mode == MODE_MAX && controls::requested("test") == MODE_MAX);
@@ -127,7 +128,7 @@ int main() {
   start(MODE_MIN, MODE_STOP);
   controls::request("a", MODE_NORMAL);
   controls::request("b", MODE_MAX);
-  run(10);
+  run(15);
   CHECK(cx60.mode == MODE_MAX && cx60.setting == MODE_MIN);
   controls::release("b");
   run(10);
@@ -141,7 +142,7 @@ int main() {
   cx60.timer_speed = MODE_NORMAL;
   hear(fc65(REG_CMD_MAX_TIMER_SPEED, MODE_NORMAL));
   controls::request("test", MODE_MAX);
-  run(10);
+  run(15);
   CHECK(cx60.mode == MODE_MAX && cx60.timer_speed == MODE_MAX);
   controls::release("test");
   run(10);
@@ -151,7 +152,7 @@ int main() {
   start(MODE_NORMAL, MODE_STOP);
   cx60.no_address_1 = true;
   controls::request("test", MODE_MAX);
-  run(10);
+  run(15);
   CHECK(cx60.mode == MODE_NORMAL);
   run(30);
   CHECK(cx60.mode == MODE_MAX && cx60.timer_s == 0 && controls::requested("test") == MODE_MAX);
