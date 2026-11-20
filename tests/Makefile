@@ -13,7 +13,8 @@ MET    := $(CODE)/met
 SERVER_SRC := $(SERVER)/flexit_modbus_server.cpp $(MODBUS)/ModbusRTUServer.cpp $(CODE)/panel/pbus.c
 HEADERS := $(wildcard *.h stubs/*.h stubs/*/*.h stubs/*/*/*.h $(CODE)/*.h $(CODE)/*/*.h $(SERVER)/*.h $(CAMERA)/*.h \
   $(MODBUS)/*.h)
-TESTS  := update_test camera_test server_test restart_test humidity_boost_test summer_cooling_test met_coast_wave_test
+TESTS  := update_test camera_test server_test restart_test controls_test humidity_boost_test summer_cooling_test \
+  met_coast_wave_test
 
 all: $(TESTS)
 $(TESTS): %: $(BUILD)/%
@@ -22,10 +23,12 @@ $(TESTS): %: $(BUILD)/%
 $(BUILD)/update_test: update_test.cpp $(CODE)/panel/update.cpp $(CODE)/panel/pbus.c
 $(BUILD)/camera_test: CXXFLAGS += -I$(CAMERA)
 $(BUILD)/camera_test: camera_test.cpp $(CAMERA)/panel_camera.cpp
-$(BUILD)/server_test $(BUILD)/restart_test $(BUILD)/humidity_boost_test $(BUILD)/summer_cooling_test: \
+$(BUILD)/server_test $(BUILD)/restart_test $(BUILD)/controls_test $(BUILD)/humidity_boost_test \
+  $(BUILD)/summer_cooling_test: \
   CXXFLAGS += -I$(SERVER) -I$(MODBUS)
 $(BUILD)/server_test: server_test.cpp $(SERVER_SRC)
 $(BUILD)/restart_test: restart_test.cpp $(SERVER_SRC)
+$(BUILD)/controls_test: controls_test.cpp $(SERVER_SRC)
 $(BUILD)/humidity_boost_test: humidity_boost_test.cpp $(SERVER_SRC)
 $(BUILD)/summer_cooling_test: summer_cooling_test.cpp $(SERVER_SRC)
 $(BUILD)/met_coast_wave_test: met_coast_wave_test.cpp $(MET)/met_scene.cpp $(MET)/met_raster.cpp \

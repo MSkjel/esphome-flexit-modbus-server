@@ -31,12 +31,17 @@ set the mode themselves. Each one puts in a request, the highest request wins, a
 mode it was in when the last request is gone. So they can overlap without fighting, and you can use any
 combination of them. `Mode Boosted By` shows who is asking right now.
 
-Changing the mode yourself (Home Assistant, a CI600, the week program) always wins. It cancels the boosts
-that are running, and each of them waits until its reason is gone before it starts again. A stopped unit is
-never started by a boost. The mode and fan speeds a boost sets (CO2 control's normal speeds, fireplace mode's
-max speeds) are never saved, the ESP keeps the real ones. If it restarts or loses power during a boost, even
-right as one starts or ends, it sends the real ones back when it is up again. If you set a fan speed while a
-boost has it raised, that is the real one from then on: CO2 control adds to it, fireplace mode ends.
+Max runs on the CX60's max timer, set to 10 minutes and restarted every 5, so it ends by itself if the ESP goes
+down. It works while the week program sets the mode too. Someone else's max timer is left alone. Normal (CO2
+control) is sent as a temporary mode, which the CX60 ignores while the week program sets the mode: the ESP logs it
+and retries when the mode changes or after 30 minutes.
+
+Changing the mode yourself (Home Assistant, a CI600) always wins. It cancels the boosts that are running, and each
+of them waits until its reason is gone before it starts again. So does stopping the ESP's max timer. A stopped unit
+is never started by a boost. The mode, fan speeds and timer length a boost sets (CO2 control's normal speeds,
+fireplace mode's max speeds) are never saved, the ESP keeps the real ones. If it restarts or loses power during a
+boost, even right as one starts or ends, it sends the real ones back when it is up again. If you set a fan speed
+while a boost has it raised, that is the real one from then on: CO2 control adds to it, fireplace mode ends.
 
 To add your own, ask for a mode from a lambda and release it when you're done:
 

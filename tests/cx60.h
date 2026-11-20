@@ -48,12 +48,20 @@ static FlexitModbusServer *server;
 
 #include "controls.h"
 
-// The CX60: the mode it runs (also its mode setting) and its status
+// The simulated CX60
 static struct {
-  uint16_t mode;
+  uint16_t setting;       // the mode setting, REG_CMD_MODE
+  uint16_t mode;          // the mode it runs: max while the max timer runs, else the week program's, else the setting
+  uint16_t week_program;  // the mode the week program sets now, MODE_STOP = nothing
+  uint16_t timer_minutes;
+  uint32_t timer_s;                  // seconds left on the max timer
   float extract, outdoor, setpoint;  // C
   uint16_t heating;                  // %
 } cx60;
+
+static void cx60_run() {
+  cx60.mode = cx60.timer_s ? (uint16_t) MODE_MAX : cx60.week_program ? cx60.week_program : cx60.setting;
+}
 
 // The bytes on the bus, the ESP's loop, and what it answered
 static std::vector<uint8_t> hear(const std::vector<uint8_t> &bytes) {
@@ -64,25 +72,48 @@ static std::vector<uint8_t> hear(const std::vector<uint8_t> &bytes) {
   return reply;
 }
 
-// Somebody sets the mode on a panel, the CX60 passes it on
+// Someone sets the mode on a panel. While the week program sets the mode, the CX60 runs it only after that.
 static void mode_on_panel(uint16_t mode) {
-  cx60.mode = mode;
+  cx60.setting = mode;
+  cx60_run();
   hear(fc65(REG_CMD_MODE, mode));
+}
+
+// The CX60 reads a register we flagged, applies it, and passes the value on (FC65)
+static void cx60_read(uint16_t reg) {
+  auto read = hear(frame({1, 0x03, (uint8_t) (reg >> 8), (uint8_t) reg, 0x00, 0x01}));
+  uint16_t v = read[3] << 8 | read[4];
+  if (reg == REG_CMD_MODE)
+    cx60.setting = v;
+  else if (reg == REG_CMD_MINUTES_MAX_TIMER)
+    cx60.timer_minutes = v;
+  else if (reg == REG_CMD_START_MAX_TIMER && v)
+    cx60.timer_s = cx60.timer_minutes * 60u;
+  else if (reg == REG_CMD_STOP_MAX_TIMER && v)
+    cx60.timer_s = 0;
+  hear(fc65(reg, v));
+}
+
+// Whether we flagged `reg` for the CX60 to read (its coil is set)
+static bool cx60_flagged(uint16_t reg) {
+  auto coils = hear(frame({1, 0x01, (uint8_t) (reg >> 8), (uint8_t) reg, 0x00, 0x01}));
+  return coils.size() > 3 && (coils[3] & 1);
 }
 
 static uint16_t tenths(float c) { return (uint16_t) (int16_t) lroundf(c * 10); }
 
-// A second. The CX60 reads the mode if we flagged it, runs it and sends its status. Then the ESP's timeouts, and the
-// arbiter every 2 s like controls.yaml.
+// One second: the CX60 reads the registers we flagged, runs its timer and mode, and sends its status. Then the ESP's
+// timeouts run, and the arbiter every 2 s as in controls.yaml.
 static void cx60_second() {
   now_ms += 1000;
-  auto coils = hear(frame({1, 0x01, 0x00, 0x00, 0x00, 0x01}));
-  if (coils.size() > 3 && (coils[3] & 1)) {
-    auto read = hear(frame({1, 0x03, 0x00, 0x00, 0x00, 0x01}));
-    cx60.mode = read[3] << 8 | read[4];
-    hear(fc65(REG_CMD_MODE, cx60.mode));
-  }
+  for (uint16_t reg : {REG_CMD_MODE, REG_CMD_MINUTES_MAX_TIMER, REG_CMD_START_MAX_TIMER, REG_CMD_STOP_MAX_TIMER})
+    if (cx60_flagged(reg))
+      cx60_read(reg);
+  if (cx60.timer_s)
+    cx60.timer_s--;
+  cx60_run();
   hear(status({{REG_MODE, cx60.mode},
+               {REG_SECONDS_REMAINING_MAX_TIMER, (uint16_t) cx60.timer_s},
                {REG_TEMPERATURE_SETPOINT, tenths(cx60.setpoint)},
                {REG_TEMPERATURE_EXTRACT_AIR, tenths(cx60.extract)},
                {REG_TEMPERATURE_OUTDOOR_AIR, tenths(cx60.outdoor)},
@@ -92,7 +123,7 @@ static void cx60_second() {
     flexit::controls::arbiter();
 }
 
-// A fresh flash, and the CX60 in normal sends the ESP its mode setting
+// A fresh flash, and the CX60 in normal sends the ESP its mode setting and max timer length
 static void boot() {
   now_ms = 0;
   flash = {};
@@ -105,6 +136,7 @@ static void boot() {
   server->set_server_address(1);
   server->setup();
   flexit::controls::state = {};
-  cx60 = {MODE_NORMAL, 22, 10, 20, 0};
-  hear(fc16(REG_CMD_MODE, {cx60.mode}));
+  cx60 = {MODE_NORMAL, MODE_NORMAL, MODE_STOP, 180, 0, 22, 10, 20, 0};
+  hear(fc16(REG_CMD_MODE, {cx60.setting}));
+  hear(fc16(REG_CMD_MINUTES_MAX_TIMER, {cx60.timer_minutes}));
 }
