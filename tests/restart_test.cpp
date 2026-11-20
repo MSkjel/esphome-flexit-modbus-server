@@ -58,12 +58,13 @@ static const int SETTINGS = 0x0F;
 static struct {
   uint16_t reg[SETTINGS];
   uint16_t timer_minutes;  // the max timer's length, a setting too
+  uint16_t timer_speed;    // the mode the max timer runs, Max Timer Speed, a setting too
   uint32_t timer_s;        // seconds left on the max timer, which runs max while > 0
   bool not_master;         // we're not the lowest panel address, so it keeps its own normal fan speeds
 } CX60;
 
 // The mode the CX60 runs
-static uint16_t cx60_mode() { return CX60.timer_s ? (uint16_t) MODE_MAX : CX60.reg[REG_CMD_MODE]; }
+static uint16_t cx60_mode() { return CX60.timer_s ? CX60.timer_speed : CX60.reg[REG_CMD_MODE]; }
 
 // The bytes on the bus, the ESP's loop, and what it answered
 static std::vector<uint8_t> hear(const std::vector<uint8_t> &bytes) {
@@ -89,13 +90,16 @@ static void cx60_poll() {
     hear(fc65(r, CX60.reg[r]));
   }
   // The same for the max timer's registers
-  for (uint16_t r : {REG_CMD_MINUTES_MAX_TIMER, REG_CMD_START_MAX_TIMER, REG_CMD_STOP_MAX_TIMER}) {
+  for (uint16_t r :
+       {REG_CMD_MAX_TIMER_SPEED, REG_CMD_MINUTES_MAX_TIMER, REG_CMD_START_MAX_TIMER, REG_CMD_STOP_MAX_TIMER}) {
     auto flag = hear(frame({1, 0x01, (uint8_t) (r >> 8), (uint8_t) r, 0x00, 0x01}));
     if (!(flag[3] & 1))
       continue;
     auto read = hear(frame({1, 0x03, (uint8_t) (r >> 8), (uint8_t) r, 0x00, 0x01}));
     uint16_t v = read[3] << 8 | read[4];
-    if (r == REG_CMD_MINUTES_MAX_TIMER)
+    if (r == REG_CMD_MAX_TIMER_SPEED)
+      CX60.timer_speed = v;
+    else if (r == REG_CMD_MINUTES_MAX_TIMER)
       CX60.timer_minutes = v;
     else if (r == REG_CMD_START_MAX_TIMER && v)
       CX60.timer_s = CX60.timer_minutes * 60u;
@@ -118,7 +122,7 @@ static void cx60_cycle() {
 static void cx60_restart() {
   CX60.timer_s = 0;
   hear(fc16(0, std::vector<uint16_t>(CX60.reg, CX60.reg + SETTINGS)));
-  hear(fc16(REG_CMD_MINUTES_MAX_TIMER, {CX60.timer_minutes}));
+  hear(fc16(REG_CMD_MAX_TIMER_SPEED, {CX60.timer_speed, CX60.timer_minutes}));
 }
 
 // ---------------------------------------------------------------- the ESP
@@ -232,6 +236,7 @@ static void start_over() {
   CX60.reg[REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX] = user_supply_max = 100;
   CX60.reg[REG_CMD_PERCENTAGE_EXTRACT_FAN_MAX] = user_extract_max = 100;
   CX60.timer_minutes = 180;
+  CX60.timer_speed = MODE_NORMAL;  // so the boosts have to set it to max
   flash = {};
   co2_level = 600;
   boot();
@@ -270,6 +275,7 @@ static int check(const char *what) {
   want("max extract", CX60.reg[REG_CMD_PERCENTAGE_EXTRACT_FAN_MAX], user_extract_max);
   want("mode", CX60.reg[REG_CMD_MODE], user_mode);
   want("max timer minutes", CX60.timer_minutes, 180);
+  want("max timer speed", CX60.timer_speed, MODE_NORMAL);
   want("mode it runs", cx60_mode(), user_mode);
   return bad;
 }

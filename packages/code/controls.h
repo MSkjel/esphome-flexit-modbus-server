@@ -14,15 +14,14 @@ inline struct State {
   // runs. A mode change by anyone else drops them all.
   std::map<std::string, int> requests;
 
-  int target = -1;            // the mode the boosts run, -1 = not boosting
-  bool timer = false;         // true: max on our max timer. false: target sent as a temporary mode
-  bool timer_redone = false;  // restarted once because the CX60 started it with the user's length
-  uint32_t sent_ms = 0;       // when we sent target or last (re)started the timer
-  bool confirmed = true;      // the CX60 has run target, or 30 s have passed
-  bool rejected = false;      // the CX60 didn't run target within 30 s, we wait to retry
-  int rejected_in = -1;       // the CX60's mode at the rejection, retry when it changes
-  uint32_t rejected_ms = 0;   // when it was rejected, retry after RETRY_MS
-  int user_mode = -1;         // the user's mode when we last looked, -1 = not yet
+  int target = -1;           // the mode the boosts run, -1 = not boosting
+  bool timer = false;        // true: max on our max timer. false: target sent as a temporary mode
+  uint32_t sent_ms = 0;      // when we sent target or last (re)started the timer
+  bool confirmed = true;     // the CX60 has run target, or 30 s have passed
+  bool rejected = false;     // the CX60 didn't run target within 30 s, we wait to retry
+  int rejected_in = -1;      // the CX60's mode at the rejection, retry when it changes
+  uint32_t rejected_ms = 0;  // when it was rejected, retry after RETRY_MS
+  int user_mode = -1;        // the user's mode when we last looked, -1 = not yet
 } state;
 
 // The length we give the max timer, short so max ends soon if the ESP dies, and when we restart it
@@ -41,15 +40,14 @@ inline uint16_t timer_left() {
   return id(server).read_holding_register(flexit_modbus_server::REG_SECONDS_REMAINING_MAX_TIMER);
 }
 
-// Starts or restarts our max timer. Its length (and the timer's speed for AC fans) are sent as temporary settings,
-// so a reboot puts the user's back.
+// Starts or restarts our max timer. Its length, and the mode it runs (Max Timer Speed), are sent as temporary
+// settings, so a reboot puts the user's back.
 inline void start_timer(uint32_t now) {
   namespace fms = flexit_modbus_server;
   auto &s = id(server);
   if (s.read_holding_register(fms::REG_CMD_MINUTES_MAX_TIMER) != TIMER_MINUTES)
     s.send_cmd(fms::REG_CMD_MINUTES_MAX_TIMER, TIMER_MINUTES, true);
-  if (s.read_holding_register(fms::REG_DS4_FAN_TYPE) == 1 &&
-      s.read_holding_register(fms::REG_CMD_MAX_TIMER_SPEED) != fms::MODE_MAX)
+  if (s.read_holding_register(fms::REG_CMD_MAX_TIMER_SPEED) != fms::MODE_MAX)
     s.send_cmd(fms::REG_CMD_MAX_TIMER_SPEED, fms::MODE_MAX, true);
   s.send_cmd(fms::REG_CMD_START_MAX_TIMER, 1);
   state.timer = true;
@@ -89,6 +87,14 @@ inline void arbiter() {
   // runs it at the week program's next change. Keep the requests and retry later.
   if (!state.confirmed && mode == state.target) {
     state.confirmed = true;
+  } else if (!state.confirmed && state.timer && now - state.sent_ms >= 30000) {
+    // The max timer only runs while something answers at address 1. Without that there's no week program either,
+    // so max is sent as the mode instead.
+    ESP_LOGW(TAG, "The CX60 didn't start the max timer, sending max as the mode");
+    end_boost();
+    s.send_cmd(fms::REG_CMD_MODE, fms::MODE_MAX, true);
+    state.target = fms::MODE_MAX;
+    state.sent_ms = now;
   } else if (!state.confirmed && now - state.sent_ms >= 30000) {
     ESP_LOGW(TAG, "The CX60 didn't go from %s to %s, the week program? Trying again later",
              fms::mode_to_string(mode).c_str(), fms::mode_to_string(state.target).c_str());
@@ -128,14 +134,9 @@ inline void arbiter() {
     return;
   }
   if (want == state.target) {
-    // Restart our timer before it runs out. Also once if it runs longer than ours: the CX60 started it before it had
-    // our length.
-    const uint16_t left = timer_left();
-    const bool too_long = left > TIMER_MINUTES * 60 + 60 && !state.timer_redone;
-    if (state.timer && !state.rejected && now - state.sent_ms >= 10000 && (left < TIMER_RESTART_BELOW_S || too_long)) {
-      state.timer_redone |= too_long;
+    // Restart our timer before it runs out
+    if (state.timer && state.confirmed && now - state.sent_ms >= 10000 && timer_left() < TIMER_RESTART_BELOW_S)
       start_timer(now);
-    }
     return;
   }
 
@@ -144,10 +145,9 @@ inline void arbiter() {
   ESP_LOGI(TAG, "Going from %s to %s", fms::mode_to_string(base).c_str(), fms::mode_to_string(want).c_str());
   if (state.target >= 0)
     end_boost();
-  if (want == fms::MODE_MAX) {
-    state.timer_redone = false;
+  if (want == fms::MODE_MAX)
     start_timer(now);
-  } else
+  else
     s.send_cmd(fms::REG_CMD_MODE, want, true);
   state.target = want;
   state.sent_ms = now;

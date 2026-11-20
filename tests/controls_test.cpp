@@ -136,6 +136,32 @@ int main() {
   run(10);
   CHECK(cx60.mode == MODE_MIN && cx60.setting == MODE_MIN);
 
+  // Max Timer Speed set to Normal on a panel: the boost sets it to Max meanwhile and puts Normal back after
+  start(MODE_NORMAL, MODE_STOP);
+  cx60.timer_speed = MODE_NORMAL;
+  hear(fc65(REG_CMD_MAX_TIMER_SPEED, MODE_NORMAL));
+  controls::request("test", MODE_MAX);
+  run(10);
+  CHECK(cx60.mode == MODE_MAX && cx60.timer_speed == MODE_MAX);
+  controls::release("test");
+  run(10);
+  CHECK(cx60.mode == MODE_NORMAL && cx60.timer_speed == MODE_NORMAL);
+
+  // Nothing answers at address 1, so the timer doesn't start: after 30 s max is sent as the mode
+  start(MODE_NORMAL, MODE_STOP);
+  cx60.no_address_1 = true;
+  controls::request("test", MODE_MAX);
+  run(10);
+  CHECK(cx60.mode == MODE_NORMAL);
+  run(30);
+  CHECK(cx60.mode == MODE_MAX && cx60.timer_s == 0 && controls::requested("test") == MODE_MAX);
+  run(10 * 60);
+  CHECK(cx60.mode == MODE_MAX && controls::requested("test") == MODE_MAX);
+  controls::release("test");
+  run(10);
+  CHECK(cx60.mode == MODE_NORMAL && cx60.setting == MODE_NORMAL && cx60.timer_minutes == 180 &&
+        cx60.timer_speed == MODE_MAX);
+
   printf("controls test: %s\n", fails ? "FAILED" : "ok");
   return fails != 0;
 }

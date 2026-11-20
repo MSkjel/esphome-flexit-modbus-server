@@ -51,16 +51,21 @@ static FlexitModbusServer *server;
 // The simulated CX60
 static struct {
   uint16_t setting;       // the mode setting, REG_CMD_MODE
-  uint16_t mode;          // the mode it runs: max while the max timer runs, else the week program's, else the setting
+  uint16_t mode;          // the mode it runs: timer_speed while the max timer runs, else the week program's, else
+                          // the setting
   uint16_t week_program;  // the mode the week program sets now, MODE_STOP = nothing
   uint16_t timer_minutes;
+  uint16_t timer_speed;              // the mode the max timer runs, Max Timer Speed
   uint32_t timer_s;                  // seconds left on the max timer
+  bool no_address_1;                 // nothing answers at address 1, so no max timer and no week program
   float extract, outdoor, setpoint;  // C
   uint16_t heating;                  // %
 } cx60;
 
 static void cx60_run() {
-  cx60.mode = cx60.timer_s ? (uint16_t) MODE_MAX : cx60.week_program ? cx60.week_program : cx60.setting;
+  cx60.mode = cx60.timer_s                              ? cx60.timer_speed
+              : cx60.week_program && !cx60.no_address_1 ? cx60.week_program
+                                                        : cx60.setting;
 }
 
 // The bytes on the bus, the ESP's loop, and what it answered
@@ -87,7 +92,9 @@ static void cx60_read(uint16_t reg) {
     cx60.setting = v;
   else if (reg == REG_CMD_MINUTES_MAX_TIMER)
     cx60.timer_minutes = v;
-  else if (reg == REG_CMD_START_MAX_TIMER && v)
+  else if (reg == REG_CMD_MAX_TIMER_SPEED)
+    cx60.timer_speed = v;
+  else if (reg == REG_CMD_START_MAX_TIMER && v && !cx60.no_address_1)
     cx60.timer_s = cx60.timer_minutes * 60u;
   else if (reg == REG_CMD_STOP_MAX_TIMER && v)
     cx60.timer_s = 0;
@@ -106,7 +113,8 @@ static uint16_t tenths(float c) { return (uint16_t) (int16_t) lroundf(c * 10); }
 // timeouts run, and the arbiter every 2 s as in controls.yaml.
 static void cx60_second() {
   now_ms += 1000;
-  for (uint16_t reg : {REG_CMD_MODE, REG_CMD_MINUTES_MAX_TIMER, REG_CMD_START_MAX_TIMER, REG_CMD_STOP_MAX_TIMER})
+  for (uint16_t reg : {REG_CMD_MODE, REG_CMD_MAX_TIMER_SPEED, REG_CMD_MINUTES_MAX_TIMER, REG_CMD_START_MAX_TIMER,
+                       REG_CMD_STOP_MAX_TIMER})
     if (cx60_flagged(reg))
       cx60_read(reg);
   if (cx60.timer_s)
@@ -123,7 +131,7 @@ static void cx60_second() {
     flexit::controls::arbiter();
 }
 
-// A fresh flash, and the CX60 in normal sends the ESP its mode setting and max timer length
+// A fresh flash, and the CX60 in normal sends the ESP its mode setting, Max Timer Speed and max timer length
 static void boot() {
   now_ms = 0;
   flash = {};
@@ -136,7 +144,7 @@ static void boot() {
   server->set_server_address(1);
   server->setup();
   flexit::controls::state = {};
-  cx60 = {MODE_NORMAL, MODE_NORMAL, MODE_STOP, 180, 0, 22, 10, 20, 0};
+  cx60 = {MODE_NORMAL, MODE_NORMAL, MODE_STOP, 180, MODE_MAX, 0, false, 22, 10, 20, 0};
   hear(fc16(REG_CMD_MODE, {cx60.setting}));
-  hear(fc16(REG_CMD_MINUTES_MAX_TIMER, {cx60.timer_minutes}));
+  hear(fc16(REG_CMD_MAX_TIMER_SPEED, {cx60.timer_speed, cx60.timer_minutes}));
 }
