@@ -198,7 +198,7 @@ int main() {
   // Turned on by hand it ends like any other. The humidity is normal, so after the min time.
   start(15);
   humidity_boost.turn_on();
-  run(5);
+  run(10);
   CHECK(boosting() && cx60.mode == MODE_MAX);
   run(4 * 60 + 30);
   CHECK(boosting());

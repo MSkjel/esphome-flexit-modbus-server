@@ -126,7 +126,7 @@ enum HoldingRegisterIndex {
   REG_CMD_CALIBRATION_EXTRACT_AIR = 0x08D,        // x0.1 K, signed
   REG_CMD_CALIBRATION_OUTDOOR_AIR = 0x08E,        // x0.1 K, signed
   REG_CMD_CALIBRATION_RETURN_WATER = 0x08F,       // x0.1 K, signed
-  REG_CMD_MAX_TIMER_SPEED = 0x090,                // AC fans: mode 1-3 used by the max timer
+  REG_CMD_MAX_TIMER_SPEED = 0x090,                // mode 1-3 the max timer runs, EC and AC fans
   REG_CMD_COOLNESS_RECOVERY_DIFF = 0x092,         // x0.1 K
   REG_CMD_HOME_AWAY_TIME_DELAY = 0x0A5,           // min
   REG_CMD_HOME_AWAY_SPEED = 0x0A6,                // 1-3

@@ -151,7 +151,7 @@ packages:
     file: parts/setting_select.yaml
     vars: {id: home_away_speed, name: Home Away Speed, register: REG_CMD_HOME_AWAY_SPEED, first: 1,
            options: [Min, Normal, Max]}
-  # AC fans only
+  # The mode the max timer runs, with that mode's fan speeds
   max_timer_speed: !include
     file: parts/setting_select.yaml
     vars: {id: max_timer_speed, name: Max Timer Speed, register: REG_CMD_MAX_TIMER_SPEED, first: 1,

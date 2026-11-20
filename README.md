@@ -182,7 +182,7 @@ shows the old value until it changes again or the CX60 restarts, and a boost may
 
 On a fresh install, or after an update that changes which settings are saved (the log warns about it), the
 settings show up once the CX60 has restarted with the ESP running, and boosts wait until then. A boost running
-during such an update leaves its mode and fan speeds in the CX60, so set those back by hand.
+during such an update leaves its fan speeds and max timer length in the CX60, so set those back by hand.
 
 The CX60 only sends a runtime counter word when it changes, so the ESP saves those too. On a fresh install they
 show as unknown until the CX60 has sent both words, at the latest when it restarts. The filter's high word comes

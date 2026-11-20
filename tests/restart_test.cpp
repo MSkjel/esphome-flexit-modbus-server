@@ -57,8 +57,14 @@ static Number fireplace_duration{60}, fireplace_supply_speed_control{90}, firepl
 static const int SETTINGS = 0x0F;
 static struct {
   uint16_t reg[SETTINGS];
-  bool not_master;  // we're not the lowest panel address, so it keeps its own normal fan speeds
+  uint16_t timer_minutes;  // the max timer's length, a setting too
+  uint16_t timer_speed;    // the mode the max timer runs, Max Timer Speed, a setting too
+  uint32_t timer_s;        // seconds left on the max timer, which runs max while > 0
+  bool not_master;         // we're not the lowest panel address, so it keeps its own normal fan speeds
 } CX60;
+
+// The mode the CX60 runs
+static uint16_t cx60_mode() { return CX60.timer_s ? CX60.timer_speed : CX60.reg[REG_CMD_MODE]; }
 
 // The bytes on the bus, the ESP's loop, and what it answered
 static std::vector<uint8_t> hear(const std::vector<uint8_t> &bytes) {
@@ -83,18 +89,41 @@ static void cx60_poll() {
       CX60.reg[r] = read[3] << 8 | read[4];
     hear(fc65(r, CX60.reg[r]));
   }
+  // The same for the max timer's registers
+  for (uint16_t r :
+       {REG_CMD_MAX_TIMER_SPEED, REG_CMD_MINUTES_MAX_TIMER, REG_CMD_START_MAX_TIMER, REG_CMD_STOP_MAX_TIMER}) {
+    auto flag = hear(frame({1, 0x01, (uint8_t) (r >> 8), (uint8_t) r, 0x00, 0x01}));
+    if (!(flag[3] & 1))
+      continue;
+    auto read = hear(frame({1, 0x03, (uint8_t) (r >> 8), (uint8_t) r, 0x00, 0x01}));
+    uint16_t v = read[3] << 8 | read[4];
+    if (r == REG_CMD_MAX_TIMER_SPEED)
+      CX60.timer_speed = v;
+    else if (r == REG_CMD_MINUTES_MAX_TIMER)
+      CX60.timer_minutes = v;
+    else if (r == REG_CMD_START_MAX_TIMER && v)
+      CX60.timer_s = CX60.timer_minutes * 60u;
+    else if (r == REG_CMD_STOP_MAX_TIMER && v)
+      CX60.timer_s = 0;
+    hear(fc65(r, v));
+  }
 }
 
 // Then sends its status
 static void cx60_cycle() {
   cx60_poll();
-  // every cycle on the bus, here only when the mode in it is news to the ESP, to keep the test quick
-  if (!server->synced() || server->read_holding_register(REG_MODE) != CX60.reg[REG_CMD_MODE])
-    hear(status({{REG_MODE, CX60.reg[REG_CMD_MODE]}}));
+  // every cycle on the bus, here only when the mode or timer in it is news to the ESP, to keep the test quick
+  if (!server->synced() || server->read_holding_register(REG_MODE) != cx60_mode() ||
+      server->read_holding_register(REG_SECONDS_REMAINING_MAX_TIMER) / 60 != CX60.timer_s / 60)
+    hear(status({{REG_MODE, cx60_mode()}, {REG_SECONDS_REMAINING_MAX_TIMER, (uint16_t) CX60.timer_s}}));
 }
 
-// It's restarted. It looks for panels, then sends every setting it has.
-static void cx60_restart() { hear(fc16(0, std::vector<uint16_t>(CX60.reg, CX60.reg + SETTINGS))); }
+// It's restarted, which ends its max timer. It looks for panels, then sends every setting it has.
+static void cx60_restart() {
+  CX60.timer_s = 0;
+  hear(fc16(0, std::vector<uint16_t>(CX60.reg, CX60.reg + SETTINGS)));
+  hear(fc16(REG_CMD_MAX_TIMER_SPEED, {CX60.timer_speed, CX60.timer_minutes}));
+}
 
 // ---------------------------------------------------------------- the ESP
 static ESPPreferences flash;  // save() queues, sync() writes what's queued
@@ -136,6 +165,8 @@ static void down(bool clean) {  // clean = an update, everything goes to flash. 
 static float co2_level = 600;
 static void second() {
   now_ms += 1000;
+  if (CX60.timer_s)
+    CX60.timer_s--;
   if (!up)
     return;
   App.scheduler.run();
@@ -204,6 +235,8 @@ static void start_over() {
   CX60.reg[REG_CMD_PERCENTAGE_EXTRACT_FAN_NORMAL] = user_extract = 40;
   CX60.reg[REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX] = user_supply_max = 100;
   CX60.reg[REG_CMD_PERCENTAGE_EXTRACT_FAN_MAX] = user_extract_max = 100;
+  CX60.timer_minutes = 180;
+  CX60.timer_speed = MODE_NORMAL;  // so the boosts have to set it to max
   flash = {};
   co2_level = 600;
   boot();
@@ -241,6 +274,9 @@ static int check(const char *what) {
   want("max supply", CX60.reg[REG_CMD_PERCENTAGE_SUPPLY_FAN_MAX], user_supply_max);
   want("max extract", CX60.reg[REG_CMD_PERCENTAGE_EXTRACT_FAN_MAX], user_extract_max);
   want("mode", CX60.reg[REG_CMD_MODE], user_mode);
+  want("max timer minutes", CX60.timer_minutes, 180);
+  want("max timer speed", CX60.timer_speed, MODE_NORMAL);
+  want("mode it runs", cx60_mode(), user_mode);
   return bad;
 }
 
@@ -407,6 +443,18 @@ int main(int argc, char **argv) {
          flexit::fireplace::turn_on();
          run(10 * 60);
          flexit::fireplace::turn_off();
+       }},
+      {"fireplace mode runs max on the max timer, power cut, the ESP stays down",
+       [] {
+         flexit::fireplace::turn_on();
+         run(10);
+         expect("mode it runs in fireplace mode", cx60_mode(), cx60_mode() == MODE_MAX);
+         expect("mode setting in fireplace mode", CX60.reg[REG_CMD_MODE], CX60.reg[REG_CMD_MODE] == user_mode);
+         run(20 * 60);
+         expect("mode it runs after 20 min", cx60_mode(), cx60_mode() == MODE_MAX);
+         down(false);
+         run(flexit::controls::TIMER_MINUTES * 60 + 5);
+         expect("mode it runs with the ESP down", cx60_mode(), cx60_mode() == user_mode);
        }},
       {"mode changed by hand during fireplace mode",
        [] {
