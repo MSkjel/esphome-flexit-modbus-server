@@ -1,5 +1,5 @@
-// The component and a CX60 on a bus, for the tests of the packages that boost. One program per test, so the
-// clock and flash are here too. Include it, then the package's entities, then its header.
+// The component and a CX60 on a bus, for the tests of the packages that change its settings. One program per test,
+// so the clock and flash are here too. Include it, then the package's entities, then its header.
 #pragma once
 #include <cmath>
 #include <cstdint>
@@ -60,6 +60,9 @@ static struct {
   bool no_address_1;                 // nothing answers at address 1, so no max timer and no week program
   float extract, outdoor, setpoint;  // C
   uint16_t heating;                  // %
+  float supply;                      // C
+  uint16_t heater[3];                // the heater flags of panels 1-3, it heats if any is set
+  bool water;                        // a water coil, else electric
 } cx60;
 
 static void cx60_run() {
@@ -78,7 +81,7 @@ static std::vector<uint8_t> hear(const std::vector<uint8_t> &bytes) {
 }
 
 // Someone sets the mode on a panel. While the week program sets the mode, the CX60 runs it only after that.
-static void mode_on_panel(uint16_t mode) {
+inline void mode_on_panel(uint16_t mode) {
   cx60.setting = mode;
   cx60_run();
   hear(fc65(REG_CMD_MODE, mode));
@@ -90,6 +93,10 @@ static void cx60_read(uint16_t reg) {
   uint16_t v = read[3] << 8 | read[4];
   if (reg == REG_CMD_MODE)
     cx60.setting = v;
+  else if (reg == REG_CMD_TEMPERATURE_SETPOINT)
+    cx60.setpoint = (int16_t) v / 10.0f;
+  else if (reg >= REG_CMD_HEATER_PANEL1 && reg <= REG_CMD_HEATER_PANEL3)
+    cx60.heater[reg - REG_CMD_HEATER_PANEL1] = v;
   else if (reg == REG_CMD_MINUTES_MAX_TIMER)
     cx60.timer_minutes = v;
   else if (reg == REG_CMD_MAX_TIMER_SPEED)
@@ -114,8 +121,11 @@ static uint16_t tenths(float c) { return (uint16_t) (int16_t) lroundf(c * 10); }
 static void cx60_second() {
   now_ms += 1000;
   auto coils = cx60_coils();
-  for (uint16_t reg : {REG_CMD_MODE, REG_CMD_MAX_TIMER_SPEED, REG_CMD_MINUTES_MAX_TIMER, REG_CMD_START_MAX_TIMER,
-                       REG_CMD_STOP_MAX_TIMER})
+  for (uint16_t reg : {REG_CMD_MODE, REG_CMD_TEMPERATURE_SETPOINT, REG_CMD_MAX_TIMER_SPEED, REG_CMD_MINUTES_MAX_TIMER,
+                       REG_CMD_START_MAX_TIMER, REG_CMD_STOP_MAX_TIMER})
+    if (flagged(coils, reg))
+      cx60_read(reg);
+  for (uint16_t reg = REG_CMD_HEATER_PANEL1; reg <= REG_CMD_HEATER_PANEL3; reg++)
     if (flagged(coils, reg))
       cx60_read(reg);
   if (cx60.timer_s)
@@ -124,18 +134,19 @@ static void cx60_second() {
   hear(status({{REG_MODE, cx60.mode},
                {REG_SECONDS_REMAINING_MAX_TIMER, (uint16_t) cx60.timer_s},
                {REG_TEMPERATURE_SETPOINT, tenths(cx60.setpoint)},
+               {REG_TEMPERATURE_SUPPLY_AIR, tenths(cx60.supply)},
                {REG_TEMPERATURE_EXTRACT_AIR, tenths(cx60.extract)},
                {REG_TEMPERATURE_OUTDOOR_AIR, tenths(cx60.outdoor)},
-               {REG_PERCENTAGE_HEATING, cx60.heating}}));
+               {REG_PERCENTAGE_HEATING, cx60.heating},
+               {REG_STATUS_HEATER, (uint16_t) (cx60.heater[0] || cx60.heater[1] || cx60.heater[2])},
+               {REG_DS1_HEATING_TYPE, (uint16_t) !cx60.water}}));
   App.scheduler.run();
   if (now_ms % 2000 == 0)
     flexit::controls::arbiter();
 }
 
-// A fresh flash, and the CX60 in normal sends the ESP its mode setting, Max Timer Speed and max timer length
-static void boot() {
-  now_ms = 0;
-  flash = {};
+// The ESP starts, with what its flash has
+static void esp_up() {
   bus.rx.clear();
   bus.tx.clear();
   App.scheduler.clear();
@@ -145,7 +156,14 @@ static void boot() {
   server->set_server_address(1);
   server->setup();
   flexit::controls::state = {};
-  cx60 = {MODE_NORMAL, MODE_NORMAL, MODE_STOP, 180, MODE_MAX, 0, false, 22, 10, 20, 0};
+}
+
+// A fresh flash, and the CX60 in normal sends the ESP its mode setting, Max Timer Speed and max timer length
+static void boot() {
+  now_ms = 0;
+  flash = {};
+  esp_up();
+  cx60 = {MODE_NORMAL, MODE_NORMAL, MODE_STOP, 180, MODE_MAX, 0, false, 22, 10, 20, 0, 0, {}, false};
   hear(fc16(REG_CMD_MODE, {cx60.setting}));
   hear(fc16(REG_CMD_MAX_TIMER_SPEED, {cx60.timer_speed, cx60.timer_minutes}));
 }

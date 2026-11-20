@@ -76,6 +76,7 @@ pieces the packages share, you don't add those yourself.
 | [`humidity_boost.yaml`](packages/humidity_boost.yaml) | Humidity boost (temporary MAX when humidity spikes, e.g. a shower): above its 1 h baseline, or a fast rise | Needs `controls.yaml` and a humidity sensor of your own |
 | [`co2.yaml`](packages/co2.yaml) | CO2 control around a target: stepped (MAX), proportional or PI (fan speeds) | Needs `controls.yaml` and a CO2 sensor of your own. The fan speed modes are EC fans only |
 | [`summer_cooling.yaml`](packages/summer_cooling.yaml) | Summer cooling (MAX when it is warm inside and cooler outside) | Needs `controls.yaml` |
+| [`heater_limit.yaml`](packages/heater_limit.yaml) | Heater limit (the rotor at full speed up to the setpoint, the heater only up to a lower supply air temperature) | Electric heaters, ESP at the lowest address |
 | [`computed.yaml`](packages/computed.yaml) | Heat recovery efficiency, heater power/energy, filter days remaining, combined alarm | Read only |
 | [`advanced.yaml`](packages/advanced.yaml) | Installer settings from the CI600 menus | All disabled by default |
 | [`health.yaml`](packages/health.yaml) | The ESP's free RAM, largest free block and loop time | Diagnostic |

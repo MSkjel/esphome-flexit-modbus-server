@@ -9,6 +9,7 @@ packages:
   humidity_boost: !include ../packages/humidity_boost.yaml
   co2: !include ../packages/co2.yaml
   summer_cooling: !include ../packages/summer_cooling.yaml
+  heater_limit: !include ../packages/heater_limit.yaml
   computed: !include ../packages/computed.yaml
   advanced: !include ../packages/advanced.yaml
   health: !include ../packages/health.yaml

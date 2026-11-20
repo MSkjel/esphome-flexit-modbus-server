@@ -9,6 +9,7 @@ panel's packages in [panel.md](panel.md).
 - [Humidity boost](#humidity-boost)
 - [CO2 control](#co2-control)
 - [Summer cooling](#summer-cooling)
+- [Heater limit](#heater-limit)
 - [Computed sensors](#computed-sensors)
 - [Advanced settings](#advanced-settings)
 
@@ -260,6 +261,47 @@ number:
 | `Summer Cooling Min Difference` | 2 C | Outdoor air has to be this much colder than the extract air |
 | `Summer Cooling Min Outdoor` | 12 C | Never runs when it is colder than this outside. *Hidden* |
 | `Summer Cooling Active` | | On while it is cooling |
+
+## Heater limit
+
+The CX60 holds the supply air at its setpoint, the rotor first and then the heater. A high setpoint keeps the rotor
+at full speed, so the heat from the sun or a fireplace stays in the house, but then the heater heats to it too.
+`heater_limit.yaml` splits the two: the rotor runs at full speed up to the setpoint, the heater only heats the
+supply air up to `Heater Limit`.
+
+- While the rotor manages on its own, the heater is held off.
+- When the supply air drops half a degree under the limit, the heater is back on and the setpoint is set to the
+  limit. The CX60 holds the supply air there itself, the rotor at full speed and the heater making up the rest.
+- Once the heater has been idle at the limit for 3 minutes, it's held off and the setpoint goes back.
+
+Set `Temperature` to where the rotor should back off, say 25 C, and `Heater Limit` to the coldest supply air you
+want, say 20 C. `Heater` shows off while it's held off, and `Temperature` shows the limit while the CX60 holds it.
+Like a boost's, neither change is saved: the ESP puts the real heater and setpoint back when it stops, and after a
+restart. The CX60 starts the heater once the supply air is `Neutral Zone Rotor-Heating` (`advanced.yaml`, 1 C)
+under the limit, so it may dip that far first.
+
+It does nothing while the heater is off, the setpoint isn't above the limit, the unit regulates on the extract air,
+or it has a water coil. Turning the heater on yourself is taken back. It needs the ESP at the lowest panel address,
+which the CX60 takes the setpoint from.
+
+```yaml
+packages:
+  flexit:
+    # url and ref as in example.yaml
+    files:
+      - packages/core.yaml
+      - packages/controls.yaml
+      - packages/heater_limit.yaml
+
+number:
+  - id: !extend heater_limit_supply
+    initial_value: 19
+```
+
+| Entity | Default | What it does |
+|---|---|---|
+| `Heater Limit Enable` | on | Off means the heater and setpoint work as usual |
+| `Heater Limit` | 20 C | The heater heats the supply air up to this, the rotor up to the setpoint |
 
 ## Computed sensors
 

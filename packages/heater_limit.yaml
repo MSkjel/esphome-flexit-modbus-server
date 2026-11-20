@@ -1,0 +1,28 @@
+# Heater limit. The rotor runs at full speed up to the setpoint, the heater only heats the supply air up to the
+# limit. Set the setpoint to where the rotor should back off.
+# Electric heaters, supply air regulation, and the ESP at the lowest panel address, as it sets the setpoint.
+# This is done on the ESP, the CX60 doesn't have it.
+# Needs core.yaml
+
+esphome:
+  includes:
+    - code/heater_limit.h
+
+packages:
+  heater_limit: !include
+    file: parts/config_number.yaml
+    vars: {id: heater_limit_supply, name: Heater Limit, unit: "°C", device_class: temperature, min: 10, max: 30,
+           step: 0.5, initial: 20}
+
+switch:
+  - platform: template
+    name: "Heater Limit Enable"
+    id: heater_limit_enable
+    icon: "mdi:heating-coil"
+    optimistic: True
+    restore_mode: RESTORE_DEFAULT_ON
+
+interval:
+  - interval: 10s
+    then:
+      - lambda: flexit::heater_limit::tick();

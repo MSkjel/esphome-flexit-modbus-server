@@ -1,5 +1,5 @@
 # A setting of a package that runs on the ESP, kept in its flash. Used by co2.yaml, fireplace.yaml,
-# humidity_boost.yaml and summer_cooling.yaml.
+# heater_limit.yaml, humidity_boost.yaml and summer_cooling.yaml.
 #   - file: parts/config_number.yaml
 #     vars: {id: fireplace_duration, name: Fireplace Mode Duration, min: 1, max: 240, initial: 60, unit: min}
 defaults:
